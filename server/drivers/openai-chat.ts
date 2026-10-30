@@ -25,7 +25,7 @@ import { refusesRequestSize, RequestTooLargeError, sizeChange, smallerResend } f
 import { compactTurnMessages, DEFAULT_KEEP_EXCHANGES, estimateRequestTokens, offloadToolOutput, READ_TOOL_OUTPUT_DEFINITION,
   READ_TOOL_OUTPUT_TOOL, readToolOutput, refusesContextLength, TokenCalibration, turnCompactBudget, type TurnContextSettings } from "./turn-context.ts";
 import { contextWindowFor } from "../context-budget.ts";
-import { executeWorkspaceTool, validateWorkspaceArgs, WORKSPACE_TOOL_DEFINITIONS, workspaceToolReadOnly, workspaceToolView, type WorkspaceToolsConfig } from "./workspace-tools.ts";
+import { executeWorkspaceTool, skillReadRoots, validateWorkspaceArgs, WORKSPACE_TOOL_DEFINITIONS, WORKSPACE_TOOLS_PROMPT, workspaceToolReadOnly, workspaceToolView, type WorkspaceToolsConfig } from "./workspace-tools.ts";
 import { runToolBatch } from "./tool-batch.ts";
 import { requestTooLargeMessage } from "../../shared/request-too-large.ts";
 import { toolSchemaProfileFor } from "../tool-schema-profile.ts";
@@ -686,7 +686,8 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         // Native workspace tools: in-process, rooted at the turn's folder, confined unless the turn allows more.
         const workspace: WorkspaceToolsConfig | undefined = options.tools !== false && turn.cwd && !turn.guestConfined ? {
           root: turn.cwd,
-          readRoots: turn.workspaceTools?.readRoots,
+          // The skill index names SKILL.md files outside the workspace: those folders become readable (never writable).
+          readRoots: [...turn.workspaceTools?.readRoots ?? [], ...skillReadRoots(turn.system, turn.systemStable, turn.text)],
           writeRoots: turn.workspaceTools?.writeRoots,
           unrestricted: turn.workspaceTools?.unrestricted === true || process.env.ROOTCLAW_WORKSPACE_UNRESTRICTED === "1",
         } : undefined;
@@ -698,6 +699,11 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             if (taken.has(name) || !allowsTool(scope, { kind: "native", name })) continue;
             tools.definitions.push(definition);
             workspaceNames.add(name);
+          }
+          if (workspaceNames.size) {
+            const head = messages[0];
+            if (head?.role === "system" && typeof head.content === "string") head.content += WORKSPACE_TOOLS_PROMPT;
+            else messages.unshift({ role: "system", content: WORKSPACE_TOOLS_PROMPT.trimStart() });
           }
         }
         const readOnlyTool = (name: string) => name === READ_TOOL_OUTPUT_TOOL ? offloadOn : workspaceNames.has(name) && workspaceToolReadOnly(name);
