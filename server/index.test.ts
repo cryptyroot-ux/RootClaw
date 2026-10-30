@@ -11850,21 +11850,17 @@ describe("harness HTTP API", () => {
 
     const saved = await api("PUT", "/api/config?secretStorage=external", {
       composio: { apiKey: "ak_good" },
-      opencodeGo: { apiKey: "opencode-external" },
       profile: { name: "External Store" },
     });
     expect(saved.status).toBe(200);
     expect(saved.body.composio).toEqual({ configured: true, mode: "self-hosted" });
-    expect(saved.body.opencodeGo).toEqual({ configured: true, last4: "rnal", providerKeys: [] });
     expect(saved.body.profile).toEqual({ name: "External Store", email: "", aboutMe: "" });
     expect(JSON.stringify(saved.body)).not.toContain("ak_good");
 
     const disk = JSON.parse(readFileSync(join(home, ".rootclaw", "config.json"), "utf8"));
     expect(disk.composio).toMatchObject({ apiKey: "", sessionId: "trs_config_test" });
-    expect(disk.opencodeGo).toEqual({ apiKey: "" });
     expect(disk.profile).toEqual({ name: "External Store" });
     expect(JSON.stringify(disk)).not.toContain("ak_good");
-    expect(JSON.stringify(disk)).not.toContain("opencode-external");
 
     expect((await api("PUT", "/api/config", { profile: { name: "Grace" } })).status).toBe(200);
     expect((await api("GET", "/api/config")).body.composio).toEqual({ configured: true, mode: "self-hosted" });
@@ -12431,17 +12427,6 @@ describe("harness HTTP API", () => {
     expect(JSON.stringify(after.body)).not.toContain("ds-secret");
   });
 
-  it("stores OpenCode Go credentials as a configured-only status", async () => {
-    const put = await api("PUT", "/api/config", { opencodeGo: { apiKey: "opencode-secret" } });
-    expect(put.status).toBe(200);
-    expect(put.body.opencodeGo).toEqual({ configured: true, last4: "cret", providerKeys: [] });
-    expect(JSON.stringify(put.body)).not.toContain("opencode-secret");
-
-    const after = await api("GET", "/api/config");
-    expect(after.body.opencodeGo).toEqual({ configured: true, last4: "cret", providerKeys: [] });
-    expect(JSON.stringify(after.body)).not.toContain("opencode-secret");
-  });
-
   it("stores the avatar image key as configured-only status", async () => {
     try {
       const put = await api("PUT", "/api/config", { imageGen: { key: "sk-image-secret" } });
@@ -12487,16 +12472,6 @@ describe("harness HTTP API", () => {
     } finally {
       await api("PUT", "/api/config", { imageGen: { provider: "openai", key: "", customApiKey: "", customUrl: "", customModel: "" } });
     }
-  });
-
-  it("rejects a non-string OpenCode Go API key", async () => {
-    const bad = await api("PUT", "/api/config", { opencodeGo: { apiKey: 123 } });
-    expect(bad.status).toBe(400);
-    expect(bad.body.error).toContain("opencodeGo.apiKey");
-
-    const array = await api("PUT", "/api/config", { opencodeGo: [] });
-    expect(array.status).toBe(400);
-    expect(array.body.error).toContain("opencodeGo");
   });
 
   it("never hands a client the provider session cursors", async () => {
