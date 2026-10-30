@@ -1,7 +1,7 @@
 // Runs ENGINE_TASKS through a real native driver turn with the workspace tools, flag off and plan+verify on,
 // under a hard HTTP request budget (retries included). Usage:
 //   node --experimental-strip-types evals/engine-tasks/run-engine-tasks.ts --provider ollama --model beam \
-//     [--key-env OLLAMA_API_KEY] [--url <base>] [--max-requests 40] [--round-cap 12] [--task id]... [--models-file f.json]
+//     [--key-env OLLAMA_API_KEY] [--url <base>] [--max-requests 40] [--round-cap 12] [--task id]... [--mode off|on] [--models-file f.json]
 // Writes a JSON report under evals/reports/runs/ (gitignored); never writes keys.
 import { randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -82,7 +82,7 @@ async function main() {
       config: { url: arg("url")!, apiKeyEnv: keyEnv }, environment });
   const rows: RunRow[] = [];
   for (const task of tasks) {
-    for (const mode of ["off", "plan+verify"] as const) {
+    for (const mode of (["off", "plan+verify"] as const).filter((entry) => !arg("mode") || (arg("mode") === "on" ? entry === "plan+verify" : entry === arg("mode")))) {
       if (budget.sent >= Number(arg("max-requests", "40"))) break;
       budget.exchanges = [];
       rows.push(await runOne(instance, runs, task, mode, model, roundCap));
