@@ -77,8 +77,8 @@ describe("a bot's backup AIs in Simple", () => {
     render();
     const card = host.querySelector("[data-panel-row=backups]")!;
     expect(card.textContent).toContain("Backup AIs");
-    expect(card.textContent).toContain("Used only when Scout's AI is at its usage limit or can't start on a message.");
-    expect(card.textContent).toContain("After a usage limit resets, the conversation goes back.");
+    expect(card.textContent).toContain("Tried in order when Scout's AI runs out of quota, keeps failing, can't find its model, or can't start on a message.");
+    expect(card.textContent).toContain("After a cooldown, the conversation goes back.");
     expect(card.querySelector('[role="switch"], input[type="checkbox"]')).toBeNull();
     expect(host.querySelectorAll("[data-backup]")).toHaveLength(0);
   });

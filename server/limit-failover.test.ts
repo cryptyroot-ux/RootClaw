@@ -5,22 +5,15 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { failoverLine, LimitFailovers, limitBackupAllowed, type LimitFailover } from "./limit-failover.ts";
 
-const claude = { instanceId: "claude", driverKind: "claudeAgent" };
 const NOW = Date.parse("2026-10-19T10:00:00Z");
 const HOUR = 3_600_000;
 
 describe("limitBackupAllowed", () => {
-  it("never rotates to another sign-in of the same subscription engine", () => {
-    expect(limitBackupAllowed(claude, claude)).toBe(false);
-    expect(limitBackupAllowed(claude, { instanceId: "claude-work", driverKind: "claudeAgent" }, {})).toBe(false);
-    expect(limitBackupAllowed({ instanceId: "codex", driverKind: "codex" }, { instanceId: "codex-2", driverKind: "codex" })).toBe(false);
-  });
-
-  it("allows another engine, or the same engine on a pay-per-use key", () => {
-    expect(limitBackupAllowed(claude, { instanceId: "codex", driverKind: "codex" })).toBe(true);
-    expect(limitBackupAllowed(claude, { instanceId: "claude-api", driverKind: "claudeAgent" }, { environment: { ANTHROPIC_API_KEY: "sk-test" } })).toBe(true);
-    expect(limitBackupAllowed(claude, { instanceId: "claude-api", driverKind: "claudeAgent" }, { access: "api" })).toBe(true);
-    expect(limitBackupAllowed(claude, { instanceId: "claude-api", driverKind: "claudeAgent" }, { environment: { ANTHROPIC_API_KEY: " " } })).toBe(false);
+  it("lets any other engine instance in the chain take over, never the same one", () => {
+    const primary = { instanceId: "grok", driverKind: "grok" };
+    expect(limitBackupAllowed(primary, primary)).toBe(false);
+    expect(limitBackupAllowed(primary, { instanceId: "grok-2", driverKind: "grok" })).toBe(true);
+    expect(limitBackupAllowed(primary, { instanceId: "groq", driverKind: "groq" })).toBe(true);
   });
 });
 

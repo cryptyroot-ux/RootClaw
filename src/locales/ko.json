@@ -6858,7 +6858,6 @@
   "secretCard.file": "봇의 명령이 24시간 동안 읽을 수 있는 비공개 파일에 저장된 뒤 삭제돼요. 채팅에는 절대 추가되지 않아요.",
   "secretCard.resumed": "봇이 재개됐어요",
   "botPanel.backups.title": "백업 AI",
-  "botPanel.backups.hint": "{name}의 AI가 사용 한도에 도달했거나 메시지를 시작하지 못할 때만 써요. 이어받을 수 있는 첫 번째 AI가 그 대화에서만 대신 맡아요. 사용 한도가 초기화되면 대화는 원래대로 돌아가요.",
   "botPanel.backups.row": "백업 {position}: {model}",
   "botPanel.backups.remove": "백업에서 {model} 제거",
   "botPanel.backups.choose": "백업 AI 선택",

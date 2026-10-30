@@ -6359,7 +6359,6 @@
   "secretCard.file": "ボットのコマンドが24時間だけ読める非公開ファイルに保存され、その後削除されます。チャットには追加されません。",
   "secretCard.resumed": "ボットが再開しました",
   "botPanel.backups.title": "予備の AI",
-  "botPanel.backups.hint": "{name} の AI が利用上限に達したとき、またはメッセージに取りかかれないときだけ使います。引き継げる最初の AI が、その会話でだけ代わりに応答します。利用上限がリセットされると、会話は元に戻ります。",
   "botPanel.backups.row": "予備 {position}: {model}",
   "botPanel.backups.remove": "{model} を予備から外す",
   "botPanel.backups.choose": "予備の AI を選ぶ",

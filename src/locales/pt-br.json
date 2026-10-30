@@ -6117,7 +6117,6 @@
   "secretCard.file": "Fica salvo em um arquivo privado que os comandos do seu bot podem ler por 24 horas e depois é apagado. Nunca entra no chat.",
   "secretCard.resumed": "O bot continuou",
   "botPanel.backups.title": "IAs de reserva",
-  "botPanel.backups.hint": "Usadas só quando a IA de {name} atinge o limite de uso ou não consegue começar uma mensagem. A primeira daqui que puder assume, só naquela conversa. Quando o limite de uso é renovado, a conversa volta.",
   "botPanel.backups.row": "Reserva {position}: {model}",
   "botPanel.backups.remove": "Remover {model} das reservas",
   "botPanel.backups.choose": "Escolher uma IA de reserva",

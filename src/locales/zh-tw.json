@@ -4318,7 +4318,6 @@
   "mcp.ownBot": "僅限 {bot}：它的檔案在 {bot} 自己的資料夾中。",
   "mcp.offFor": "已為 {bots} 關閉，因為它在他們那裡無法啟動。會自動再檢查。",
   "botPanel.backups.title": "備用 AI",
-  "botPanel.backups.hint": "僅在 {name} 的 AI 達到使用上限，或無法開始處理訊息時使用。由這裡第一個能接手的 AI 接手，且只限該對話。使用上限重設後，對話會切換回來。",
   "botPanel.backups.row": "備用 {position}：{model}",
   "botPanel.backups.remove": "從備用中移除 {model}",
   "botPanel.backups.choose": "選擇備用 AI",

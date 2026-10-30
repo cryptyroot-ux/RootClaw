@@ -160,7 +160,7 @@ export function createLimitTakeover(deps: LimitTakeoverDeps) {
     if (engine.instanceId !== current.instanceId) {
       if (signedOutHeld(engine.instanceId)) return false;
       // Another sign-in to the same plan never carries a limit (that rotates accounts); it may stand in for one signed out.
-      if (scope !== "signed-out" && !limitBackupAllowed(current, engine, deps.configs()[engine.instanceId])) return false;
+      if (scope !== "signed-out" && !limitBackupAllowed(current, engine)) return false;
       // The same rule as switching by hand: a level the other AI has no such mode for needs the person first.
       if (approval && modelSwitchNeedsAsk(approval, current.driverKind, engine.driverKind)) return false;
     }

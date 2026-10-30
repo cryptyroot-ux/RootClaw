@@ -110,6 +110,8 @@ export type RequestOutcome = "allowed-once" | "rejected" | "answered" | "unavail
 
 // Sessions start implicitly on the first turn; resumeCursor carries the provider-native continuation (e.g. a Claude session id).
 export interface SendTurnInput {
+  /** What this turn may still spend (native engines meter provider usage against it), from `budgets` in settings. */
+  budget?: import("./budget-guard.ts").TurnBudget;
   threadId: ThreadId;
   /** Drivers namespace process-level resources (broker socket, CLI session) by botId too: threadIds may coincide across bots. */
   botId?: string;

@@ -4927,7 +4927,6 @@
   "mcp.ownBot": "Yalnızca {bot} için: dosyaları {bot} botunun kendi klasöründe.",
   "mcp.offFor": "{bots} için kapalı, çünkü onlarda başlamıyor. Kendiliğinden yeniden denetlenir.",
   "botPanel.backups.title": "Yedek yapay zekâlar",
-  "botPanel.backups.hint": "Yalnızca {name} adlı botun yapay zekâsı kullanım sınırına ulaştığında ya da bir mesaja hiç başlayamadığında kullanılır. Devralabilen ilk yedek, yalnızca o sohbette devralır. Kullanım sınırı sıfırlanınca sohbet geri döner.",
   "botPanel.backups.row": "Yedek {position}: {model}",
   "botPanel.backups.remove": "{model} modelini yedeklerden kaldır",
   "botPanel.backups.choose": "Yedek yapay zekâ seç",

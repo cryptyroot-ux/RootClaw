@@ -2486,7 +2486,6 @@
   "mcp.ownBot": "Uniquement pour {bot} : ses fichiers sont dans le dossier de {bot}.",
   "mcp.offFor": "Désactivé pour {bots}, car il ne démarre pas pour eux. Il est revérifié automatiquement.",
   "botPanel.backups.title": "IA de secours",
-  "botPanel.backups.hint": "Utilisées seulement quand l'IA de {name} atteint sa limite d'utilisation ou ne peut pas commencer un message. La première d'ici qui le peut prend alors le relais, dans cette conversation seulement. Une fois la limite d'utilisation réinitialisée, la conversation revient.",
   "botPanel.backups.row": "Secours {position} : {model}",
   "botPanel.backups.remove": "Retirer {model} des IA de secours",
   "botPanel.backups.choose": "Choisir une IA de secours",

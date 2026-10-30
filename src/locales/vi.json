@@ -4927,7 +4927,6 @@
   "mcp.ownBot": "Chỉ dành cho {bot}: các tệp của nó nằm trong thư mục riêng của {bot}.",
   "mcp.offFor": "Đã tắt cho {bots} vì nó không khởi động được với họ. Nó sẽ tự được kiểm tra lại.",
   "botPanel.backups.title": "AI dự phòng",
-  "botPanel.backups.hint": "Chỉ dùng khi AI của {name} chạm giới hạn sử dụng hoặc không thể bắt đầu xử lý tin nhắn. Khi đó AI đầu tiên ở đây có thể tiếp quản sẽ làm thay, chỉ trong cuộc trò chuyện đó. Khi giới hạn sử dụng được đặt lại, cuộc trò chuyện sẽ quay về.",
   "botPanel.backups.row": "Dự phòng {position}: {model}",
   "botPanel.backups.remove": "Xóa {model} khỏi danh sách dự phòng",
   "botPanel.backups.choose": "Chọn AI dự phòng",

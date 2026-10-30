@@ -6256,7 +6256,6 @@
   "secretCard.file": "Zapisany w prywatnym pliku, który polecenia twojego bota mogą czytać przez 24 godziny, a potem usunięty. Nigdy nie trafia do czatu.",
   "secretCard.resumed": "Bot wznowił pracę",
   "botPanel.backups.title": "Zapasowe AI",
-  "botPanel.backups.hint": "Używane tylko wtedy, gdy AI bota {name} osiągnie limit użycia albo nie może zacząć pracy nad wiadomością. Wtedy przejmuje pierwsze z listy, które może, tylko w tej rozmowie. Po zresetowaniu limitu użycia rozmowa wraca.",
   "botPanel.backups.row": "Zapasowe {position}: {model}",
   "botPanel.backups.remove": "Usuń {model} z zapasowych",
   "botPanel.backups.choose": "Wybierz zapasowe AI",

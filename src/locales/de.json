@@ -2527,7 +2527,6 @@
   "mcp.ownBot": "Nur für {bot}: Die Dateien liegen im eigenen Ordner von {bot}.",
   "mcp.offFor": "Aus für {bots}, weil er dort nicht startet. Er wird von selbst erneut geprüft.",
   "botPanel.backups.title": "Ersatz-KIs",
-  "botPanel.backups.hint": "Nur genutzt, wenn die KI von {name} ihr Nutzungslimit erreicht hat oder mit einer Nachricht gar nicht erst beginnen kann. Dann übernimmt die erste hier, die das kann, nur in diesem Gespräch. Sobald ein Nutzungslimit zurückgesetzt ist, wechselt das Gespräch zurück.",
   "botPanel.backups.row": "Ersatz {position}: {model}",
   "botPanel.backups.remove": "{model} aus den Ersatz-KIs entfernen",
   "botPanel.backups.choose": "Ersatz-KI wählen",

@@ -19,6 +19,8 @@ import { promptHalves, volatileContextNote, withContextNote } from "./prompt-spl
 import { createChatToolApproval, refusal } from "./chat-tool-approval.ts";
 import { ChatProtocolError, ChatReasoningDetails, ChatToolCalls, object, type ChatToolCall } from "./openai-chat-protocol.ts";
 import { appendNative } from "./native.ts";
+import { BudgetMeter } from "../budget-guard.ts";
+import { failoverHold, failoverKind } from "./failover.ts";
 import { classifyError, HttpStatusError, interruptibleDelay, nextRetryDelay, parseRetryAfter, RETRY_MAX_ATTEMPTS } from "./retry.ts";
 import { plainFailureMessage } from "./engine-errors.ts";
 import { refusesRequestSize, RequestTooLargeError, sizeChange, smallerResend } from "./chat-size-limit.ts";
@@ -657,6 +659,11 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
       let stopReason: string | null = null;
       let failure: string | undefined;
       let toolFailed = false;
+      // Whether anything reached the person (a streamed delta or a run tool): past that, the chain never switches.
+      let produced = false;
+      let tooLarge = false;
+      let failedWith: Error | undefined;
+      const meter = turn.budget ? new BudgetMeter(turn.budget, turn.budget.price ?? null) : null;
       let correctiveRounds = 0;
       const denials: string[] = [];
       const seenCalls = new Set<string>();
@@ -772,6 +779,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             try {
               completion = await complete(messages, model, true, abort.signal, (text, streamKind) => {
                 streamed = true;
+                produced = true;
                 if (streamKind === "assistant_text") answerStreamed = true;
                 delta(text, streamKind);
               }, tools.definitions);
@@ -800,6 +808,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
                 const resend = resized ? null : smallerResend(messages, request, error.bytes);
                 native("out", { refused: "request_too_large", bytes: error.bytes, ...(resend ? { before: resend.before, after: resend.after } : {}) });
                 console.warn(`${options.driverKind}: ${model} refused a ${error.bytes}-byte request as too large; ${resend ? `resending smaller (${sizeChange(resend.before, resend.after)})` : "not resending"}`);
+                if (!resend) tooLarge = true;
                 if (!resend) throw new ChatProtocolError(requestTooLargeMessage(options.models().options.find((option) => option.id === model)?.label ?? model));
                 messages.splice(0, messages.length, ...resend.messages);
                 resized = true;
@@ -848,10 +857,17 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             emit({ ...base(turn.threadId, turnId), type: "thread.token-usage.updated", ...usage,
               contextTokens: completion.usage.input + completion.usage.output, ...(contextWindow ? { contextWindow } : {}) });
           }
+          const spend = completion.usage && meter ? meter.add(completion.usage) : "ok";
+          if (spend === "warn") emit({ ...base(turn.threadId, turnId), type: "runtime.notice", message: meter!.warnMessage() });
           // Reasoning on a tool-call round belongs to the protocol, not a final reply.
           const reply = completion.text.trim() ? completion.text : completion.toolCalls.length ? "" : completion.reasoning;
           if (reply.trim()) emit({ ...base(turn.threadId, turnId), type: "item.completed", itemType: "assistant_text", text: safeText(reply) });
           abort.signal.throwIfAborted();
+          // At the cap a final answer still lands; a round that wants more tools ends here, before spending more.
+          if (spend === "stop" && completion.toolCalls.length) {
+            stopReason = "budget";
+            throw new ChatProtocolError(meter!.stopMessage());
+          }
           if (!completion.toolCalls.length) {
             if (!reply.trim()) throw new ChatProtocolError("provider returned an empty response");
             if (completion.finishReason && completion.finishReason !== "stop") {
@@ -1025,6 +1041,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         if (!ok) throw new ChatProtocolError(stoppedAfter(`${MAX_CHAT_ROUNDS} steps`));
       } catch (value) {
         stopReason = abort.signal.aborted ? "interrupted" : stopReason ?? "error";
+        failedWith = asError(value);
         failure = safeText(asError(value).message).slice(0, 2_000);
       } finally {
         turnEntry.ending = true;
@@ -1042,7 +1059,14 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         if (failure && (!abort.signal.aborted || cleanupFailed)) {
           // "upstream" (an OpenAI-compatible URL) names no provider, and the Cloud trial credit reads its raw line.
           const message = options.httpErrorLabel === "upstream" ? failure : plainFailureMessage(options.httpErrorLabel, failure);
-          emit({ ...base(turn.threadId, turnId), type: "runtime.error", message, terminal: !abort.signal.aborted });
+          // A clean failure the next AI in the bot's chain can take: hold this one for its cooldown.
+          const kind = failedWith && !cleanupFailed && stopReason === "error"
+            ? failoverKind(failedWith, { aborted: abort.signal.aborted, produced: produced || seenCalls.size > 0, tooLarge })
+            : null;
+          const hold = kind ? failoverHold(kind) : {};
+          if (hold.stopReason) stopReason = hold.stopReason;
+          emit({ ...base(turn.threadId, turnId), type: "runtime.error", message, terminal: !abort.signal.aborted,
+            ...(hold.limit ? { limit: hold.limit } : {}), ...(hold.limitResetsAt ? { limitResetsAt: hold.limitResetsAt } : {}) });
         }
         if (!ok && !abort.signal.aborted) {
           const continuable = classifyContinuable(stopReason, failure);

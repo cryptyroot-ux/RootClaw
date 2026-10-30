@@ -47,6 +47,8 @@ export const DEFAULT_MAX_CONCURRENT_BOT_THREADS = 3;
 export const MAX_CONCURRENT_BOT_THREADS = 16;
 /** The floor keeps a log tail large enough for the event inspector's recent-line window. */
 export const MIN_THREAD_EVENT_LOG_BYTES = 256 * 1024;
+const budgetCap = z.object({ tokens: z.number().int().min(0).optional(), usd: z.number().min(0).max(1_000_000).optional() });
+
 export const MAX_THREAD_EVENT_LOG_BYTES = 4 * 1024 * 1024 * 1024;
 
 export function isValidSshAlias(value: unknown): value is string {
@@ -351,6 +353,10 @@ const appConfigSchema = z.object({
     .object({
       monthlyUsd: z.number().min(0).max(1_000_000).optional(),
       warnAtPercent: z.number().int().min(1).max(100).optional(),
+      /** Native engines: caps per turn and per host-local day, all bots together; `bots[botId]` adds tighter ones. */
+      turn: budgetCap.optional(),
+      daily: budgetCap.optional(),
+      bots: z.record(z.string(), z.object({ turn: budgetCap.optional(), daily: budgetCap.optional() })).optional(),
     })
     .optional(),
   /** Operator sell prices per million tokens by model id, `driver/model` or `default`; read only with the `billing` entitlement. */
@@ -490,7 +496,11 @@ export interface AppConfig extends HelperConfig {
   anthropic?: { key?: string; url?: string; everyClaudeBot?: boolean };
   openai?: { key?: string };
   openrouter?: { key?: string };
-  budgets?: { monthlyUsd?: number; warnAtPercent?: number };
+  budgets?: {
+    monthlyUsd?: number; warnAtPercent?: number;
+    turn?: { tokens?: number; usd?: number }; daily?: { tokens?: number; usd?: number };
+    bots?: Record<string, { turn?: { tokens?: number; usd?: number }; daily?: { tokens?: number; usd?: number } }>;
+  };
   decisions?: { retentionDays?: number };
   loopGuard?: LoopGuardConfig;
   safetyFloor?: { enabled?: boolean };

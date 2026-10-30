@@ -8,26 +8,16 @@ import { writeFileAtomic } from "./atomic.ts";
 import type { InstanceConfig } from "./contracts.ts";
 import { hostTimeZone } from "./turn-clock.ts";
 
-/** Engines a person signs in to with a subscription whose usage limit refuses turns. */
-const SUBSCRIPTION_DRIVERS = new Set(["claudeAgent", "codex", "grokAgent"]);
-/** An engine instance with one of these keys bills each use instead of drawing on a subscription's limit. */
-const PAY_PER_USE_KEYS = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY", "CODEX_API_KEY", "XAI_API_KEY"];
-
 type Engine = { instanceId: string; driverKind: string };
 
-/** Whether `to` may take over a turn `from`'s usage limit refused. Never the same engine, and never another sign-in to
- * the same subscription engine: rotating accounts to get past a provider's usage limit breaks its terms and can get the
- * accounts closed. Another engine, or a pay-per-use key on the same one, is fine. */
-export function limitBackupAllowed(from: Engine, to: Engine, toConfig?: Pick<InstanceConfig, "environment" | "access">): boolean {
-  if (to.instanceId === from.instanceId) return false;
-  if (to.driverKind !== from.driverKind || !SUBSCRIPTION_DRIVERS.has(from.driverKind)) return true;
-  return billsEachUse(toConfig);
+/** Whether `to` may take over a turn `from` could not run: any other engine instance in the bot's fallback chain. */
+export function limitBackupAllowed(from: Engine, to: Engine): boolean {
+  return to.instanceId !== from.instanceId;
 }
 
-/** An engine instance that bills each use (a pay-per-use key, as its access or in its environment) instead of drawing on
- * a plan's limit. */
-export function billsEachUse(config?: Pick<InstanceConfig, "environment" | "access">): boolean {
-  return config?.access === "api" || PAY_PER_USE_KEYS.some((key) => Boolean(config?.environment?.[key]?.trim()));
+/** An engine instance that bills each use (an API key as its access) instead of drawing on a plan's limit. */
+export function billsEachUse(config?: Pick<InstanceConfig, "access">): boolean {
+  return config?.access === "api";
 }
 
 export function resetClock(at: number, timeZone = hostTimeZone()): string {

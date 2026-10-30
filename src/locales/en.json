@@ -3710,7 +3710,7 @@
   "botSettings.simple.custom": "Custom",
   "botPanel.appsRow": "Apps it can use",
   "botPanel.backups.title": "Backup AIs",
-  "botPanel.backups.hint": "Used only when {name}'s AI is at its usage limit or can't start on a message. The first one here that can take over does, in that conversation only. After a usage limit resets, the conversation goes back.",
+  "botPanel.backups.hint": "Tried in order when {name}'s AI runs out of quota, keeps failing, can't find its model, or can't start on a message. The first one here that can take over does, in that conversation only. After a cooldown, the conversation goes back.",
   "botPanel.backups.row": "Backup {position}: {model}",
   "botPanel.backups.remove": "Remove {model} from backups",
   "botPanel.backups.choose": "Choose a backup AI",

@@ -5436,7 +5436,6 @@
   "secretCard.file": "Se guarda en un archivo privado que los comandos de tu bot pueden leer durante 24 horas; después se borra. Nunca se añade al chat.",
   "secretCard.resumed": "El bot continuó",
   "botPanel.backups.title": "IA de respaldo",
-  "botPanel.backups.hint": "Solo se usan cuando la IA de {name} llega a su límite de uso o no puede empezar con un mensaje. Entonces se encarga la primera de aquí que pueda, solo en esa conversación. Cuando el límite de uso se restablece, la conversación vuelve.",
   "botPanel.backups.row": "Respaldo {position}: {model}",
   "botPanel.backups.remove": "Quitar {model} de los respaldos",
   "botPanel.backups.choose": "Elegir una IA de respaldo",
