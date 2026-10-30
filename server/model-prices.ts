@@ -28,6 +28,7 @@ const price = (source: string, input: number, cached: number, output: number, ex
 export const LIST_PRICES: Readonly<Record<string, ListPrice>> = {
   // OpenAI, Standard tier, short context (<272K input tokens).
   "gpt-6-astra": price(OPENAI, 10, 1, 50),
+  "gpt-6.1-sol": price(OPENAI, 2, 0.1, 10, { asOf: "2026-10-31" }),
   // Labelled promotional pricing on the source page, with no end date given.
   "gpt-5.6-sol": price(OPENAI, 4, 0.4, 20),
   "gpt-5.6-terra": price(OPENAI, 2, 0.2, 12),
@@ -115,8 +116,11 @@ export function listPriceFor(model: string, at: Date = new Date()): ModelPrice |
 
 export type CostSource = "reported" | "estimated";
 
-export function estimatePriceFor(turn: Pick<PricedTurn, "driverKind" | "model">, operatorPrices: PriceList | null, at: Date = new Date()): ModelPrice | null {
+/** `ownPrices` are the person's own (`modelPrices` in settings), for models RootClaw has no list price for, such as a
+ * custom OpenAI-compatible endpoint's: they beat the list but never an operator's sell price. */
+export function estimatePriceFor(turn: Pick<PricedTurn, "driverKind" | "model">, operatorPrices: PriceList | null, at: Date = new Date(), ownPrices?: PriceList | null): ModelPrice | null {
   return operatorPrices?.[`${turn.driverKind}/${turn.model}`] ?? operatorPrices?.[turn.model] ??
+    ownPrices?.[`${turn.driverKind}/${turn.model}`] ?? ownPrices?.[turn.model] ??
     listPriceFor(turn.model, at) ?? operatorPrices?.default ?? null;
 }
 
@@ -124,11 +128,12 @@ export function ledgerCost(
   turn: PricedTurn & { costUsd: number | null | undefined },
   operatorPrices: PriceList | null,
   at: Date = new Date(),
+  ownPrices?: PriceList | null,
 ): { costUsd: number | null; costSource?: CostSource } {
   if (typeof turn.costUsd === "number" && Number.isFinite(turn.costUsd) && turn.costUsd >= 0) {
     return { costUsd: turn.costUsd, costSource: "reported" };
   }
-  const unit = estimatePriceFor(turn, operatorPrices, at);
+  const unit = estimatePriceFor(turn, operatorPrices, at, ownPrices);
   if (!unit) return { costUsd: null };
   return { costUsd: billableFor(turn, { [turn.model]: unit }), costSource: "estimated" };
 }

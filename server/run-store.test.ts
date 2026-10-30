@@ -34,6 +34,18 @@ describe("run store", () => {
     expect(createRunStore({ dataDir: d, now: c.now }).get("r1")).toEqual(run);
   });
 
+  it("estimates a run's cost from the price it is given when the provider reports none", () => {
+    const runs = createRunStore({ dataDir: dir(), priceFor: (driver, model) => driver === "openai-compat" && model === "MyCombo" ? { inputPerMillion: 1, outputPerMillion: 2 } : null });
+    runs.begin({ runId: "r", threadId: "t1", driver: "openai-compat", model: "MyCombo" });
+    runs.observe(ev("r", "thread.token-usage.updated", { input: 1_000_000, output: 500_000 }));
+    runs.observe(ev("r", "turn.completed", { ok: true, stopReason: "end_turn" }));
+    expect(runs.get("r")).toMatchObject({ stopReason: "end_turn", usage: { costUsd: 2 }, costSource: "estimated" });
+    runs.begin({ runId: "s", threadId: "t2", driver: "openai-compat", model: "MyCombo" });
+    runs.observe(ev("s", "thread.token-usage.updated", { input: 10, output: 1, costUsd: 0.5 }));
+    runs.observe(ev("s", "turn.completed", { ok: true, stopReason: "end_turn" }));
+    expect(runs.get("s")).toMatchObject({ usage: { costUsd: 0.5 }, costSource: "reported" });
+  });
+
   it("marks a budget stop as completed, not failed", () => {
     const runs = createRunStore({ dataDir: dir() });
     runs.begin({ runId: "r", threadId: "t1", model: "m" });

@@ -4,6 +4,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { writeFileAtomic } from "./atomic.ts";
+import { billableFor, type ModelPrice } from "./prices.ts";
 
 export const RUNS_FILE = join("runs", "runs.jsonl");
 const DEFAULT_CAP = 500;
@@ -40,6 +41,8 @@ export interface RunRecord {
   /** Set when a failover-worthy error ended it (a rate limit, quota or sign-in hold). */
   failover?: boolean;
   retriedAt?: number;
+  /** Whether `usage.costUsd` came from the provider or from a price RootClaw knows. */
+  costSource?: "reported" | "estimated";
 }
 
 export interface RunBegin { runId: string; threadId: string; botId?: string; instanceId?: string; driver?: string; model: string }
@@ -58,13 +61,13 @@ export interface RunStore {
 
 const numbers = (event: Record<string, unknown>) => {
   const out: Record<string, number> = {};
-  for (const key of ["input", "output", "cacheRead", "cacheWrite", "reasoning", "costUsd"]) {
+  for (const key of ["input", "output", "cachedInput", "cacheRead", "cacheWrite", "reasoning", "costUsd"]) {
     if (typeof event[key] === "number" && Number.isFinite(event[key])) out[key] = event[key] as number;
   }
   return out;
 };
 
-export function createRunStore(options: { dataDir: string; cap?: number; now?: () => number }): RunStore {
+export function createRunStore(options: { dataDir: string; cap?: number; now?: () => number; priceFor?: (driver: string, model: string) => ModelPrice | null }): RunStore {
   const file = join(options.dataDir, RUNS_FILE);
   const cap = Math.max(1, options.cap ?? DEFAULT_CAP);
   const now = options.now ?? Date.now;
@@ -98,6 +101,20 @@ export function createRunStore(options: { dataDir: string; cap?: number; now?: (
       writeFileAtomic(file, [...runs.values()].map((run) => `${JSON.stringify({ runId: run.id, at: now(), run })}\n`).join(""), { durable: false });
       lines = runs.size;
     } catch { /* kept in memory; the next compaction tries again */ }
+  };
+
+  const priceRun = (run: RunRecord) => {
+    if (!run.usage) return;
+    if (typeof run.usage.costUsd === "number") { run.costSource = "reported"; return; }
+    const driver = run.driver ?? "";
+    let price: ModelPrice | null = null;
+    try { price = options.priceFor?.(driver, run.model) ?? null; } catch { /* unpriced */ }
+    if (!price) return;
+    const cost = billableFor({ driverKind: driver, model: run.model, input: run.usage.input ?? 0, output: run.usage.output ?? 0,
+      ...(run.usage.cachedInput ? { cachedInput: run.usage.cachedInput } : {}) }, { [run.model]: price });
+    if (cost === null) return;
+    run.usage.costUsd = cost;
+    run.costSource = "estimated";
   };
 
   const interruptedAtBoot: string[] = [];
@@ -179,6 +196,7 @@ export function createRunStore(options: { dataDir: string; cap?: number; now?: (
           run.endedAt = at;
           run.durationMs = at - run.startedAt;
           for (const tool of run.tools) if (tool.status === "running") { tool.status = "interrupted"; tool.endedAt = at; }
+          priceRun(run);
           break;
         default:
           return;

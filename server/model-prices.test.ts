@@ -76,3 +76,18 @@ describe("what the ledger books for a settled turn", () => {
     expect(ledgerCost({ driverKind: "codex", model: "gpt-5.3-codex-spark", input: 5000, output: 100, costUsd: undefined }, { "claude-sonnet-5": { inputPerMillion: 1, outputPerMillion: 1 } })).toEqual({ costUsd: null });
   });
 });
+
+describe("the person's own model prices", () => {
+  const mine = { "MyCombo": { inputPerMillion: 1, outputPerMillion: 2 }, "openai-compat/shared-id": { inputPerMillion: 3, outputPerMillion: 4 }, "gpt-5.5": { inputPerMillion: 9, outputPerMillion: 9 } };
+  it("prices a custom model, by driver/model or id, ahead of the list but behind the operator", async () => {
+    const { estimatePriceFor, ledgerCost } = await import("./model-prices.ts");
+    expect(estimatePriceFor({ driverKind: "openai-compat", model: "MyCombo" }, null, new Date(), mine)).toEqual({ inputPerMillion: 1, outputPerMillion: 2 });
+    expect(estimatePriceFor({ driverKind: "openai-compat", model: "shared-id" }, null, new Date(), mine)).toEqual({ inputPerMillion: 3, outputPerMillion: 4 });
+    expect(estimatePriceFor({ driverKind: "openai", model: "gpt-5.5" }, null, new Date(), mine)?.inputPerMillion).toBe(9);
+    expect(estimatePriceFor({ driverKind: "openai", model: "gpt-5.5" }, { "gpt-5.5": { inputPerMillion: 7, outputPerMillion: 7 } }, new Date(), mine)?.inputPerMillion).toBe(7);
+    expect(ledgerCost({ driverKind: "openai-compat", model: "MyCombo", input: 1_000_000, output: 500_000, costUsd: null }, null, new Date(), mine))
+      .toEqual({ costUsd: 2, costSource: "estimated" });
+    // OpenAI's pricing page, Standard tier, short context, read 2026-10-31.
+    expect(estimatePriceFor({ driverKind: "openai-responses", model: "gpt-6.1-sol" }, null)).toEqual({ inputPerMillion: 2, cachedInputPerMillion: 0.1, outputPerMillion: 10 });
+  });
+});

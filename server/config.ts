@@ -319,6 +319,12 @@ const threadsPatchSchema = threadsConfigSchema.extend({
   eventLogMaxBytes: threadsConfigSchema.shape.eventLogMaxBytes.nullable(),
   eventLogRetentionDays: threadsConfigSchema.shape.eventLogRetentionDays.nullable(),
 });
+const modelPriceSchema = z.object({
+  inputPerMillion: z.number().min(0).max(1_000_000),
+  outputPerMillion: z.number().min(0).max(1_000_000),
+  cachedInputPerMillion: z.number().min(0).max(1_000_000).optional(),
+});
+
 const appConfigSchema = z.object({
   /** Set only by the verified domain endpoint, never by a config patch. */
   customDomain: z.string().optional(),
@@ -365,6 +371,9 @@ const appConfigSchema = z.object({
       bots: z.record(z.string(), z.object({ turn: budgetCap.optional(), daily: budgetCap.optional() })).optional(),
     })
     .optional(),
+  /** The person's own USD prices per million tokens, by model id or `driver/model`, for models with no list price (a custom
+   * OpenAI-compatible endpoint's, say); budgets and run costs use them. */
+  modelPrices: z.record(z.string().min(1).max(160), modelPriceSchema).optional(),
   /** Operator sell prices per million tokens by model id, `driver/model` or `default`; read only with the `billing` entitlement. */
   billing: z
     .object({
@@ -470,7 +479,8 @@ const storedAppConfigSchema = appConfigSchema.extend(helperStoredShape).extend({
   browserProfiles: storedBrowserProfilesSchema.optional(),
 });
 const appConfigPatchSchema = appConfigSchema.omit({ instances: true, mcpServers: true, cliStartup: true, customDomain: true })
-  .extend({ threads: threadsPatchSchema.optional(), newBots: newBotsPatchSchema.optional() });
+  .extend({ threads: threadsPatchSchema.optional(), newBots: newBotsPatchSchema.optional(),
+    modelPrices: z.record(z.string().min(1).max(160), modelPriceSchema.nullable()).optional() });
 const jsonObjectSchema = z.record(z.string(), z.json());
 
 export interface AppConfig extends HelperConfig {
@@ -512,6 +522,7 @@ export interface AppConfig extends HelperConfig {
   decisions?: { retentionDays?: number };
   loopGuard?: LoopGuardConfig;
   safetyFloor?: { enabled?: boolean };
+  modelPrices?: Record<string, { inputPerMillion: number; outputPerMillion: number; cachedInputPerMillion?: number }>;
   billing?: { currency?: string; prices?: Record<string, { inputPerMillion: number; outputPerMillion: number; cachedInputPerMillion?: number }> };
   openaiCompat?: { key?: string; url?: string; model?: string; provider?: string };
   composio?: { apiKey?: string; userId?: string; sessionId?: string };
@@ -856,7 +867,7 @@ export function cacheUntilConfigChanges<T>(derive: (config: AppConfig) => T): ()
 }
 
 /** Keeps process.env in step with a saved credential ("" drops the var), because loadConfig() prefers env. */
-export function syncCredentialEnv(patch: Partial<Omit<AppConfig, "threads" | "newBots">>): void {
+export function syncCredentialEnv(patch: Partial<Omit<AppConfig, "threads" | "newBots" | "modelPrices">>): void {
   const secrets: Array<[value: string | undefined, name: string]> = [
     [patch.xai?.key, "XAI_API_KEY"],
     [patch.mistral?.key, "MISTRAL_API_KEY"],
@@ -911,9 +922,10 @@ export function onConfigSaved(listener: (before: JsonObject, after: JsonObject) 
 
 /** Secrets are never echoed back; callers report configured-or-not only. */
 export function saveConfig(
-  patch: Partial<Omit<AppConfig, "threads" | "newBots">> & {
+  patch: Partial<Omit<AppConfig, "threads" | "newBots" | "modelPrices">> & {
     threads?: z.output<typeof threadsPatchSchema>;
     newBots?: z.output<typeof newBotsPatchSchema>;
+    modelPrices?: Record<string, z.output<typeof modelPriceSchema> | null>;
   },
   options: { replaceInstances?: boolean } = {},
 ): void {
@@ -924,11 +936,13 @@ export function saveConfig(
     if (parsed.success) disk = parsed.data;
   } catch {
   }
-  const checkedPatch = appConfigSchema.partial().extend({ threads: threadsPatchSchema.optional(), newBots: newBotsPatchSchema.optional() }).parse(patch);
+  const checkedPatch = appConfigSchema.partial().extend({ threads: threadsPatchSchema.optional(), newBots: newBotsPatchSchema.optional(),
+    // A null price drops that model's own price.
+    modelPrices: z.record(z.string().min(1).max(160), modelPriceSchema.nullable()).optional() }).parse(patch);
   const before = configSaveListeners.size ? structuredClone(disk) : disk;
   const storedProfiles = storedBrowserProfilesSchema.safeParse(disk.browserProfiles);
   if (storedProfiles.success) disk.browserProfiles = storedProfiles.data;
-  for (const key of ["xai", "anthropic", "mistral", "cerebras", "treg", "postiz", "groq", "meta", "deepseek", "gemini", "ollama", "openai", "openrouter", "openaiCompat", "composio", "box", "tts", "decider", "imageGen", "live", "profile", "rooms", "mcp", "threads", "context", "memory", "localVm", "features", "budgets", "billing", "decisions", "loopGuard", "onboarding", "browserEngine", "newBots", "safetyFloor"] as const) {
+  for (const key of ["xai", "anthropic", "mistral", "cerebras", "treg", "postiz", "groq", "meta", "deepseek", "gemini", "ollama", "openai", "openrouter", "openaiCompat", "composio", "box", "tts", "decider", "imageGen", "live", "profile", "rooms", "mcp", "threads", "context", "memory", "localVm", "features", "budgets", "modelPrices", "billing", "decisions", "loopGuard", "onboarding", "browserEngine", "newBots", "safetyFloor"] as const) {
     const section = checkedPatch[key];
     if (!section) continue;
     const current = jsonObjectSchema.safeParse(disk[key]);

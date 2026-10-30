@@ -701,6 +701,22 @@ describe("a config.json saved with a byte order mark", () => {
 });
 
 describe("saving the newer sections", () => {
+  it("keeps the person's own model prices per model, and a null drops one", () => {
+    const path = join(DATA_DIR, "config.json");
+    mkdirSync(DATA_DIR, { recursive: true });
+    writeFileSync(path, "{}");
+    try {
+      saveConfig({ modelPrices: { MyCombo: { inputPerMillion: 1, outputPerMillion: 2 } } });
+      saveConfig({ modelPrices: { "openai-compat/other": { inputPerMillion: 3, outputPerMillion: 4 } } });
+      expect(JSON.parse(readFileSync(path, "utf8")).modelPrices).toEqual({
+        MyCombo: { inputPerMillion: 1, outputPerMillion: 2 }, "openai-compat/other": { inputPerMillion: 3, outputPerMillion: 4 } });
+      saveConfig({ modelPrices: { MyCombo: null } } as never);
+      expect(Object.keys(JSON.parse(readFileSync(path, "utf8")).modelPrices)).toEqual(["openai-compat/other"]);
+    } finally {
+      rmSync(path, { force: true });
+    }
+  });
+
   it("persists the Anthropic key, the spend limit and the price list, section by section", () => {
     const path = join(DATA_DIR, "config.json");
     mkdirSync(DATA_DIR, { recursive: true });

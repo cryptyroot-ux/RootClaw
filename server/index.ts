@@ -1375,7 +1375,7 @@ function operatorPrices(): PriceList | null {
 }
 
 function bookTurnUsage(row: Omit<UsageRow, "at" | "costSource">, tokensReported = true, notificationThreadId = row.threadId): void {
-  const cost = tokensReported || row.costUsd !== null ? ledgerCost(row, operatorPrices()) : { costUsd: null };
+  const cost = tokensReported || row.costUsd !== null ? ledgerCost(row, operatorPrices(), new Date(), cfg.modelPrices ?? null) : { costUsd: null };
   const booked = { ...row, ...cost, ...usageTrace.settle(row.threadId), at: new Date().toISOString() };
   // The append is async; noteSpend counts the row from memory until it lands, so the cap check sees it.
   noteSpend(DATA_DIR, booked, appendUsage(DATA_DIR, booked));
@@ -8775,7 +8775,7 @@ const engineName = (engine: string) => engineLabel(engine, registry.get(engine) 
 /** The turn's remaining allowance under `budgets`, priced for its model (native engines meter against it). */
 function budgetFields(botId: string, driverKind: string, model: string): { budget?: TurnBudget } {
   const budget = turnBudget(cfg, DATA_DIR, botId);
-  return budget ? { budget: { ...budget, price: estimatePriceFor({ driverKind, model }, cfg.billing?.prices ?? null) } } : {};
+  return budget ? { budget: { ...budget, price: estimatePriceFor({ driverKind, model }, cfg.billing?.prices ?? null, new Date(), cfg.modelPrices ?? null) } } : {};
 }
 const limitClock = new LimitResetClock({ file: join(DATA_DIR, "limit-holds.json"), accounts: () => planAccountsFromInstances(instanceConfigs(cfg)), onChange: () => routines?.retimeLimitResets(),
   waiting: () => Boolean(routines?.listRoutines().some((routine) => routine.enabled && routine.schedule.type === "limit_reset")) }); const limitTakeover = createLimitTakeover({ file: join(DATA_DIR, "limit-notices.json"), holdsFile: join(DATA_DIR, "limit-takeover-holds.json"), configs: () => instanceConfigs(cfg), context: selectionContext, blockedUntil: (engine) => limitClock.blockedUntil(engine), resetAt: (engine) => limitClock.resetAt(engine), enabled: () => quotaSwitchEnabled(), where: CLOUD_HOME ? "on the Cloud" : "on this computer", signedOutNow: (id) => registry.knownSnapshot(id)?.authenticated === false, signedOutNoticed: () => registry.forgetSnapshots(), engineName, engines: () => selectableInstances(registry.instances().map((engine) => ({ instanceId: engine.instanceId, driverKind: engine.driverKind, displayName: engine.displayName, enabled: engine.enabled, access: registry.access(engine.instanceId), models: engine.models, snapshot: registry.knownSnapshot(engine.instanceId) ?? { state: "unavailable" as const, reason: "not read yet" }, capabilities: engine.adapter.capabilities }))), chosen: (botId) => [...(store.bot(botId)?.fallback ?? []), ...(cfg.automaticRecovery?.backup ? [cfg.automaticRecovery.backup] : [])], signedOutChosen: (botId) => { const bot = store.bot(botId); return bot ? startupBackups(bot, cfg.automaticRecovery) : []; }, tell: (about, text) => notify(buildNoticeNotification(about, store.bot(about.id)?.threadId ?? "", text)), record: (failover) => limitFailovers.record(failover) });
@@ -9550,7 +9550,7 @@ const webhookIngressStatus = () => ({
   ...(webhookIngressError ? { error: webhookIngressError } : {}),
 });
 // Native engine runs, durable under the data dir; ones a restart cut off are marked interrupted and can be retried.
-const runStore = createRunStore({ dataDir: DATA_DIR });
+const runStore = createRunStore({ dataDir: DATA_DIR, priceFor: (driverKind, model) => estimatePriceFor({ driverKind, model }, operatorPrices(), new Date(), cfg.modelPrices ?? null) });
 setRunRecorder(runStore);
 if (runStore.interruptedAtBoot.length) console.log(`[runs] ${runStore.interruptedAtBoot.length} run(s) were interrupted by the restart`);
 ROUTES.push(createRunRoutes({

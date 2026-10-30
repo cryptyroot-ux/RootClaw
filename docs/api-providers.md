@@ -62,3 +62,15 @@ runs. A run still going when RootClaw stopped is marked `interrupted` on the nex
 - `GET /api/runs?botId=&threadId=&status=&limit=`: runs newest first, only on threads the session can see.
 - `GET /api/runs/<id>`: one run.
 - `POST /api/runs/<id>/retry`: run an interrupted or failed run's thread again on its bot, once.
+
+## Your own model prices
+
+RootClaw knows list prices for the big providers' models. For anything else, such as a model behind a custom
+OpenAI-compatible endpoint, set its USD price per million tokens in `config.json` (or `PUT /api/config`):
+
+```json
+{ "modelPrices": { "MyCombo": { "inputPerMillion": 0.5, "outputPerMillion": 1.5 } } }
+```
+
+A key may be the model id or `driver/model` (for example `openai-compat/MyCombo`); `null` drops one. These prices feed
+the per-turn budget guard, usage costs and run records, ahead of the list price but never ahead of an operator's billing price.
