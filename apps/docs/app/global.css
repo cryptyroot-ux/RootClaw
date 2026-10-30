@@ -1,0 +1,200 @@
+@import 'tailwindcss';
+@import 'fumadocs-ui/css/neutral.css';
+@import 'fumadocs-ui/css/preset.css';
+
+:root {
+  --rootclaw-bg: #ffffff;
+  --rootclaw-raised: #f7f8f8;
+  --rootclaw-ink: #0a0a0b;
+  --rootclaw-muted: #5f6570;
+  --rootclaw-line: #e5e7ea;
+  --rootclaw-accent: #009957;
+  --rootclaw-accent-soft: #eaf8f1;
+
+  --color-fd-background: var(--rootclaw-bg);
+  --color-fd-foreground: var(--rootclaw-ink);
+  --color-fd-muted: var(--rootclaw-raised);
+  --color-fd-muted-foreground: var(--rootclaw-muted);
+  --color-fd-border: var(--rootclaw-line);
+  --color-fd-primary: var(--rootclaw-accent);
+  --color-fd-primary-foreground: #ffffff;
+  --color-fd-card: var(--rootclaw-bg);
+  --color-fd-card-foreground: var(--rootclaw-ink);
+  --color-fd-secondary: var(--rootclaw-raised);
+  --color-fd-secondary-foreground: var(--rootclaw-ink);
+  --color-fd-accent: var(--rootclaw-accent-soft);
+  --color-fd-accent-foreground: #006b3d;
+}
+
+.dark {
+  --rootclaw-bg: #070708;
+  --rootclaw-raised: #131315;
+  --rootclaw-ink: #f4f4f5;
+  --rootclaw-muted: #9a9aa4;
+  --rootclaw-line: #232327;
+  --rootclaw-accent: #3fae6e;
+  --rootclaw-accent-soft: #10271a;
+
+  --color-fd-primary-foreground: #07130c;
+  --color-fd-accent-foreground: #7bd69e;
+}
+
+html {
+  scrollbar-gutter: stable;
+  background: var(--rootclaw-bg);
+}
+
+html > body[data-scroll-locked] {
+  margin-right: 0 !important;
+  --removed-body-scroll-bar-size: 0px !important;
+}
+
+body {
+  background:
+    radial-gradient(circle at 75% -20%, color-mix(in srgb, var(--rootclaw-accent) 8%, transparent), transparent 32rem),
+    var(--rootclaw-bg);
+  color: var(--rootclaw-ink);
+  letter-spacing: -0.012em;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--rootclaw-accent) 24%, transparent);
+}
+
+.rootclaw-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  font-size: 0.9rem;
+  font-weight: 660;
+  letter-spacing: -0.02em;
+}
+
+.rootclaw-brand img {
+  width: 1.65rem;
+  height: 1.65rem;
+  border-radius: 0.5rem;
+}
+
+.rootclaw-brand-docs {
+  border-left: 1px solid var(--rootclaw-line);
+  color: var(--rootclaw-muted);
+  font-size: 0.78rem;
+  font-weight: 520;
+  letter-spacing: 0;
+  margin-left: 0.1rem;
+  padding-left: 0.7rem;
+}
+
+.rootclaw-product-shot {
+  margin: 2rem 0;
+}
+
+.rootclaw-product-shot-frame {
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--rootclaw-line) 88%, transparent);
+  border-radius: 1.25rem;
+  background: #0a0a0b;
+  box-shadow:
+    0 1px 1px color-mix(in srgb, var(--rootclaw-ink) 5%, transparent),
+    0 22px 60px color-mix(in srgb, var(--rootclaw-ink) 10%, transparent);
+}
+
+.rootclaw-product-shot img {
+  display: block;
+  width: 100%;
+  max-height: 38rem;
+  object-fit: cover;
+}
+
+.rootclaw-product-shot figcaption {
+  color: var(--rootclaw-muted);
+  font-size: 0.78rem;
+  line-height: 1.5;
+  margin-top: 0.65rem;
+  text-align: center;
+}
+
+.rootclaw-kicker {
+  color: var(--rootclaw-accent);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.rootclaw-lede {
+  color: var(--rootclaw-muted);
+  font-size: 1.08rem;
+  line-height: 1.75;
+  max-width: 44rem;
+}
+
+.rootclaw-stat-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin: 1.75rem 0;
+}
+
+.rootclaw-stat {
+  border: 1px solid var(--rootclaw-line);
+  border-radius: 1rem;
+  background: color-mix(in srgb, var(--rootclaw-raised) 78%, transparent);
+  padding: 1rem;
+}
+
+.rootclaw-stat strong,
+.rootclaw-stat span {
+  display: block;
+}
+
+.rootclaw-stat strong {
+  font-size: 1rem;
+  letter-spacing: -0.02em;
+}
+
+.rootclaw-stat span {
+  color: var(--rootclaw-muted);
+  font-size: 0.78rem;
+  margin-top: 0.2rem;
+}
+
+#nd-sidebar,
+#nd-subnav {
+  background: color-mix(in srgb, var(--rootclaw-bg) 92%, transparent);
+  backdrop-filter: blur(18px);
+}
+
+#nd-sidebar {
+  border-right-color: var(--rootclaw-line);
+}
+
+#nd-subnav {
+  border-bottom-color: var(--rootclaw-line);
+}
+
+.prose :where(h2, h3, h4) {
+  letter-spacing: -0.035em;
+}
+
+.prose :where(a:not([data-card])) {
+  text-decoration-color: color-mix(in srgb, var(--rootclaw-accent) 45%, transparent);
+  text-underline-offset: 0.2em;
+}
+
+.prose :where(table) {
+  overflow: hidden;
+  border: 1px solid var(--rootclaw-line);
+  border-radius: 0.9rem;
+}
+
+@media (max-width: 640px) {
+  .rootclaw-stat-row {
+    grid-template-columns: 1fr;
+  }
+
+  .rootclaw-product-shot-frame {
+    border-radius: 0.9rem;
+  }
+}

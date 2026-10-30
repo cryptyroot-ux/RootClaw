@@ -1,0 +1,16 @@
+{
+  "name": "@rootclaw/companion",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A sidecar that lets a paired phone reach an unmodified RootClaw harness",
+  "type": "module",
+  "bin": {
+    "rootclaw-companion": "./src/index.ts"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node src/index.ts"
+  }
+}

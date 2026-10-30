@@ -1,0 +1,10 @@
+{
+  "name": "rootclaw-connector",
+  "private": true,
+  "type": "module",
+  "description": "Runs a RootClaw Cloud home on a server of its owner's, under RootClaw's control, over one outbound connection.",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=24"
+  }
+}
