@@ -19,6 +19,7 @@ import { promptHalves, volatileContextNote, withContextNote } from "./prompt-spl
 import { createChatToolApproval, refusal } from "./chat-tool-approval.ts";
 import { ChatProtocolError, ChatReasoningDetails, ChatToolCalls, object, type ChatToolCall } from "./openai-chat-protocol.ts";
 import { appendNative } from "./native.ts";
+import type { Completion, ModelAdapter, OpenAIChatMessage, Usage } from "./model-adapter.ts";
 import { BudgetMeter } from "../budget-guard.ts";
 import { failoverHold, failoverKind } from "./failover.ts";
 import { classifyError, HttpStatusError, interruptibleDelay, nextRetryDelay, parseRetryAfter, RETRY_MAX_ATTEMPTS } from "./retry.ts";
@@ -35,30 +36,7 @@ import { classifyContinuable, writeTurnHandoff } from "../turn-continuation.ts";
 import { KEY_REJECTED_REASON, keyRejected, noteKeyAccepted, noteKeyRejected, rejectsKey } from "../key-rejections.ts";
 import { Agent, fetch as fetchWithoutLimits } from "undici";
 
-export interface OpenAIChatMessage {
-  role: "system" | "user" | "assistant" | "tool";
-  content: string | ChatContentPart[] | null;
-  tool_calls?: ChatToolCall[];
-  tool_call_id?: string;
-  reasoning_content?: string;
-  reasoning?: string;
-  reasoning_details?: Record<string, unknown>[];
-}
-
-interface Usage {
-  input: number;
-  output: number;
-}
-
-interface Completion {
-  text: string;
-  reasoning: string;
-  usage: Usage | null;
-  toolCalls: ChatToolCall[];
-  finishReason: string | null;
-  protocolReasoning: string;
-  protocolReasoningDetails: Record<string, unknown>[];
-}
+export type { OpenAIChatMessage } from "./model-adapter.ts";
 
 interface CompletionJson {
   model?: string;
@@ -119,6 +97,8 @@ function fetchPastLimit(url: string, init: RequestInit): Promise<Response> {
 
 interface RuntimeOptions<Config> {
   input: DriverCreateInput<Config>;
+  /** The wire protocol for each round; unset means OpenAI Chat Completions at `apiUrl` (requestBody, reasoning…). */
+  adapter?: ModelAdapter;
   driverKind: string;
   apiKey: string;
   apiUrl: string;
@@ -546,6 +526,11 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     }
   };
 
+  const adapter: ModelAdapter = options.adapter ?? {
+    protocol: "openai-chat",
+    complete: (request) => complete(request.messages, request.model, request.stream, request.signal, request.onDelta, request.tools, request.onUsage),
+  };
+
   const seesImages = (turn: SendTurnInput) =>
     options.imageInput?.(turn.model || options.models().default) ?? true;
   const messagesFor = (turn: SendTurnInput): OpenAIChatMessage[] => {
@@ -725,7 +710,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             tools: tools!.definitions, keepExchanges,
             summaryBudgetBytes: Math.max(4_000, Math.floor(window * 0.4 * 3.5)),
             summarize: async (prompt) => {
-              const { text, reasoning } = await complete([{ role: "user", content: prompt }], summaryModel, false, abort.signal);
+              const { text, reasoning } = await adapter.complete({ messages: [{ role: "user", content: prompt }], model: summaryModel, stream: false, signal: abort.signal, tools: [] });
               return text.trim() ? text : reasoning;
             },
           });
@@ -777,12 +762,12 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
               if (visible) emit({ ...base(turn.threadId, turnId), type: "content.delta", streamKind, delta: visible });
             };
             try {
-              completion = await complete(messages, model, true, abort.signal, (text, streamKind) => {
+              completion = await adapter.complete({ messages, model, stream: true, signal: abort.signal, tools: tools.definitions, onDelta: (text, streamKind) => {
                 streamed = true;
                 produced = true;
                 if (streamKind === "assistant_text") answerStreamed = true;
                 delta(text, streamKind);
-              }, tools.definitions);
+              } });
               delta("", "assistant_text", true);
               delta("", "reasoning_text", true);
               break;
@@ -1149,7 +1134,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     },
     generateText: async (prompt, { signal, onUsage, model: named } = {}) => {
       const model = named ?? options.generateModel?.() ?? options.models().default;
-      const { text, reasoning, toolCalls } = await complete([{ role: "user", content: prompt }], model, false, signal, undefined, [], onUsage);
+      const { text, reasoning, toolCalls } = await adapter.complete({ messages: [{ role: "user", content: prompt }], model, stream: false, signal, tools: [], onUsage });
       if (toolCalls.length) throw new ChatProtocolError("provider returned tool calls to a text-only helper");
       return text.trim() ? text : reasoning;
     },
