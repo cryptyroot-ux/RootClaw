@@ -100,7 +100,8 @@ export const READ_TOOL_OUTPUT_DEFINITION: ChatToolDefinition = {
 };
 
 const HANDLE = /^out_[A-Za-z0-9_-]{6,64}$/;
-const threadFolder = (dir: string, threadId: string) => join(dir, createHash("sha256").update(threadId).digest("hex").slice(0, 24));
+/** The per-thread folder offloaded outputs live in; retention protects it while the thread runs. */
+export const threadFolder = (dir: string, threadId: string) => join(dir, createHash("sha256").update(threadId).digest("hex").slice(0, 24));
 
 export interface Offloaded { text: string; handle: string; bytes: number }
 

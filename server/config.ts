@@ -374,6 +374,8 @@ const appConfigSchema = z.object({
   /** The person's own USD prices per million tokens, by model id or `driver/model`, for models with no list price (a custom
    * OpenAI-compatible endpoint's, say); budgets and run costs use them. */
   modelPrices: z.record(z.string().min(1).max(160), modelPriceSchema).optional(),
+  /** Retention for large tool outputs saved under the data dir: age limit (default 7 days) and total size cap (default 500 MB). */
+  toolOutputRetention: z.object({ maxAgeDays: z.number().positive().max(3650).optional(), maxTotalMb: z.number().positive().max(1_000_000).optional() }).optional(),
   /** Operator sell prices per million tokens by model id, `driver/model` or `default`; read only with the `billing` entitlement. */
   billing: z
     .object({
@@ -523,6 +525,7 @@ export interface AppConfig extends HelperConfig {
   loopGuard?: LoopGuardConfig;
   safetyFloor?: { enabled?: boolean };
   modelPrices?: Record<string, { inputPerMillion: number; outputPerMillion: number; cachedInputPerMillion?: number }>;
+  toolOutputRetention?: { maxAgeDays?: number; maxTotalMb?: number };
   billing?: { currency?: string; prices?: Record<string, { inputPerMillion: number; outputPerMillion: number; cachedInputPerMillion?: number }> };
   openaiCompat?: { key?: string; url?: string; model?: string; provider?: string };
   composio?: { apiKey?: string; userId?: string; sessionId?: string };

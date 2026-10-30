@@ -619,6 +619,9 @@ import { createThreadRoutes } from "./routes/threads.ts";
 import { createWebhookRoutes } from "./routes/webhooks.ts";
 import { createRunRoutes } from "./routes/runs.ts";
 import { createRunStore } from "./run-store.ts";
+import { sweepToolOutputs, TOOL_OUTPUT_SWEEP_INTERVAL_MS } from "./tool-output-retention.ts";
+import { threadFolder } from "./drivers/turn-context.ts";
+import { spillDir } from "./mcp-gate-config.ts";
 import { setRunRecorder } from "./drivers/openai-chat.ts";
 import { withScopeHint } from "./connector-scope-hint.ts";
 import { connectorRequestItems } from "./connector-request-items.ts";
@@ -9553,6 +9556,21 @@ const webhookIngressStatus = () => ({
 const runStore = createRunStore({ dataDir: DATA_DIR, priceFor: (driverKind, model) => estimatePriceFor({ driverKind, model }, operatorPrices(), new Date(), cfg.modelPrices ?? null) });
 setRunRecorder(runStore);
 if (runStore.interruptedAtBoot.length) console.log(`[runs] ${runStore.interruptedAtBoot.length} run(s) were interrupted by the restart`);
+// Tool-output retention: at boot and every few hours; a running run's thread folders are never swept.
+const TOOL_OUTPUTS_DIR = join(DATA_DIR, "tool-outputs");
+function sweepSpilledToolOutputs() {
+  try {
+    const threads = new Set([...runStore.list({ status: "running", limit: 10_000 }).map((run) => run.threadId), ...liveTurnByThread.keys()]);
+    const protectedFolders = [...threads].flatMap((threadId) => [threadFolder(TOOL_OUTPUTS_DIR, threadId),
+      join(TOOL_RESULTS_DIR, threadId.replace(/[^\w.-]/g, "_")), spillDir(threadId)]);
+    const swept = sweepToolOutputs({ roots: [TOOL_OUTPUTS_DIR, TOOL_RESULTS_DIR], retention: cfg.toolOutputRetention, protectedFolders });
+    if (swept.deleted) console.log(`[tool-outputs] retention removed ${swept.deleted} file(s), ${Math.round(swept.freedBytes / 1024)} KB; ${Math.round(swept.keptBytes / 1024)} KB kept`);
+  } catch (error) {
+    console.warn(`[tool-outputs] retention sweep failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+setTimeout(sweepSpilledToolOutputs, 5_000).unref();
+setInterval(sweepSpilledToolOutputs, TOOL_OUTPUT_SWEEP_INTERVAL_MS).unref();
 ROUTES.push(createRunRoutes({
   runs: runStore,
   threadVisible: (auth, threadId) => visibleTo(viewerFor(auth)).thread(threadId),
