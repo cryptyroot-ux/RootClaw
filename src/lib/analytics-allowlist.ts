@@ -15,7 +15,7 @@ export function allow<const T extends string>(value: unknown, list: readonly T[]
 export const KEY_PROVIDER = [
   "anthropic", "openai", "openrouter", "openai_compat", "xai", "mistral", "cerebras", "groq", "meta", "boat", "composio",
   "custom_endpoint", "elevenlabs", "fish_audio", "jev", "openrouter_decider", "openai_image", "custom_image",
-  "openai_live", "onepassword", "treg", "deepseek", "postiz",
+  "openai_live", "onepassword", "treg", "deepseek", "postiz", "gemini", "ollama",
 ] as const;
 export type KeyProvider = (typeof KEY_PROVIDER)[number];
 
@@ -32,12 +32,13 @@ export function credentialProvider(target: unknown): KeyProvider | "other" {
 
 export const ENGINE = [
   "openai_compat", "grok_api", "minimax", "mistral", "cerebras", "groq", "meta",
+  "anthropic", "gemini", "openai_responses", "ollama",
 ] as const;
 export type Engine = (typeof ENGINE)[number];
 
 const ENGINE_BY_DRIVER = new Map<string, Engine>(Object.entries({
   "openai-compat": "openai_compat", grok: "grok_api", minimax: "minimax", mistral: "mistral", cerebras: "cerebras", groq: "groq",
-  meta: "meta",
+  meta: "meta", anthropic: "anthropic", gemini: "gemini", "openai-responses": "openai_responses", ollama: "ollama",
 } satisfies Record<string, Engine>));
 
 export function engineForDriver(driverKind: unknown): Engine | "other" {

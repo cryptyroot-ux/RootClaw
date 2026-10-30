@@ -216,9 +216,11 @@ export async function runHeadlessSetup(
   deps: SetupDependencies = dependencies,
 ): Promise<{ instanceId: string; model: string }> {
   assertDataDir(options.dataDir);
+  const native = NATIVE_API[answers.provider];
+  if (native) return saveNativeApi(options, answers, native, log);
   const preset = API_ENDPOINTS.find((endpoint) => endpoint.id === answers.provider);
   if (!preset && answers.provider !== "custom") {
-    throw new Error(`Unknown provider "${answers.provider}". Use one of: ${[...API_ENDPOINTS.map((e) => e.id), "custom"].join(", ")}.`);
+    throw new Error(`Unknown provider "${answers.provider}". Use one of: ${[...API_ENDPOINTS.map((e) => e.id), ...Object.keys(NATIVE_API), "custom"].join(", ")}.`);
   }
   if (!preset && !answers.baseUrl) throw new Error("--provider custom needs --base-url (including /v1).");
   const url = preset && !answers.baseUrl ? preset.url : normalizeApiUrl(answers.baseUrl!);
@@ -246,6 +248,34 @@ export async function runHeadlessSetup(
     const instances = { ...(cfg.instances && Object.keys(cfg.instances).length ? cfg.instances : instanceConfigs({})), [id]: entry };
     saveConfig({ instances, defaultModelSelection: { instanceId: id, model } });
     log(`Setup saved: ${entry.displayName} / ${model} is the default for new bots. The key is stored in config.json (owner-only).`);
+    return { instanceId: id, model };
+  } finally {
+    lease.release();
+  }
+}
+
+/** Providers on their own wire protocol: saved as their driver; the first turn checks the key. */
+const NATIVE_API: Record<string, { driver: string; label: string }> = {
+  anthropic: { driver: "anthropic", label: "Anthropic" },
+  gemini: { driver: "gemini", label: "Google Gemini" },
+  "openai-responses": { driver: "openai-responses", label: "OpenAI (Responses)" },
+};
+
+function saveNativeApi(options: { dataDir: string }, answers: HeadlessSetup, native: { driver: string; label: string }, log: (line: string) => void) {
+  const key = answers.apiKey.trim();
+  if (!key) throw new Error("An API key is required (--api-key or ROOTCLAW_API_KEY). Nothing was saved.");
+  const driver = BUILT_IN_DRIVERS.find((d) => d.driverKind === native.driver)!;
+  const config = driver.decodeConfig({ key, ...(answers.baseUrl ? { url: normalizeApiUrl(answers.baseUrl) } : {}), ...(answers.model ? { model: answers.model.trim() } : {}) }) as { model?: string };
+  const model = config.model ?? driver.models.default;
+  const lease = acquireDataDirLease(options.dataDir);
+  try {
+    checkStoredConfig(options.dataDir);
+    const cfg = loadConfig();
+    const id = `${native.driver}-${randomUUID().slice(0, 8)}`;
+    const entry: InstanceConfig = { driver: native.driver, displayName: answers.label ?? native.label, access: "api", config: { ...config, model } };
+    const instances = { ...(cfg.instances && Object.keys(cfg.instances).length ? cfg.instances : instanceConfigs({})), [id]: entry };
+    saveConfig({ instances, defaultModelSelection: { instanceId: id, model } });
+    log(`Setup saved: ${entry.displayName} / ${model} is the default for new bots. The key is checked on the first message.`);
     return { instanceId: id, model };
   } finally {
     lease.release();

@@ -266,12 +266,12 @@ describe("API onboarding", () => {
   it("keeps custom API setup after the built-in endpoints", async () => {
     const deps = dependencies();
     const ui = prompts({
-      choices: [0, 4, 0], answers: ["https://custom.example.test/v1"],
+      choices: [0, 5, 0], answers: ["https://custom.example.test/v1"],
       secrets: ["fixture-custom-key"], confirms: [true, true],
     });
     expect(await runSetup(options, ui.io, deps)).toBe(true);
     expect(ui.io.choose.mock.calls[1]?.[1]).toEqual([
-      "OpenAI API", "OpenRouter", "Groq", "Meta Model API", "Other OpenAI-compatible endpoint",
+      "OpenAI API", "OpenRouter", "Groq", "Meta Model API", "Ollama Cloud", "Other OpenAI-compatible endpoint",
     ]);
     expect(deps.verify).toHaveBeenCalledWith("https://custom.example.test/v1", "fixture-custom-key", "fixture-default");
     const cfg = loadConfig();
@@ -377,6 +377,14 @@ describe("headless setup", () => {
     expect(saved.model).toBe("fixture-default");
     expect(deps.verify).not.toHaveBeenCalled();
     expect(loadConfig().instances?.[saved.instanceId]?.config).toMatchObject({ url: "https://llm.example.test/v1" });
+  });
+
+  it("saves an Anthropic, Gemini or Responses connection as its own driver without an OpenAI-shaped check", async () => {
+    const deps = dependencies();
+    const saved = await runHeadlessSetup({ dataDir: DATA_DIR }, { provider: "anthropic", apiKey: "sk-ant-fixture", model: "claude-sonnet-5" }, () => {}, deps);
+    expect(deps.models).not.toHaveBeenCalled();
+    expect(loadConfig().instances?.[saved.instanceId]).toMatchObject({ driver: "anthropic", config: { key: "sk-ant-fixture", model: "claude-sonnet-5" } });
+    expect(loadConfig().defaultModelSelection).toEqual({ instanceId: saved.instanceId, model: "claude-sonnet-5" });
   });
 
   it("refuses unknown providers, a custom provider without a URL, and an empty key, saving nothing", async () => {

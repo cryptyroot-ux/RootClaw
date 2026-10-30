@@ -16,6 +16,8 @@ export interface ConfigStatus {
   mistral?: SavedKey;
   cerebras?: SavedKey;
   groq?: SavedKey;
+  gemini?: SavedKey;
+  ollama?: SavedKey;
   deepseek?: SavedKey;
   meta?: SavedKey;
   /** X research comes with RootClaw Cloud plans: `included` while this server holds the plan's relay credential;

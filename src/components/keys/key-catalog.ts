@@ -39,7 +39,7 @@ export interface KeyTarget {
 }
 
 export type KeyId =
-  | "openai" | "anthropic" | "xai" | "openrouter" | "mistral" | "cerebras" | "groq" | "meta" | "deepseek"
+  | "openai" | "anthropic" | "xai" | "openrouter" | "mistral" | "cerebras" | "groq" | "meta" | "deepseek" | "gemini" | "ollama"
   | "lmStudio" | "openaiCompat" | "liveCalls" | "liveKey" | "elevenlabs" | "fishAudio" | "box" | "vps" | "onePassword" | "composio" | "treg" | "postiz"
   | "jev" | "openrouterHelper" | "workersAi" | "imageOpenai" | "imageCustom";
 
@@ -66,7 +66,7 @@ function flag(saved: SavedKey | undefined): SavedState {
   return { configured: saved?.configured === true, ...(saved?.configured && saved.last4 ? { last4: saved.last4 } : {}) };
 }
 
-type TopLevelKey = "openai" | "openrouter" | "xai" | "mistral" | "cerebras" | "groq" | "meta" | "deepseek" | "treg";
+type TopLevelKey = "openai" | "openrouter" | "xai" | "mistral" | "cerebras" | "groq" | "meta" | "deepseek" | "gemini" | "ollama" | "treg";
 
 function providerKey(name: TopLevelKey, rest: Omit<KeyTarget, "patch" | "saved">): KeyTarget {
   return { patch: (value) => ({ [name]: { key: value } }), saved: (config) => flag(config[name]), ...rest };
@@ -101,6 +101,12 @@ export const KEY_CATALOG: readonly KeyEntry[] = [
   { id: "meta", section: "ai", labelKey: "keys.meta.label", purposeKey: "keys.purpose.meta", name: "Meta", env: ["ROOTCLAW_META_API_KEY"],
     words: ["meta", "muse", "llama"], mark: provider("meta", "meta"), kind: "key",
     target: providerKey("meta", { placeholder: "LLM|…", href: "https://dev.meta.ai/docs/authentication", test: "meta", analytics: "meta", shape: /^LLM\|/ }) },
+  { id: "gemini", section: "ai", labelKey: "keys.gemini.label", purposeKey: "keys.purpose.gemini", name: "Google Gemini", env: ["ROOTCLAW_GEMINI_API_KEY"],
+    words: ["gemini", "google", "ai studio"], mark: provider("gemini", "google"), kind: "key",
+    target: providerKey("gemini", { placeholder: "AIza…", href: "https://aistudio.google.com/apikey", analytics: "gemini", shape: /^AIza/ }) },
+  { id: "ollama", section: "ai", labelKey: "keys.ollama.label", purposeKey: "keys.purpose.ollama", name: "Ollama Cloud", env: ["ROOTCLAW_OLLAMA_API_KEY"],
+    words: ["ollama", "ollama cloud", "open models"], mark: provider("ollama"), kind: "key",
+    target: providerKey("ollama", { placeholder: "…", href: "https://ollama.com/settings/keys", analytics: "ollama" }) },
   { id: "deepseek", section: "ai", labelKey: "keys.deepseek.label", purposeKey: "keys.purpose.deepseek", name: "DeepSeek", env: ["ROOTCLAW_DEEPSEEK_API_KEY"],
     words: ["deepseek", "dsh", "harness"], mark: provider("deepseekAgent", "deepseek"), kind: "key",
     target: providerKey("deepseek", { placeholder: "sk-…", href: "https://platform.deepseek.com/api_keys", analytics: "deepseek" }) },
@@ -209,6 +215,7 @@ export function looksLikeOtherKey(entry: KeyEntry, value: string): KeyEntry | nu
 const INSTANCE_KEYS: Readonly<Record<string, KeyId>> = {
   openai: "openai", claudeApi: "anthropic", xaiApi: "xai", grok: "xai", openrouter: "openrouter", mistral: "mistral", cerebras: "cerebras",
   groq: "groq", meta: "meta", deepseek: "deepseek", openaiCompat: "openaiCompat",
+  anthropicApi: "anthropic", geminiApi: "gemini", openaiResponses: "openai", ollamaCloud: "ollama",
 };
 
 export function keyForInstance(instanceId: string | undefined): KeyId | undefined {

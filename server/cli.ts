@@ -1,6 +1,6 @@
 // `rootclaw` on the command line: run the server anywhere and pair devices to it.
 //
-//   rootclaw setup [--data-dir ~/.rootclaw] [--provider openai|openrouter|groq|meta|custom --api-key KEY [--base-url URL] [--model ID] [--skip-verify]]
+//   rootclaw setup [--data-dir ~/.rootclaw] [--provider openai|openrouter|groq|meta|ollama|anthropic|gemini|openai-responses|custom --api-key KEY [--base-url URL] [--model ID] [--skip-verify]]
 //   rootclaw start [serve options]
 //   rootclaw serve [--port 8799] [--data-dir ~/.rootclaw] [--label "cab mini"]
 //                     [--public-url https://host] [--tailscale | --tunnel | --domain HOST] [--no-pair]
@@ -972,7 +972,7 @@ export async function runOnboardingCommand(
     return 0;
   }
   if (options.command === "setup" && !interactive) {
-    io.error("Setup needs an interactive terminal, or run it headless: rootclaw setup --provider openai|openrouter|groq|meta|custom --api-key KEY [--base-url URL] [--model ID] [--skip-verify]. Then use `rootclaw serve`.");
+    io.error("Setup needs an interactive terminal, or run it headless: rootclaw setup --provider openai|openrouter|groq|meta|ollama|anthropic|gemini|openai-responses|custom --api-key KEY [--base-url URL] [--model ID] [--skip-verify]. Then use `rootclaw serve`.");
     return 1;
   }
   process.env.ROOTCLAW_DATA_DIR = options.dataDir;

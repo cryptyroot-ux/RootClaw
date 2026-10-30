@@ -19,6 +19,7 @@ describe("API setup endpoint validation", () => {
       ["openrouter", "https://openrouter.ai/api/v1"],
       ["groq", "https://api.groq.com/openai/v1"],
       ["meta", "https://api.meta.ai/v1"],
+      ["ollama", "https://ollama.com/v1"],
     ]);
     for (const endpoint of API_ENDPOINTS) expect(endpoint.keyUrl).toMatch(/^https:\/\//u);
   });

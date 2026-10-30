@@ -4,6 +4,8 @@ export const API_ENDPOINTS = [
   { id: "openrouter", label: "OpenRouter", url: "https://openrouter.ai/api/v1", keyUrl: "https://openrouter.ai/settings/keys" },
   { id: "groq", label: "Groq", url: "https://api.groq.com/openai/v1", keyUrl: "https://console.groq.com/keys" },
   { id: "meta", label: "Meta Model API", url: "https://api.meta.ai/v1", keyUrl: "https://dev.meta.ai/" },
+  // Ollama Cloud through its OpenAI-compatible endpoint (Bearer key), not the native /api/chat.
+  { id: "ollama", label: "Ollama Cloud", url: "https://ollama.com/v1", keyUrl: "https://ollama.com/settings/keys" },
 ] as const;
 
 export function normalizeApiUrl(value: string): string {

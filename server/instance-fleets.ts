@@ -14,6 +14,10 @@ export const API_KEY_FLEET: InstanceConfigMap = {
     config: { url: "https://api.openai.com/v1", apiKeyEnv: "ROOTCLAW_OPENAI_API_KEY", catalog: "openai" },
   },
   [XAI_API_INSTANCE]: { driver: "grok", displayName: "xAI", access: "api", icon: { kind: "preset", preset: "xai" } },
+  anthropicApi: { driver: "anthropic", displayName: "Anthropic", access: "api", icon: { kind: "preset", preset: "anthropic" } },
+  geminiApi: { driver: "gemini", displayName: "Google Gemini", access: "api", icon: { kind: "preset", preset: "google" } },
+  openaiResponses: { driver: "openai-responses", displayName: "OpenAI (Responses)", access: "api", icon: { kind: "preset", preset: "openai" } },
+  ollamaCloud: { driver: "ollama", displayName: "Ollama Cloud", access: "api" },
   [OPENROUTER_API_INSTANCE]: {
     driver: "openai-compat", displayName: "OpenRouter", access: "api", icon: { kind: "preset", preset: "openrouter" },
     config: { url: "https://openrouter.ai/api/v1", apiKeyEnv: "ROOTCLAW_OPENROUTER_API_KEY" },

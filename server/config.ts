@@ -341,6 +341,10 @@ const appConfigSchema = z.object({
   groq: z.object({ key: optionalText, url: optionalText }).optional(),
   meta: z.object({ key: optionalText, url: optionalText }).optional(),
   deepseek: z.object({ key: optionalText }).optional(),
+  /** Gemini API key (or `oauth` from Google sign-in, see docs/api-providers.md); `url` for a proxy or test double. */
+  gemini: z.object({ key: optionalText, url: optionalText }).optional(),
+  /** Ollama Cloud API key; `url` defaults to https://ollama.com/v1 (its OpenAI-compatible endpoint). */
+  ollama: z.object({ key: optionalText, url: optionalText }).optional(),
   xai: z.object({ key: optionalText, url: optionalText }).optional(),
   /** Anthropic API key for Claude Code billed per token; `url` is for a proxy or test double. Never a login OAuth token. */
   anthropic: z.object({ key: optionalText, url: optionalText, everyClaudeBot: z.boolean().optional() }).optional(),
@@ -490,6 +494,8 @@ export interface AppConfig extends HelperConfig {
   cerebras?: { key?: string }; treg?: { key?: string }; /** Postiz: an organisation API key and the server it belongs to (blank: Postiz Cloud). */ postiz?: { key?: string; url?: string };
   groq?: { key?: string; url?: string };
   meta?: { key?: string; url?: string };
+  gemini?: { key?: string; url?: string };
+  ollama?: { key?: string; url?: string };
   /** DeepSeek API key for the DeepSeek Harness engine (`dsh`). */
   deepseek?: { key?: string };
   /** `everyClaudeBot`: the key runs every Claude bot instead of its login; unset means true. */
@@ -781,6 +787,10 @@ export function loadConfig(): AppConfig {
   if (process.env.ROOTCLAW_GROQ_API_KEY !== undefined) cfg.groq.key = process.env.ROOTCLAW_GROQ_API_KEY;
   cfg.meta = { ...cfg.meta };
   if (process.env.ROOTCLAW_META_API_KEY !== undefined) cfg.meta.key = process.env.ROOTCLAW_META_API_KEY;
+  cfg.gemini = { ...cfg.gemini };
+  if (process.env.ROOTCLAW_GEMINI_API_KEY !== undefined) cfg.gemini.key = process.env.ROOTCLAW_GEMINI_API_KEY;
+  cfg.ollama = { ...cfg.ollama };
+  if (process.env.ROOTCLAW_OLLAMA_API_KEY !== undefined) cfg.ollama.key = process.env.ROOTCLAW_OLLAMA_API_KEY;
   cfg.deepseek = { ...cfg.deepseek };
   if (process.env.ROOTCLAW_DEEPSEEK_API_KEY !== undefined) cfg.deepseek.key = process.env.ROOTCLAW_DEEPSEEK_API_KEY;
   cfg.xai = { ...cfg.xai };
@@ -850,6 +860,8 @@ export function syncCredentialEnv(patch: Partial<Omit<AppConfig, "threads" | "ne
     [patch.groq?.key, "ROOTCLAW_GROQ_API_KEY"],
     [patch.meta?.key, "ROOTCLAW_META_API_KEY"],
     [patch.deepseek?.key, "ROOTCLAW_DEEPSEEK_API_KEY"],
+    [patch.gemini?.key, "ROOTCLAW_GEMINI_API_KEY"],
+    [patch.ollama?.key, "ROOTCLAW_OLLAMA_API_KEY"],
     [patch.anthropic?.key, "ROOTCLAW_ANTHROPIC_API_KEY"],
     [patch.openaiCompat?.key, "OPENAI_COMPAT_API_KEY"],
     [patch.openai?.key, "ROOTCLAW_OPENAI_API_KEY"],
@@ -912,7 +924,7 @@ export function saveConfig(
   const before = configSaveListeners.size ? structuredClone(disk) : disk;
   const storedProfiles = storedBrowserProfilesSchema.safeParse(disk.browserProfiles);
   if (storedProfiles.success) disk.browserProfiles = storedProfiles.data;
-  for (const key of ["xai", "anthropic", "mistral", "cerebras", "treg", "postiz", "groq", "meta", "deepseek", "openai", "openrouter", "openaiCompat", "composio", "box", "tts", "decider", "imageGen", "live", "profile", "rooms", "mcp", "threads", "context", "memory", "localVm", "features", "budgets", "billing", "decisions", "loopGuard", "onboarding", "browserEngine", "newBots", "safetyFloor"] as const) {
+  for (const key of ["xai", "anthropic", "mistral", "cerebras", "treg", "postiz", "groq", "meta", "deepseek", "gemini", "ollama", "openai", "openrouter", "openaiCompat", "composio", "box", "tts", "decider", "imageGen", "live", "profile", "rooms", "mcp", "threads", "context", "memory", "localVm", "features", "budgets", "billing", "decisions", "loopGuard", "onboarding", "browserEngine", "newBots", "safetyFloor"] as const) {
     const section = checkedPatch[key];
     if (!section) continue;
     const current = jsonObjectSchema.safeParse(disk[key]);
@@ -1076,6 +1088,14 @@ export function instanceOwnsRouting(
       return own(entry.environment?.GROQ_API_KEY) || ownUrl("https://api.groq.com/openai/v1", cfg.groq?.url);
     case "meta":
       return own(entry.environment?.META_API_KEY) || ownUrl("https://api.meta.ai/v1", cfg.meta?.url);
+    case "anthropic":
+      return own(config.key) || own(entry.environment?.ANTHROPIC_API_KEY) || ownUrl("https://api.anthropic.com/v1", cfg.anthropic?.url);
+    case "gemini":
+      return own(config.key) || own(entry.environment?.GEMINI_API_KEY) || ownUrl("https://generativelanguage.googleapis.com/v1beta", cfg.gemini?.url);
+    case "openai-responses":
+      return own(config.key) || own(entry.environment?.OPENAI_API_KEY) || ownUrl("https://api.openai.com/v1");
+    case "ollama":
+      return own(config.key) || own(entry.environment?.OLLAMA_API_KEY) || ownUrl("https://ollama.com/v1", cfg.ollama?.url);
     case "grok":
       return own(entry.environment?.XAI_API_KEY) || (own(config.apiKeyEnv) && config.apiKeyEnv !== "XAI_API_KEY")
         || ownUrl("https://api.x.ai/v1", cfg.xai?.url);
@@ -1092,6 +1112,10 @@ function injectedEnvironment(cfg: AppConfig, instanceId: string, driver: string)
   if (driver === "groq" && cfg.groq?.key) environment.set("GROQ_API_KEY", cfg.groq.key);
   if (driver === "meta" && cfg.meta?.key) environment.set("META_API_KEY", cfg.meta.key);
   if (driver === "grok" && cfg.xai?.key) environment.set("XAI_API_KEY", cfg.xai.key);
+  if (driver === "anthropic" && cfg.anthropic?.key) environment.set("ANTHROPIC_API_KEY", cfg.anthropic.key);
+  if (driver === "gemini" && cfg.gemini?.key) environment.set("GEMINI_API_KEY", cfg.gemini.key);
+  if (driver === "openai-responses" && cfg.openai?.key) environment.set("OPENAI_API_KEY", cfg.openai.key);
+  if (driver === "ollama" && cfg.ollama?.key) environment.set("OLLAMA_API_KEY", cfg.ollama.key);
   if (driver === "openai-compat" && instanceId === OPENAI_API_INSTANCE) {
     if (cfg.openai?.key) environment.set("ROOTCLAW_OPENAI_API_KEY", cfg.openai.key);
   } else if (driver === "openai-compat" && instanceId === OPENROUTER_API_INSTANCE) {
@@ -1144,6 +1168,9 @@ export function instanceConfigs(cfg: AppConfig): InstanceConfigMap {
     if (entry.driver === "groq" && cfg.groq?.url && !ownsRouting) {
       entry.config = { ...entry.config as object, url: cfg.groq.url };
     }
+    const workspaceUrl = entry.driver === "anthropic" ? cfg.anthropic?.url : entry.driver === "gemini" ? cfg.gemini?.url
+      : entry.driver === "ollama" ? cfg.ollama?.url : undefined;
+    if (workspaceUrl && !ownsRouting) entry.config = { ...entry.config as object, url: workspaceUrl };
     if (entry.driver === "meta" && cfg.meta?.url && !ownsRouting) {
       entry.config = { ...entry.config as object, url: cfg.meta.url };
     }
