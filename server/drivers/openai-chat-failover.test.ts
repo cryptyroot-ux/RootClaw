@@ -75,3 +75,26 @@ describe("native budget guard", () => {
     expect(events.filter((event) => event.type === "runtime.notice" && /80% of its budget/.test(event.message))).toHaveLength(1);
   });
 });
+
+describe("native run record", () => {
+  it("records a quota failure as a failed run on its model, flagged for the chain", async () => {
+    const { mkdtempSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { createRunStore } = await import("../run-store.ts");
+    const { setRunRecorder } = await import("./openai-chat.ts");
+    const dir = mkdtempSync(join(tmpdir(), "native-runs-"));
+    const runs = createRunStore({ dataDir: dir });
+    setRunRecorder(runs);
+    try {
+      const { done } = await runTurn(() => json(429, { error: { message: "You exceeded your current quota", code: "insufficient_quota" } }), { botId: "b1" });
+      const run = createRunStore({ dataDir: dir }).get(done.turnId!)!;
+      expect(run).toMatchObject({ botId: "b1", threadId: "thread", instanceId: "primary", chain: ["m1"], status: "failed", failover: true });
+      expect(run.errors.length).toBe(1);
+      expect(run.durationMs).toBeGreaterThanOrEqual(0);
+    } finally {
+      setRunRecorder(null);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

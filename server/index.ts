@@ -617,6 +617,9 @@ import { createDevsReports } from "./host/devs-reports.ts"; import { bugReportEn
 import { createCardRequester, linePersonKey } from "./host/thread-person.ts";
 import { createThreadRoutes } from "./routes/threads.ts";
 import { createWebhookRoutes } from "./routes/webhooks.ts";
+import { createRunRoutes } from "./routes/runs.ts";
+import { createRunStore } from "./run-store.ts";
+import { setRunRecorder } from "./drivers/openai-chat.ts";
 import { withScopeHint } from "./connector-scope-hint.ts";
 import { connectorRequestItems } from "./connector-request-items.ts";
 import { personAsks as personAskAt } from "./thread-presence.ts";
@@ -9546,6 +9549,19 @@ const webhookIngressStatus = () => ({
   baseUrl: webhookIngress?.baseUrl ?? `http://127.0.0.1:${WEBHOOK_PORT}`,
   ...(webhookIngressError ? { error: webhookIngressError } : {}),
 });
+// Native engine runs, durable under the data dir; ones a restart cut off are marked interrupted and can be retried.
+const runStore = createRunStore({ dataDir: DATA_DIR });
+setRunRecorder(runStore);
+if (runStore.interruptedAtBoot.length) console.log(`[runs] ${runStore.interruptedAtBoot.length} run(s) were interrupted by the restart`);
+ROUTES.push(createRunRoutes({
+  runs: runStore,
+  threadVisible: (auth, threadId) => visibleTo(viewerFor(auth)).thread(threadId),
+  resume: async (run) => {
+    if (!run.botId || !store.bot(run.botId)) throw new Error("that run's bot is gone");
+    if (threadBusy(run.botId, run.threadId)) throw new Error("that thread is busy; retry when it is idle");
+    await startTurn(run.botId, "[RootClaw: this thread's last run stopped before it finished. Continue the request above from where it stopped and finish it. If the same problem comes back, say exactly what is blocking and stop.]", { threadId: run.threadId });
+  },
+}));
 ROUTES.push(createWebhookRoutes({ webhooks, ingress: webhookIngressStatus, visible: (auth) => visibleTo(viewerFor(auth)) }));
 
 const RUNTIME_KEEP_MS = 30 * 24 * 60 * 60_000;

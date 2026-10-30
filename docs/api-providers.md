@@ -51,3 +51,14 @@ These defaults were checked against each provider's public model list on 2026-10
 | Ollama Cloud | `gemma4:31b` | docs.ollama.com/cloud |
 
 `rootclaw setup` lists all of them interactively. For the native APIs (Anthropic, Gemini, OpenAI Responses) it asks for the key and an optional model id, then checks the key on the first message.
+
+## Run records
+
+Every native engine run (one turn on one engine) is recorded in `<dataDir>/runs/runs.jsonl`: the bot, thread, engine,
+the model chain it went through (a failover run lists the models that failed before it), rounds, each tool call with its
+status, usage and cost, stop reason, errors, retries and timings. The file is append-only and compacted to the newest 500
+runs. A run still going when RootClaw stopped is marked `interrupted` on the next start.
+
+- `GET /api/runs?botId=&threadId=&status=&limit=`: runs newest first, only on threads the session can see.
+- `GET /api/runs/<id>`: one run.
+- `POST /api/runs/<id>/retry`: run an interrupted or failed run's thread again on its bot, once.

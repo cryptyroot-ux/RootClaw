@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { RunStore } from "../run-store.ts";
 import type {
   DriverCreateInput,
   ModelCatalog,
@@ -293,6 +294,10 @@ export function turnContextSettings(fromTurn: TurnContextSettings | undefined): 
   };
 }
 
+/** Where native runs are recorded (server/run-store.ts); index.ts sets it once at boot. Recording never breaks a turn. */
+let runRecorder: Pick<RunStore, "begin" | "observe"> | null = null;
+export function setRunRecorder(recorder: Pick<RunStore, "begin" | "observe"> | null): void { runRecorder = recorder; }
+
 export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>): ProviderInstance {
   const { input } = options;
   const listeners = new Set<RuntimeEventListener>();
@@ -315,6 +320,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
   const sessionGrants = new Map<string, Set<string>>();
 
   const emit = (event: RuntimeEvent) => {
+    try { runRecorder?.observe(event as never); } catch { /* recording is best effort */ }
     for (const listener of Array.from(listeners)) listener(event);
   };
   const base = (threadId: string, turnId: string) => ({
@@ -633,6 +639,10 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     const done = new Promise<void>((resolve) => { resolveDone = resolve; });
     const turnEntry = { abort, turnId, done, approval, asides: [] as string[], ending: false };
     active.set(turn.threadId, turnEntry);
+    try {
+      runRecorder?.begin({ runId: turnId, threadId: turn.threadId, ...(turn.botId ? { botId: turn.botId } : {}),
+        instanceId: input.instanceId, driver: options.driverKind, model });
+    } catch { /* recording is best effort */ }
     emit({ ...base(turn.threadId, turnId), type: "turn.started" });
     emit({ ...base(turn.threadId, turnId), type: "session.started", sessionId: null, model });
 
