@@ -3,6 +3,7 @@ import { refusesRequestSize, RequestTooLargeError } from "../chat-size-limit.ts"
 import { ChatProtocolError } from "../openai-chat-protocol.ts";
 import { HttpStatusError, parseRetryAfter } from "../retry.ts";
 import { refusesContextLength } from "../turn-context.ts";
+import { fetchFresh } from "../http-client.ts";
 
 const DETAIL_CHARS = 300;
 /** Overflow wording turn-context.ts does not know: Gemini's "input token count (…) exceeds the maximum number of tokens". */
@@ -18,7 +19,8 @@ export function httpFailure(label: string, status: number, body: string, payload
 
 export async function postJson(label: string, url: string, headers: Record<string, string>, body: unknown, signal?: AbortSignal): Promise<Response> {
   const payload = JSON.stringify(body);
-  const response = await fetch(url, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: payload, signal, redirect: "error" });
+  const response = await fetchFresh(url, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: payload, signal, redirect: "error" },
+    fetch, { onStale: () => console.warn(`${label}: stale keep-alive socket; resending once on a fresh connection`) });
   if (!response.ok) {
     const text = await response.text().catch(() => "");
     throw httpFailure(label, response.status, text, Buffer.byteLength(payload), response.headers.get("retry-after"));

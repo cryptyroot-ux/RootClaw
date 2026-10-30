@@ -23,6 +23,7 @@ import { appendNative } from "./native.ts";
 import type { Completion, ModelAdapter, OpenAIChatMessage, Usage } from "./model-adapter.ts";
 import { BudgetMeter } from "../budget-guard.ts";
 import { countTokens, prepareTokenizer } from "./tokenizer.ts";
+import { fetchFresh } from "./http-client.ts";
 import { applyPlanUpdate, carryPlan, parseVerdict, pinPlan, PLAN_HINT, PLAN_KEEP_HINT, REPLAN_AFTER_ROUNDS, REPLAN_HINT, shouldPlan, shouldVerify,
   takeCarriedPlan, unpinPlan, unverifiedNote, UPDATE_PLAN_DEFINITION, UPDATE_PLAN_TOOL, verifierPrompt, VERIFY_MAX_TOKENS, verifyRetryMessage,
   type TurnPlan } from "./plan-verify.ts";
@@ -381,7 +382,11 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         // OpenAI's reasoning families only take max_completion_tokens; everything else the classic field.
         ...(maxTokens ? (/^(o\d|gpt-5|gpt-6)/i.test(model.split("/").pop() ?? "") ? { max_completion_tokens: maxTokens } : { max_tokens: maxTokens }) : {}),
       });
-      const send = options.timeoutMs > FETCH_LIMIT_MS ? fetchPastLimit : fetch;
+      const pastLimit = options.timeoutMs > FETCH_LIMIT_MS;
+      const send = (url: string, init: RequestInit) => fetchFresh(url, init, pastLimit ? fetchPastLimit : fetch, {
+        ...(pastLimit ? { headersTimeout: 0, bodyTimeout: 0 } : {}),
+        onStale: () => console.warn(`${options.driverKind}: ${model} stale keep-alive socket; resending once on a fresh connection`),
+      });
       const response = await send(`${options.apiUrl}/chat/completions`, {
         method: "POST",
         ...(messages.some(message => Array.isArray(message.content) && message.content.some(part => part.type === "image_url")) ? { redirect: "error" as const } : {}),
