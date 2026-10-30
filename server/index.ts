@@ -15,7 +15,6 @@ import { draftSummary, foldPoint } from "./compaction-summary.ts";
 import { compactBudget, compactionReading, contextWindowFor, shouldCompact } from "./context-budget.ts";
 import { RoomContextTracker, roomResetNote } from "./room-context.ts";
 import { createRoomTranscript, GROUP_CONTEXT_MESSAGES } from "./host/room-transcript.ts";
-import { createRoomSessions } from "./host/room-sessions.ts";
 import { LentComputers, provenRequestPerson, SharedComputers, sharedComputerOperation } from "./shared-computers.ts"; import { lentScreenResult } from "./lent-screen-guidance.ts"; import { DeviceLinks } from "./device-links.ts";
 import { cloudHomeLendingRefusal, createCloudRoutineAuthors, ownerOnlyConversation } from "./cloud-lending.ts"; import { assertRoomFolder } from "./room-folder.ts"; import { cloudConnectedAppsBrokerUrl, startCloudHomeConnectedApps, stopCloudHomeConnectedApps } from "./cloud-connected-apps.ts"; import { createTeamConnectionsHost } from "./host/team-connections-host.ts"; import { createCloudLendingTurns } from "./host/cloud-lending-turns.ts"; import { createTeamConnectionRoutes } from "./routes/team-connections.ts";
 import { botMemoryFiles, createLendingMemory } from "./lending-memory.ts";
@@ -5435,7 +5434,6 @@ function ingestEngineHook(capability: InternalCapability, body: unknown): { ok: 
   const payload = event.payload && typeof event.payload === "object" ? (event.payload as Record<string, unknown>) : {};
   const threadId = capability.threadId;
   const chip = (text: string) => store.appendMessage(threadId, { role: "bot", kind: "activity", tool: { name: text, ok: true } });
-  if (name === "PreCompact" || (name === "SessionStart" && payload.source === "compact")) roomSessions.distrust(threadId, capability.botId);
   if (name === "PreCompact") {
     const trigger = payload.trigger === "manual" ? "manual" : "auto";
     chip(`context compaction started (${trigger})`);
@@ -6384,7 +6382,7 @@ bus.subscribe((event: RuntimeEvent) => {
   };
 
   if (coordinatorVisibleText) pushAssistantText(coordinatorVisibleText, completedTurnId);
-  if (bot) handoffs.onEvent(event); else roomSessions.onEvent(event);
+  if (bot) handoffs.onEvent(event);
 
   if (event.turnId) liveTurnByThread.set(event.threadId, event.turnId);
   const requestOwner = bot ? directRequestOwners.get(event.threadId) : undefined;
@@ -7124,7 +7122,6 @@ const handoffs = new Handoffs({
   replies: (threadId, turnId) => store.activePath(threadId)
     .filter((m) => m.role === "bot" && m.kind === "text" && !m.from && m.turnId === turnId).map((m) => m.id),
 });
-const roomSessions = createRoomSessions({ settings: () => cfg.context, messagesFor: (threadId) => store.messagesFor(threadId) });
 const nativeCompactTokens = (_instance: { driverKind: string; instanceId: string }): number | undefined => undefined;
 
 const loopingEngine = (threadId: string, bot = store.botByThread(threadId)) => bot ? runningTurnInstance(botForThread(bot.id, threadId), threadId)?.adapter : undefined;
@@ -10376,18 +10373,13 @@ async function runClaimedGroupMemberTurn(
     if (roomReset || displaced) broadcast({ kind: "group", group: publicGroupState(store.group(groupId) ?? group) });
     const roomShareNote = skillsHost.shareNote(bot, threadId, Boolean(workspace));
     const clock = turnClockLine(Date.now(), hostTimeZone());
-    const roomToolScope = toolScopeForTurn(readyBot.id), roomUserMcp = claudeUserMcpEnabled(cfg) && !false;
-    const roomSession = roomSessions.dispatch({
-      threadId, botId: readyBot.id, claimId: internalGeneration, instance, guestConfined: roomGuestConfined, reset: Boolean(roomReset), hooks: Boolean(integrations.hooks),
-      context: () => ({ ...roomMemberContexts.forThread(threadId)?.[readyBot.id], compactAt: nativeCompactTokens(instance) }),
-      config: [roomSystem.stable, cwd, readyBot.modelSelection, turnApprovalMode, roomToolScope, roomUserMcp, integrations],
-      window: roomWindow, tail: roomTail, wrap: (body) => withTurnClock(clock, withRecalled(roomRecalled, body + roomShareNote.text + devsReports.note(threadId, Boolean(integrations.agents)))),
-    });
+    const roomToolScope = toolScopeForTurn(readyBot.id);
+    const roomText = withTurnClock(clock, withRecalled(roomRecalled, roomWindow.text + roomTail + roomShareNote.text + devsReports.note(threadId, Boolean(integrations.agents))));
     guardTurnDispatch(roomShareNote.after(instance.adapter.sendTurn({
-        ...roomSession.send,
+        ...(roomReset ? { sessionReset: true } : {}),
         threadId,
         botId: readyBot.id,
-        text: roomSession.text,
+        text: roomText,
         ...budgetFields(readyBot.id, instance.driverKind, readyBot.modelSelection.model),
         ...(roomRecalled ? { recalled: roomRecalled } : {}),
         images: turnImages,
@@ -10410,7 +10402,6 @@ async function runClaimedGroupMemberTurn(
       })
       .then((dispatch) => {
         providerTurnId = dispatch.value.turnId;
-        roomSessions.bindTurn(threadId, internalGeneration, dispatch.value.turnId);
         bindInternalCapabilityToProviderTurn(threadId, internalGeneration, dispatch.value.turnId);
         orchestration?.onTurnStarted?.(dispatch.value.turnId);
         if (abandoned) {

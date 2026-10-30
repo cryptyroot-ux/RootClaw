@@ -24,7 +24,6 @@ import { isRemoteMcpServer, mcpServerServes, parseStoredMcpServer } from "./mcp-
 import { parseJson, schemaIssue, type JsonObject, type JsonValue } from "./schema.ts";
 import { deciderConfigSchema, type DeciderConfig } from "./decider/config.ts";
 import { browserEngineConfigSchema, isValidCdpTarget, type BrowserEngineConfig } from "./browser/config.ts";
-import { roomContextSettings } from "./room-context-settings.ts";
 import { MAX_LOCAL_VM_IDLE_TIMEOUT_MINUTES, MAX_LOCAL_VM_MAX_INSTANCES, MIN_LOCAL_VM_IDLE_TIMEOUT_MINUTES, MIN_LOCAL_VM_MAX_INSTANCES } from "./local-vm-settings.ts";
 export * from "./local-vm-settings.ts";
 
@@ -445,7 +444,7 @@ const appConfigSchema = z.object({
     toolOffloadBytes: z.number().int().min(1_000).max(10_000_000).optional(),
     /** Native engine: a cheaper model id for mid-turn summaries; absent uses the turn's model. */
     turnSummaryModel: z.string().trim().min(1).max(200).optional(),
-  }).extend(roomContextSettings).extend(replaySettings).optional(),
+  }).extend({ /** Retired room-session settings: still accepted so older config files load. */ roomCompactAt: z.number().optional(), roomSessions: z.boolean().optional() }).extend(replaySettings).optional(),
   /** Memory upkeep timing, for bots with Memory upkeep switched on. */
   memory: z.object({
     /** Quiet time after a turn before its facts are captured (ms). */
