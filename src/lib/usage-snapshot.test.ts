@@ -51,7 +51,7 @@ const DOCUMENTED = [
   "routines_interval", "routines_cron", "webhooks", "engines", "engine_count", "custom_endpoints", "trial_credit", "apps",
   "apps_connected", "connectors_mode", "local_vm_mode", "vps_configured", "voice", "voice_included", "decider", "decider_included",
   "live_calls", "phones_paired", "paired_devices", "phone_paired", "members", "cloud_home", "cloud_plan", "cloud_trial", "edition",
-  "org_managed", "onboarded", "first_turn", "platform", "remote_client",
+  "onboarded", "first_turn", "platform", "remote_client",
 ];
 
 const WORDS: Record<string, readonly string[]> = {
@@ -93,7 +93,6 @@ function hostileState(): SnapshotState {
       profile: { name: HOSTILE, email: `${HOSTILE}@example.com`, aboutMe: HOSTILE },
       language: "ja",
       edition: { edition: "enterprise", features: [HOSTILE] },
-      managedPolicy: { organizationName: HOSTILE, version: 1, companyModelsOnly: false, allowedEngines: [HOSTILE], mcp: { allowCustom: false, allowlist: [HOSTILE] }, computers: { thisComputer: true, localVm: true, box: true, vps: true }, remoteAccess: true },
       browserProfiles: [{ id: HOSTILE, name: HOSTILE }],
       onboarding: { completedAt: "2026-10-01T00:00:00.000Z", version: 1, reelSeen: true, hintsSeen: [HOSTILE], firstTurnAt: "2026-10-01T00:05:00.000Z" },
     } as unknown as ConfigStatus,
@@ -203,7 +202,7 @@ describe("the daily usage snapshot", () => {
       apps: ["gmail", "other"], apps_connected: 4, connectors_mode: "self_hosted", local_vm_mode: "per_bot", vps_configured: true,
       voice: "fish", voice_included: false, decider: "jev", decider_included: false, live_calls: true,
       phones_paired: 2, paired_devices: 2, phone_paired: true, members: 1,
-      cloud_home: false, cloud_plan: "max", cloud_trial: true, edition: "enterprise", org_managed: true, onboarded: true, first_turn: true,
+      cloud_home: false, cloud_plan: "max", cloud_trial: true, edition: "enterprise", onboarded: true, first_turn: true,
       platform: "desktop", remote_client: false,
     });
     expect(Object.keys(sent!).sort()).toEqual([...DOCUMENTED].sort());

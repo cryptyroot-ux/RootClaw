@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, expect, it } from "vitest";
-import { CLOUD_IGNORED_KEYS, cloudHomePlaceRefusal, cloudPairingSignature, cloudRequestSignature } from "./cloud-home.ts";
+import { cloudHomePlaceRefusal, cloudPairingSignature, cloudRequestSignature } from "./cloud-home.ts";
 import { cloudHomePrompt } from "./system-prompt.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
@@ -143,8 +143,7 @@ afterAll(async () => {
   if (home) await removeTempDir(home);
 });
 
-it("boots with a gateway's settings, says once that it ignores them, and never logs them", () => {
-  expect(log.match(/cloud home: ignoring ROOTCLAW_HOSTED_MODEL_URL, ROOTCLAW_HOSTED_MODEL_TOKEN, ROOTCLAW_HOSTED_MODELS: Cloud Pro includes no AI/g)).toHaveLength(1);
+it("boots with stray gateway settings and never logs them", () => {
   expect(log).not.toContain(token);
   expect(log).not.toContain(secret);
   for (const includedToken of includedTokens) expect(log).not.toContain(includedToken);
@@ -327,7 +326,7 @@ it("never hands a gateway's settings or the signing secret to an engine", async 
   await expect.poll(() => existsSync(dump), { timeout: 15_000 }).toBe(true);
   const { env } = JSON.parse(readFileSync(dump, "utf8"));
   expect(env.HOME).toBe(home);
-  for (const key of [...CLOUD_IGNORED_KEYS, "ROOTCLAW_CLOUD_BOOTSTRAP_SECRET", "ROOTCLAW_CLOUD_BOAT_TOKEN", "ROOTCLAW_CLOUD_VOICE_TOKEN", "ROOTCLAW_CLOUD_DECIDER_TOKEN"]) expect(env).not.toHaveProperty(key);
+  for (const key of ["ROOTCLAW_CLOUD_BOOTSTRAP_SECRET", "ROOTCLAW_CLOUD_BOAT_TOKEN", "ROOTCLAW_CLOUD_VOICE_TOKEN", "ROOTCLAW_CLOUD_DECIDER_TOKEN"]) expect(env).not.toHaveProperty(key);
   expect(JSON.stringify(env)).not.toContain(token);
   expect(JSON.stringify(env)).not.toContain(secret);
   for (const includedToken of includedTokens) expect(JSON.stringify(env)).not.toContain(includedToken);

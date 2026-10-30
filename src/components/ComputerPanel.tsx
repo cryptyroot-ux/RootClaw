@@ -1090,7 +1090,6 @@ export function ComputerPanel({
     </div>
   );
 
-  const managedPolicy = state.config?.managedPolicy;
   const busyBoat = busyBoatView(boatState, profileBot.busy === true);
   const cloudComputer: PlaceFacts["computer"] = !computerStatusCurrent || livePlace !== "cloud" || cloudBackend !== "box" ? undefined
     : phase === "starting" ? "starting"
@@ -1120,13 +1119,11 @@ export function ComputerPanel({
     ["off", "vm.dest.off", "computer.dest.offDesc", Power],
   ] as const).filter(([mode]) => mode === null || mode === "off" || placeOffered(mode, state.config)).map(([mode, labelKey, descriptionKey, Icon]) => {
     const selected = mode === null ? !profileBot.computer : profileBot.computer === mode;
-    const managedKind = mode === "local" ? "thisComputer" : mode === "vm" ? "localVm" : mode === "cloud" ? (profileBot.cloudBackend === "vps" ? "vps" : "box") : null;
-    const managedBy = managedPolicy && managedKind && !managedPolicy.computers[managedKind] ? t("policy.managedBy", { organization: managedPolicy.organizationName }) : undefined;
     const view = mode === null ? autoView : mode === "cloud" ? cloudView : viewOf(mode);
-    const disabled = Boolean(managedBy) || placeBlocked(view);
-    const issue = !managedBy && placeHasIssue(view);
-    const unavailableTitle = managedBy ?? (issue ? view.line : mode === "browser" ? t("computer.browserOnlyTitle") : undefined);
-    return { mode, labelKey, descriptionKey, Icon, simpleLabel: worksOnSimpleLabel(mode ?? undefined, capabilities.host.platform), selected, managedBy, disabled, unavailableTitle, view, issue };
+    const disabled = placeBlocked(view);
+    const issue = placeHasIssue(view);
+    const unavailableTitle = issue ? view.line : mode === "browser" ? t("computer.browserOnlyTitle") : undefined;
+    return { mode, labelKey, descriptionKey, Icon, simpleLabel: worksOnSimpleLabel(mode ?? undefined, capabilities.host.platform), selected, disabled, unavailableTitle, view, issue };
   });
   const worksOnView = placeOptions.find(({ selected }) => selected)?.view ?? autoView;
   const runPlaceAction = (id: PlaceActionId) => {
@@ -1687,7 +1684,7 @@ export function ComputerPanel({
               {t(state.config?.cloudHome ? "computer.worksOnHintCloudHome" : "computer.worksOnHint")}
             </p>
           <div role="group" aria-label={t("computer.destinationAria")} className="mt-3 grid auto-rows-fr grid-cols-2 gap-2">
-            {placeOptions.map(({ mode, labelKey, descriptionKey, Icon, selected, managedBy, disabled, unavailableTitle, issue, view }) => (
+            {placeOptions.map(({ mode, labelKey, descriptionKey, Icon, selected, disabled, unavailableTitle, issue, view }) => (
               <button
                 key={mode ?? "auto"}
                 disabled={disabled}
@@ -1710,7 +1707,7 @@ export function ComputerPanel({
                   <span>{t(labelKey)}</span>
                 </span>
                 <span className="mt-1.5 block text-[11px] leading-4 text-ink-secondary">
-                  {managedBy ?? (issue ? view.short : t(descriptionKey))}
+                  {issue ? view.short : t(descriptionKey)}
                 </span>
               </button>
             ))}

@@ -90,8 +90,6 @@ export function McpServersPanel({ embedded = false, whopCard = false, hideWhop =
 } = {}) {
   const { state: store, dispatch } = useStore();
   const botName = (id: string) => store.bots?.find((bot) => bot.id === id)?.name ?? id;
-  const policy = store.config?.managedPolicy;
-  const restricted = Boolean(policy && !policy.mcp.allowCustom);
   const [servers, setServers] = useState<McpServerListing[] | null>(null);
   const [editing, setEditing] = useState<string | "new" | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -453,7 +451,7 @@ export function McpServersPanel({ embedded = false, whopCard = false, hideWhop =
         </div>
         {signingIn ? <button type="button" onClick={() => signInAbort.current?.abort()} className="inline-flex h-7 shrink-0 items-center rounded-full bg-control/80 px-3 text-[13px] font-medium leading-5 text-ink">{t("mcp.auth.cancel")}</button> :
           <button type="button" aria-label={t(whopConnected ? "whop.disconnect" : "whop.connect")}
-            disabled={pending || (servers !== null && !whopConnected && (Boolean(whopServer?.managedBy) || (restricted && !policy?.mcp.allowlist.length)))}
+            disabled={pending || (servers !== null && !whopConnected && Boolean(whopServer?.managedBy))}
             onClick={() => void (servers === null ? load() : whopConnected && whopServer ? signOut(whopServer) : connectWhop())}
             className="inline-flex h-7 min-w-[64px] shrink-0 items-center justify-center gap-2 rounded-full bg-control/80 px-3 text-[13px] font-medium leading-5 text-ink hover:bg-raised-hover disabled:opacity-40">
             {pending ? <Loader2 size={14} className="animate-spin" /> : servers === null ? t("connectors.action.retry") : t(whopConnected ? "connectors.disconnect" : "connectors.action.connect")}
@@ -500,8 +498,7 @@ export function McpServersPanel({ embedded = false, whopCard = false, hideWhop =
             </button>
             <button
               type="button"
-              disabled={busy !== null || (restricted && !policy?.mcp.allowlist.length)}
-              title={restricted && policy ? t("policy.managedBy", { organization: policy.organizationName }) : undefined}
+              disabled={busy !== null}
               onClick={() => openEditor("new")}
               className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-[13px] font-medium text-white disabled:opacity-40"
             >
@@ -510,7 +507,6 @@ export function McpServersPanel({ embedded = false, whopCard = false, hideWhop =
           </div>
         </div>
 
-        {restricted && policy && <p role="status" className="mt-3 text-[13px] leading-relaxed text-ink-secondary">{t("policy.mcpRestricted", { organization: policy.organizationName })}</p>}
         {(editing === "new" || editingServer) && (
           <McpServerEditor key={`${editing}${fixingKeys ? ":keys" : ""}`} server={editingServer} fixKeys={fixingKeys} taken={(servers ?? []).map((server) => server.name)} team={Boolean(store.config?.team)}
             busy={busy !== null} onCancel={closeEditor} onSubmit={(items) => void (editing === "new" ? addServers(items) : saveEdit(items))} />

@@ -19,8 +19,6 @@ export function usePlaceViews(bot: Bot): Record<Place, { view: PlaceView; reacha
   const { state } = useStore();
   const { capabilities } = useDesktopCapabilities();
   const seat = usePlaceSeat(state.config, capabilities.host.platform);
-  const backend = bot.cloudBackend === "vps" ? "vps" : "box";
-  const allowed = state.config?.managedPolicy?.computers ?? { thisComputer: true, localVm: true, box: true, vps: true };
   const providerSupportsLocal = instanceSupportsLocalComputer(state.instances, bot);
   const local = {
     ready: localComputerSelectable({ capabilities, providerSupportsLocal }),
@@ -28,8 +26,7 @@ export function usePlaceViews(bot: Bot): Record<Place, { view: PlaceView; reacha
   };
   const entry = (place: Place) => {
     const view = placeViewFor(placeFacts({ bot, place, seat, config: state.config, instances: state.instances, local }));
-    const policy = (place === "cloud" ? allowed[backend] : place === "vm" ? allowed.localVm : place === "local" ? allowed.thisComputer : true)
-      && placeOffered(place, state.config);
+    const policy = placeOffered(place, state.config);
     return { view, policy, reachable: policy && !placeBlocked(view) };
   };
   return { cloud: entry("cloud"), vm: entry("vm"), local: entry("local"), browser: entry("browser") };

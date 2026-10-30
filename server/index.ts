@@ -266,7 +266,7 @@ import { EventBus } from "./harness/bus.ts";
 import { engineMemory, enginesByUse, ProviderRegistry } from "./harness/registry.ts"; import { afterFirstEngineRead, holdUntilFirstEngineRead } from "./first-engine-read.ts";
 import { mainThread, wasOldestThread } from "./main-thread.ts";
 import { computerKindForResource, type ComputerKind } from "./computer-kind.ts";
-import { CLOUD_HOME_SECRET_KEYS, CLOUD_IGNORED_KEYS, cloudHomeConfiguration, cloudHomeOffersPlace, cloudHomePlaceRefusal, firstCloudTurnPatch } from "./cloud-home.ts";
+import { CLOUD_HOME_SECRET_KEYS, cloudHomeConfiguration, cloudHomeOffersPlace, cloudHomePlaceRefusal, firstCloudTurnPatch } from "./cloud-home.ts";
 import { botBox, startBotBoxAtBoot } from "./bot-box/boot.ts";
 import { createCloudSignedHost } from "./host/cloud-signed-host.ts"; import { hiddenThreadRefusal, hideOthersSyncFolders } from "./host/team-private.ts"; import { createTeamMemberLeft } from "./host/team-member-left.ts"; import { createUploadOwners, uploadsFor } from "./host/member-uploads.ts"; import { createMemberOwnBot } from "./host/member-own-bot.ts"; import { createVisibilityHost } from "./host/visibility-host.ts";
 import { createCloudPower, registerCloudPower, wokeFromSleep, type CloudPower } from "./cloud-power.ts"; import { createSharedComputerRoutes } from "./routes/shared-computers.ts";
@@ -365,7 +365,6 @@ import {
   readSkillFile,
   rejectStagedSkillWrite,
   setSkillEnabled,
-  skillPackageStamps,
   stageSkillWrite,
   undoSkillWrite,
 } from "./skills.ts";
@@ -488,7 +487,6 @@ import {
   createPresetStore, DEFAULTS_PRESET_KEY,
   presetFromDefaults,
 } from "./presets.ts";
-import { OrgLibrary } from "./org-library.ts";
 import { shouldMountLocalComputer } from "./local-routing.ts";
 import { autoLocalVmAttachable, type ContainerComputerStatus } from "./container-computer.ts";
 import { keepTransient, lazyClaimRetryText, settledWithin, startAutoVmClaim, withinBudget, type AutoVmClaimSlot, type AutoVmClaimTable } from "./auto-vm-claims.ts";
@@ -695,9 +693,8 @@ const lendingMemory = CLOUD_PERSONAL ? createLendingMemory({
 }) : null;
 if (CLOUD_HOME) readMemoryOnlyFromRegularFiles();
 if (CLOUD_HOME) {
-  // Held in memory from here on: no engine or tool this server starts inherits the signing secret or a gateway's settings.
+  // Held in memory from here on: no engine or tool this server starts inherits the signing secret.
   delete process.env.ROOTCLAW_CLOUD_BOOTSTRAP_SECRET;
-  for (const key of CLOUD_IGNORED_KEYS) delete process.env[key];
   console.log(`cloud home ${CLOUD_HOME.machineId}: bots run on the engines the person signs in to here`);
   for (const warning of CLOUD_HOME.warnings) console.warn(`cloud home: ${warning}`);
 }
@@ -1523,18 +1520,6 @@ const cloudCreditStarted = (cloudCredit?.start() ?? Promise.resolve()).catch((er
   console.warn(`[trial credit] could not start: ${error instanceof Error ? error.message : String(error)}`);
 });
 
-// A relay that arrives before the library exists waits for it; the acknowledgement does not.
-let orgLibrary: OrgLibrary | null = null;
-let pendingOrgLibraryRelay: { library: unknown } | null = null;
-utilityParentPort?.on("message", event => {
-  const message = event.data as { type?: unknown; requestId?: unknown; library?: unknown } | undefined;
-  if (message?.type !== "rootclaw:managed-library") return;
-  const requestId = typeof message.requestId === "string" && message.requestId.length <= 100 ? message.requestId : undefined;
-  let ok = true;
-  if (orgLibrary) ok = orgLibrary.applyRelay(message.library ?? null).ok;
-  else pendingOrgLibraryRelay = { library: message.library ?? null };
-  utilityParentPort.postMessage({ type: "rootclaw:managed-desktop-result", requestId, ok });
-});
 
 // Identity, source thread, depth and route family come from this server-side record; caller fields are assertions, never authority.
 type InternalCapability = {
@@ -8918,20 +8903,6 @@ if (CLOUD_HOME && CLOUD_OWNER_KEY && cloudRoutineAuthors) {
 }
 // Only now: an earlier owner key is the owner's once settled.
 routines.clearFrozenResultsThreads(); proactive.ensureWatch(); startFirstHour({ hooks: firstHourHooks, fresh: firstHourFresh, store, bus, cfg, dataDir: DATA_DIR, proactive, briefOn: () => proactive.briefOn(), ensureBrief: () => { proactive.ensureWatch(); }, composio, sessions, phones: () => phones.paired(), routines: () => routines, mainThread: botMainThread, threadBusy, startTurn, notify, wrote: markTaskContextExternallyUpdated, stale: shouldIgnoreProviderEvent, welcomeDone: () => { adminActorScope.exit(() => saveConfig(welcomeDonePatch(cfg.onboarding))); Object.assign(cfg, loadConfig()); broadcast({ kind: "config", ...configStatus() }); } });
-orgLibrary = new OrgLibrary({
-  dataDir: DATA_DIR,
-  store,
-  routines: routines!,
-  skills: { list: listSkills, stamps: skillPackageStamps, setEnabled: setSkillEnabled, installOrg: installOrgSkill },
-  presets: presetStore,
-  postState: (message) => utilityParentPort?.postMessage(message),
-});
-{
-  // Set by the port listener above, which TypeScript cannot see run first.
-  const early = pendingOrgLibraryRelay as { library: unknown } | null;
-  if (early) orgLibrary.applyRelay(early.library);
-  pendingOrgLibraryRelay = null;
-}
 // Separate durable stores: after a crash between the two writes, the correlated RoutineRun's terminal state wins.
 const recoveredRoutineGoalRuns = new Map(
   routines.listRuns().filter((run) => run.target === "room-goal").map((run) => [run.id, run]),
@@ -12075,7 +12046,7 @@ const cloudMoveRoutes = createCloudMoveRoutes();
 
 // `workspaceAccess` is assigned at boot, after this line: read it per request.
 ROUTES.push(createHostedSlackRoutes({ bot: (id) => store.bot(id), hostedReady: () => Boolean(workspaceAccess) && entitled("admin") }));
-const orgInstallStatuses = () => orgLibrary?.installStatuses() ?? new Map();
+const orgInstallStatuses = () => new Map();
 ROUTES.push(createBotPresetRoutes({ presets: presetStore, orgStatuses: orgInstallStatuses })); ROUTES.push(createWorkspaceBannerRoutes({ changed: () => broadcast({ kind: "config", ...configStatus() }) }));
 ROUTES.push(createSharedComputerRoutes({ enabled: lendingEnabled, computers: sharedComputers, sessionLive: (id) => sessions.isLive(id), environmentId: ENVIRONMENT_ID,
   cloudHomeLender: CLOUD_HOME ? CLOUD_HOME_LENDER : null, principal: sessionLendingPrincipal, personKey, power: () => cloudPower, links: CLOUD_HOME ? deviceLinks : null, upgrades }));
@@ -12197,7 +12168,7 @@ ROUTES.push(createRoomHoldRoutes({
     return updated ? publicGroupState(updated) : null;
   },
 }));
-// `routines` and `orgLibrary` are assigned at boot, after this line: read them per request.
+// `routines` is assigned at boot, after this line: read them per request.
 ROUTES.push(createGroupRoutes({
   store,
   cloudHome: Boolean(CLOUD_HOME),
@@ -12289,7 +12260,6 @@ ROUTES.push(createTeamRoutes({
   cfg,
   authorName: (auth) => CLOUD_TEAM ? (auth.kind === "session" ? teamHost.memberProfile(auth.session).name || undefined : undefined) : cfg.profile?.name?.trim(),
   routines: () => routines,
-  orgLibrary: () => orgLibrary,
   broadcast,
   publicBot,
   publicGroupState,
@@ -12840,18 +12810,6 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       return json(res, revoked ? 200 : 404, revoked ? { ok: true } : { error: "no such session" });
     }
     // Test-only routes exist only when the launcher sets a high-entropy test key, which production builds never set.
-    if (method === "POST" && path === "/api/testing/org-library") {
-      const expected = Buffer.from(process.env.ROOTCLAW_TEST_ORG_LIBRARY_KEY ?? "");
-      const header = req.headers["x-rootclaw-test-org-library"];
-      const actual = Buffer.from(Array.isArray(header) ? "" : String(header ?? ""));
-      if (expected.length < 32 || actual.length !== expected.length || !timingSafeEqual(actual, expected) || !orgLibrary) {
-        return json(res, 404, { error: "not found" });
-      }
-      const body = await readBody(req);
-      const applied = orgLibrary.applyRelay(body?.library ?? null);
-      await orgLibrary.settled();
-      return json(res, applied.ok ? 200 : 400, { ...applied, report: orgLibrary.lastReport() });
-    }
     if (method === "POST" && path === "/api/testing/internal-capability") {
       const expected = process.env.ROOTCLAW_TEST_INTERNAL_CAPABILITY_KEY ?? "";
       const actual = Array.isArray(req.headers["x-rootclaw-test-capability"])

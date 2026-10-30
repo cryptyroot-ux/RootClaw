@@ -8,8 +8,6 @@ import { KEY_CATALOG, KEY_SECTIONS, keyEntry, keyForInstance, keyMatches, looksL
 
 const NOT_A_PERSONS_KEY: Record<string, string> = {
   ROOTCLAW_ANTHROPIC_API_URL: "the address the Anthropic key goes to, set by a hosted install",
-  ROOTCLAW_HOSTED_MODEL_TOKEN: "a hosted install's model token",
-  ROOTCLAW_HOSTED_MODELS: "a hosted install's model list",
   ROOTCLAW_COMPOSIO_BROKER_TOKEN: "RootClaw Cloud's connected-apps broker",
   ROOTCLAW_CLOUD_BOAT_TOKEN: "RootClaw Cloud's included computers",
   ROOTCLAW_CLOUD_VOICE_TOKEN: "RootClaw Cloud's included voice",

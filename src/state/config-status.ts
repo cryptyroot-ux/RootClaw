@@ -131,23 +131,12 @@ export interface ConfigStatus {
   browserProfiles?: BrowserProfile[];
   /** The enrolled organisation's read-only desktop policy; null when this
    * desktop is not enrolled or its Admin sends no policy. */
-  managedPolicy?: ManagedPolicySummary | null;
   /** This server is an ROOTCLAW Cloud home: it offers no "this computer" and no
    * Local VM (server/cloud-home.ts). Absent everywhere else. */
   cloudHome?: boolean;
   /** A Team Cloud: the team this server is the home of, and the Plan page (RootClaw Cloud) where its people and plan
    * are managed. Absent everywhere else. */
   team?: { id: string; name: string; cloudPage?: string };
-}
-
-export interface ManagedPolicySummary {
-  organizationName: string;
-  version: number;
-  companyModelsOnly: boolean;
-  allowedEngines: "all" | string[];
-  mcp: { allowCustom: boolean; allowlist: string[] };
-  computers: { thisComputer: boolean; localVm: boolean; box: boolean; vps: boolean };
-  remoteAccess: boolean;
 }
 
 export interface BrowserEngineSummary {

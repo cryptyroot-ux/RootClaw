@@ -170,8 +170,6 @@ export function verificationServerEnvironment(parentEnv: NodeJS.ProcessEnv, data
     // FAKE_CLAUDE_DUMP stays the launcher's: assertions read fixtureDumpPath.
     if ((key.startsWith("FAKE_CLAUDE_") || key.startsWith("FAKE_CODEX_TEXT_") || key.startsWith("FAKE_CODEX_COMMAND") || key === "FAKE_ACP_HANG_ON") && key !== "FAKE_CLAUDE_DUMP" && value) childEnv[key] = value;
   }
-  // Enables POST /api/testing/org-library; the route does not exist without it.
-  if (parentEnv.ROOTCLAW_TEST_ORG_LIBRARY_KEY) childEnv.ROOTCLAW_TEST_ORG_LIBRARY_KEY = parentEnv.ROOTCLAW_TEST_ORG_LIBRARY_KEY;
   // One log line per browser call and preview frame.
   if (parentEnv.ROOTCLAW_BROWSER_TIMING === "1") childEnv.ROOTCLAW_BROWSER_TIMING = "1";
   // A loopback fake only: the key never reaches a real provider.

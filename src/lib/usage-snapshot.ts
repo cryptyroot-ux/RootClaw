@@ -147,7 +147,6 @@ export function buildUsageSnapshot(input: UsageInput): EventProps {
     cloud_plan: input.cloud?.plan ?? "unknown",
     cloud_trial: input.cloud?.trial,
     edition: allow(config.edition?.edition ?? "oss", EDITION),
-    org_managed: Boolean(config.managedPolicy),
     onboarded: Boolean(config.onboarding?.completedAt),
     first_turn: Boolean(config.onboarding?.firstTurnAt),
     platform: input.platform,

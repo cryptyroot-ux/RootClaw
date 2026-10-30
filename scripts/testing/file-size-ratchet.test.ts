@@ -45,7 +45,6 @@ const LINES: Record<string, number> = {
   "src/components/PhoneSetupFlow.tsx": 1147,
   "server/cli.ts": 1080,
   "src/components/PluginsPanel.tsx": 1028,
-  "server/org-library.ts": 1003,
   "src/components/AttachmentPreview.tsx": 1044,
 };
 

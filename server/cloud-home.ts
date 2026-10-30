@@ -15,8 +15,6 @@ import { formatPairingCode, type SessionRegistry } from "./sessions.ts";
 
 /** Any of these switches the server into Cloud home mode; then all are required. */
 export const CLOUD_HOME_KEYS = ["ROOTCLAW_CLOUD_ROLE", "ROOTCLAW_CLOUD_MACHINE_ID", "ROOTCLAW_CLOUD_ADMIN_URL", "ROOTCLAW_CLOUD_BOOTSTRAP_SECRET"] as const;
-/** A platform model gateway's settings: a Cloud home logs one warning, and neither it nor anything it starts sees them. */
-export const CLOUD_IGNORED_KEYS = ["ROOTCLAW_HOSTED_MODEL_URL", "ROOTCLAW_HOSTED_MODEL_TOKEN", "ROOTCLAW_HOSTED_MODELS"] as const;
 export const CLOUD_PAIRING_PATH = "/api/cloud/pairing";
 export const CLOUD_HEALTH_PATH = "/api/cloud/health";
 export const CLOUD_PAIRING_DEFAULT_TTL_S = 300;
@@ -81,8 +79,6 @@ export function cloudHomeConfiguration(env: NodeJS.ProcessEnv = process.env): Cl
   const bootstrapSecret = env.ROOTCLAW_CLOUD_BOOTSTRAP_SECRET ?? "";
   if (!/^[A-Za-z0-9_-]{43,128}$/.test(bootstrapSecret)) invalid("ROOTCLAW_CLOUD_BOOTSTRAP_SECRET must be at least 256 bits of base64url");
   const warnings: string[] = [];
-  const ignored = CLOUD_IGNORED_KEYS.filter((key) => env[key] !== undefined);
-  if (ignored.length) warnings.push(`ignoring ${ignored.join(", ")}: Cloud Pro includes no AI; people sign in with their own Claude or ChatGPT account, or an API key`);
   return { role, team, machineId, adminOrigin, publicOrigin, bootstrapSecret, warnings };
 }
 
@@ -104,11 +100,6 @@ function cloudTeamConfiguration(env: NodeJS.ProcessEnv): CloudTeam {
 
 export { CLOUD_HOME_SECRET_KEYS, CLOUD_SECRETS_FD_ENV, cloudHomeSecrets, takeCloudSecrets, withoutCloudSecrets } from "./cloud-secrets.ts";
 
-export function withoutIgnoredCloudKeys(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const kept = { ...env };
-  for (const key of CLOUD_IGNORED_KEYS) delete kept[key];
-  return kept;
-}
 
 export { cloudHomeOffersPlace } from "../shared/cloud-home.ts";
 

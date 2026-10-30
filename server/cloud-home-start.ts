@@ -8,7 +8,7 @@ import { dirname, join, posix, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   CLOUD_SECRETS_FD_ENV, cloudHomeConfiguration, cloudHomeHost, cloudHomeSecrets, prepareCloudHomeVolume,
-  withoutCloudSecrets, withoutIgnoredCloudKeys, type CloudHomeConfig,
+  withoutCloudSecrets, type CloudHomeConfig,
 } from "./cloud-home.ts";
 import { clearRecordsFromOtherMachines } from "./data-dir-lease.ts";
 import { OOM_SCORE, spawnWithOomScore } from "./oom-score.ts";
@@ -113,7 +113,7 @@ export function prepareCloudHomeData(home: string, dataDir: string, machineId: s
 }
 
 export function cloudHomeChildEnvironments(config: CloudHomeConfig, env: NodeJS.ProcessEnv, home: string) {
-  const offered = withoutCloudSecrets(withoutIgnoredCloudKeys(env));
+  const offered = withoutCloudSecrets(env);
   const allowed = Object.fromEntries(Object.entries(offered).filter(([name, value]) => value !== undefined && serverEnvironmentAllowed(name)));
   const dropped = Object.keys(offered).filter((name) => !serverEnvironmentAllowed(name) && name !== "HOME").sort();
   const dataDir = cloudHomeDataDir(env, home);

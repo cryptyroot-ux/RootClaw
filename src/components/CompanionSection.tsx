@@ -25,7 +25,6 @@ import { PhonesList } from "./PhonesList";
 import { ConnectionDetail } from "./ConnectionDetail";
 import { Card, Switch } from "./SettingsPrimitives";
 import { productName } from "../lib/brand";
-import { useStore } from "@/state/store";
 
 export {
   companionAccountActionError,
@@ -146,9 +145,6 @@ export function CompanionSection({ profileEmail = "", focusRequest = 0 }: { prof
     if (!focusRequest) revealed.current = 0;
     else if (revealed.current !== focusRequest && revealPhonePairing(pairingFlow.current)) revealed.current = focusRequest;
   }, [focusRequest, loaded]);
-  const managedPolicy = useStore().state.config?.managedPolicy;
-  const remoteBlocked = managedPolicy?.remoteAccess === false ? t("policy.remoteBlocked", { organization: managedPolicy.organizationName }) : null;
-  const managedBy = managedPolicy?.remoteAccess === false ? t("policy.managedBy", { organization: managedPolicy.organizationName }) : null;
 
   if (!companionBridge()) {
     return (
@@ -189,7 +185,6 @@ export function CompanionSection({ profileEmail = "", focusRequest = 0 }: { prof
 
   return (
     <div className="flex flex-col gap-4">
-      {remoteBlocked && <p role="status" className="text-[13px] leading-relaxed text-ink-secondary">{remoteBlocked}</p>}
       <div ref={pairingFlow} tabIndex={-1} data-phone-pairing="computer" className="scroll-mt-4 rounded-xl ring-1 ring-accent/40 focus:outline-none">
         <Card title={pairingCopy.title} subtitle={pairingCopy.subtitle}>
           {(panelStatus || (pairedCount > 0 && c.hostedReady)) && (
@@ -230,7 +225,7 @@ export function CompanionSection({ profileEmail = "", focusRequest = 0 }: { prof
             <Switch
               checked={state.enabled}
               aria-label={t("remote.title")}
-              disabled={c.busy || (Boolean(remoteBlocked) && !state.enabled)}
+              disabled={c.busy}
               onClick={() => void c.act((companion) => (state.enabled ? companion.stop() : companion.start()))}
             />
           </div>
@@ -317,8 +312,7 @@ export function CompanionSection({ profileEmail = "", focusRequest = 0 }: { prof
           </div>
           {tailscaleStatus.kind === "ready" ? (
             <button
-              disabled={c.busy || c.accountBusy || Boolean(managedBy)}
-              title={managedBy ?? undefined}
+              disabled={c.busy || c.accountBusy}
               onClick={() => {
                 c.useTailscale();
                 window.requestAnimationFrame(() => {
@@ -332,12 +326,11 @@ export function CompanionSection({ profileEmail = "", focusRequest = 0 }: { prof
             </button>
           ) : (
             <button
-              disabled={c.busy || c.accountBusy || (Boolean(managedBy) && !state.enabled)}
-              title={managedBy ?? undefined}
+              disabled={c.busy || c.accountBusy}
               onClick={c.refreshTailscale}
               className="mt-3 rounded-lg border border-hairline/40 px-3 py-1.5 text-[12px] text-ink hover:bg-control disabled:opacity-40"
             >
-              {c.busy ? t("common.checking") : managedBy && !state.enabled ? managedBy : state.enabled ? t("remote.checkAgain") : t("remote.turnOnAndCheck")}
+              {c.busy ? t("common.checking") : state.enabled ? t("remote.checkAgain") : t("remote.turnOnAndCheck")}
             </button>
           )}
             </div>

@@ -6,9 +6,8 @@ import { pathToFileURL } from "node:url";
 import type { IncomingMessage } from "node:http";
 import { afterEach, expect, it } from "vitest";
 import {
-  CLOUD_BROWSER_SIGN_IN_MAX_TTL_S, CLOUD_HOME_MARKER, CLOUD_IGNORED_KEYS, CLOUD_PAIRING_MAX_TTL_S, CLOUD_PAIRING_NONCE_MS, CLOUD_PAIRING_SKEW_S, cloudHomeConfiguration, cloudHomeConfigured,
+  CLOUD_BROWSER_SIGN_IN_MAX_TTL_S, CLOUD_HOME_MARKER, CLOUD_PAIRING_MAX_TTL_S, CLOUD_PAIRING_NONCE_MS, CLOUD_PAIRING_SKEW_S, cloudHomeConfiguration, cloudHomeConfigured,
   cloudHomeHost, cloudHomeOffersPlace, cloudHomePlaceRefusal, cloudPairingSignature, cloudRequestSignature, createCloudPairing, firstCloudTurnPatch, prepareCloudHomeVolume,
-  withoutIgnoredCloudKeys,
 } from "./cloud-home.ts";
 import { cloudHomeChildEnvironments, cloudHomeDataDir, codeTrustProblem, edgeClientAddress, edgeHold, hardenHost, holdVolume, passwdIds, prepareCloudHomeData, spawnWithSecrets } from "./cloud-home-start.ts";
 import { RESTART_EXIT_CODE, restartPolicy } from "./restart.ts";
@@ -28,18 +27,13 @@ const contract = (extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv => ({
   ROOTCLAW_CLOUD_ROLE: "home", ROOTCLAW_CLOUD_MACHINE_ID: machineId, ROOTCLAW_CLOUD_ADMIN_URL: "https://cloud.example.test",
   ROOTCLAW_PUBLIC_URL: "https://rootclaw-u-1a2b3c4d5e6f.fly.dev", ROOTCLAW_CLOUD_BOOTSTRAP_SECRET: secret, ...extra,
 });
-// A platform gateway's settings, as an Admin from before Cloud Pro dropped
-// included AI wrote them. A Cloud home ignores them.
-const token = `rootclaw_cloudai_${"t".repeat(43)}`;
-const gatewayUrl = "https://cloud.example.test/api/cloud/gateway/g0123456789abcdef0123456789abcd";
-const withGateway = (extra: NodeJS.ProcessEnv = {}) => contract({ ROOTCLAW_HOSTED_MODEL_URL: gatewayUrl, ROOTCLAW_HOSTED_MODEL_TOKEN: token,
-  ROOTCLAW_HOSTED_MODELS: JSON.stringify({ anthropic: ["claude-sonnet-5"], openai: ["gpt-5.6-sol"], openrouter: ["anthropic/claude-sonnet-5"] }), ...extra });
 
+const token = `rootclaw_cloudai_${"t".repeat(43)}`;
 
 it("is off on every ordinary server and desktop", () => {
   expect(cloudHomeConfigured({})).toBe(false);
   expect(cloudHomeConfiguration({})).toBeNull();
-  expect(cloudHomeConfiguration({ ROOTCLAW_PUBLIC_URL: "https://selfhosted.example.test", ROOTCLAW_HOSTED_MODELS: "{}" })).toBeNull();
+  expect(cloudHomeConfiguration({ ROOTCLAW_PUBLIC_URL: "https://selfhosted.example.test" })).toBeNull();
 });
 
 it("reads the Admin's contract", () => {
@@ -49,20 +43,6 @@ it("reads the Admin's contract", () => {
   expect(cloudHomeConfiguration(contract({ ROOTCLAW_CLOUD_ADMIN_URL: "https://cloud.example.test/" }))!.adminOrigin).toBe("https://cloud.example.test");
 });
 
-it("ignores a platform gateway's settings with one warning, whatever they hold, and never serves them", () => {
-  const all = cloudHomeConfiguration(withGateway())!;
-  expect(Object.keys(all).sort()).toEqual(["adminOrigin", "bootstrapSecret", "machineId", "publicOrigin", "role", "team", "warnings"]);
-  expect(all.warnings).toEqual(["ignoring ROOTCLAW_HOSTED_MODEL_URL, ROOTCLAW_HOSTED_MODEL_TOKEN, ROOTCLAW_HOSTED_MODELS: Cloud Pro includes no AI; people sign in with their own Claude or ChatGPT account, or an API key"]);
-  for (const stray of [{ ROOTCLAW_HOSTED_MODEL_TOKEN: token }, { ROOTCLAW_HOSTED_MODEL_TOKEN: "sk-ant-api03-platform-key" }, { ROOTCLAW_HOSTED_MODELS: "{not json" },
-    { ROOTCLAW_HOSTED_MODEL_URL: "https://gateway.attacker.test/v1" }, { ROOTCLAW_HOSTED_MODELS: "" }]) {
-    const config = cloudHomeConfiguration(contract(stray))!;
-    expect(config.warnings).toEqual([expect.stringMatching(new RegExp(`^ignoring ${Object.keys(stray)[0]}: Cloud Pro includes no AI`))]);
-    const value = Object.values(stray)[0];
-    if (value) expect(JSON.stringify(config)).not.toContain(value);
-  }
-  expect(Object.keys(withoutIgnoredCloudKeys(withGateway())).filter((key) => (CLOUD_IGNORED_KEYS as readonly string[]).includes(key))).toEqual([]);
-  expect(withoutIgnoredCloudKeys(withGateway())).toEqual(contract());
-});
 
 it.each<[string, NodeJS.ProcessEnv]>([
   ["only one key", { ROOTCLAW_CLOUD_MACHINE_ID: machineId }],
@@ -78,13 +58,13 @@ it.each<[string, NodeJS.ProcessEnv]>([
   ["a secret with padding", contract({ ROOTCLAW_CLOUD_BOOTSTRAP_SECRET: `${"S".repeat(42)}=` })],
   ["the desktop app", contract({ ROOTCLAW_DESKTOP_PARENT: "1" })],
   ["a hosted team workspace too", contract({ ROOTCLAW_ADMIN_URL: "https://cloud.example.test" })],
-  ["a hosted team workspace with a gateway", withGateway({ ROOTCLAW_ADMIN_URL: "https://cloud.example.test", ROOTCLAW_ADMIN_WORKSPACE: "acme", ROOTCLAW_ADMIN_MEMBERSHIP: "portal" })],
+  ["a hosted team workspace", contract({ ROOTCLAW_ADMIN_URL: "https://cloud.example.test", ROOTCLAW_ADMIN_WORKSPACE: "acme", ROOTCLAW_ADMIN_MEMBERSHIP: "portal" })],
 ])("refuses to start with %s", (_why, env) => {
   expect(() => cloudHomeConfiguration(env)).toThrow(/Cloud home configuration is invalid/);
 });
 
 it("never echoes a secret or token in its refusal", () => {
-  for (const env of [contract({ ROOTCLAW_CLOUD_BOOTSTRAP_SECRET: `${secret}!` }), withGateway({ ROOTCLAW_CLOUD_BOOTSTRAP_SECRET: `${secret}!` })]) {
+  for (const env of [contract({ ROOTCLAW_CLOUD_BOOTSTRAP_SECRET: `${secret}!` }), contract({ ROOTCLAW_CLOUD_BOOTSTRAP_SECRET: `${secret}!` })]) {
     try { cloudHomeConfiguration(env); expect.unreachable(); }
     catch (error) { expect(String(error)).not.toContain(secret); expect(String(error)).not.toContain(token); }
   }
@@ -361,14 +341,13 @@ it("lets only the tunnel name the client on an own server, and only Fly's proxy 
 it("gives the edge only its routing name and the server the contract, never a gateway's settings or a secret", () => {
   const relay = { ROOTCLAW_CLOUD_BOAT_TOKEN: `box_rootclaw_${"b".repeat(43)}`, ROOTCLAW_CLOUD_VOICE_TOKEN: `rootclaw_voice_${"v".repeat(43)}`, ROOTCLAW_CLOUD_DECIDER_TOKEN: `rootclaw_decide_${"d".repeat(43)}`,
     ROOTCLAW_CLOUD_AI_TOKEN: `rootclaw_ai_${"a".repeat(43)}` };
-  const config = cloudHomeConfiguration(withGateway())!;
-  const { server, edge, secrets } = cloudHomeChildEnvironments(config, { ...withGateway(), ...relay, PATH: "/usr/bin" }, "/data");
+  const config = cloudHomeConfiguration(contract())!;
+  const { server, edge, secrets } = cloudHomeChildEnvironments(config, { ...contract(), ...relay, PATH: "/usr/bin" }, "/data");
   expect(server).toMatchObject({ HOME: "/data", ROOTCLAW_DATA_DIR: "/data/.rootclaw", NODE_COMPILE_CACHE: "/data/.rootclaw/cache/node-compile", ROOTCLAW_PORT: "8799", ROOTCLAW_WEBHOOK_PORT: "8800",
     ROOTCLAW_PUBLIC_URL: "https://rootclaw-u-1a2b3c4d5e6f.fly.dev", ROOTCLAW_WEBHOOK_PUBLIC_URL: "https://rootclaw-u-1a2b3c4d5e6f.fly.dev", ROOTCLAW_CLOUD_SECRETS_FD: "3" });
-  for (const key of CLOUD_IGNORED_KEYS) expect(server).not.toHaveProperty(key);
   // The bot box switch reaches the server; an unknown name does not.
-  expect(cloudHomeChildEnvironments(config, { ...withGateway(), PATH: "/usr/bin", ROOTCLAW_BOT_BOX: "0", ROOTCLAW_SOMETHING_ELSE: "x" }, "/data").server).toMatchObject({ ROOTCLAW_BOT_BOX: "0" });
-  expect(cloudHomeChildEnvironments(config, { ...withGateway(), PATH: "/usr/bin", ROOTCLAW_SOMETHING_ELSE: "x" }, "/data").server).not.toHaveProperty("ROOTCLAW_SOMETHING_ELSE");
+  expect(cloudHomeChildEnvironments(config, { ...contract(), PATH: "/usr/bin", ROOTCLAW_BOT_BOX: "0", ROOTCLAW_SOMETHING_ELSE: "x" }, "/data").server).toMatchObject({ ROOTCLAW_BOT_BOX: "0" });
+  expect(cloudHomeChildEnvironments(config, { ...contract(), PATH: "/usr/bin", ROOTCLAW_SOMETHING_ELSE: "x" }, "/data").server).not.toHaveProperty("ROOTCLAW_SOMETHING_ELSE");
   expect(JSON.stringify(server)).not.toContain(token);
   expect(secrets).toEqual({ ROOTCLAW_CLOUD_BOOTSTRAP_SECRET: secret, ...relay });
   for (const value of Object.values(secrets)) {
@@ -383,10 +362,10 @@ it("gives the edge only its routing name and the server the contract, never a ga
 });
 
 it("holds requests at the edge while the server starts only when the Admin asked for it (a plan that sleeps)", () => {
-  const config = cloudHomeConfiguration(withGateway())!;
-  expect(cloudHomeChildEnvironments(config, { ...withGateway(), PATH: "/usr/bin" }, "/data").edge.ROOTCLAW_CLOUD_EDGE_HOLD).toBe("0s");
-  expect(cloudHomeChildEnvironments(config, { ...withGateway(), PATH: "/usr/bin", ROOTCLAW_CLOUD_EDGE_HOLD: "30s" }, "/data").edge.ROOTCLAW_CLOUD_EDGE_HOLD).toBe("30s");
-  expect(cloudHomeChildEnvironments(config, { ...withGateway(), PATH: "/usr/bin", ROOTCLAW_CLOUD_EDGE_HOLD: "30s" }, "/data").server).not.toHaveProperty("ROOTCLAW_CLOUD_EDGE_HOLD");
+  const config = cloudHomeConfiguration(contract())!;
+  expect(cloudHomeChildEnvironments(config, { ...contract(), PATH: "/usr/bin" }, "/data").edge.ROOTCLAW_CLOUD_EDGE_HOLD).toBe("0s");
+  expect(cloudHomeChildEnvironments(config, { ...contract(), PATH: "/usr/bin", ROOTCLAW_CLOUD_EDGE_HOLD: "30s" }, "/data").edge.ROOTCLAW_CLOUD_EDGE_HOLD).toBe("30s");
+  expect(cloudHomeChildEnvironments(config, { ...contract(), PATH: "/usr/bin", ROOTCLAW_CLOUD_EDGE_HOLD: "30s" }, "/data").server).not.toHaveProperty("ROOTCLAW_CLOUD_EDGE_HOLD");
   for (const raw of [undefined, "", "30", "1m", "-5s", "121s", "30s; respond 200", "9999s"]) expect(edgeHold(raw), String(raw)).toBe("0s");
   expect(edgeHold(" 045s ")).toBe("45s");
 });
@@ -395,8 +374,8 @@ it("hands the server the Admin's export-only switch, so an ended Cloud started f
   // Seen on a real staging test Cloud on Oct 22: the Admin booted the held Cloud with ROOTCLAW_CLOUD_EXPORT_ONLY=1, the log said
   // "not passed to the server: … ROOTCLAW_CLOUD_EXPORT_ONLY …", and it ran its routines every 5 minutes for the whole export
   // window while the computers that came home ran the same ones.
-  const config = cloudHomeConfiguration(withGateway())!;
-  expect(cloudHomeChildEnvironments(config, { ...withGateway(), PATH: "/usr/bin", ROOTCLAW_CLOUD_EXPORT_ONLY: "1" }, "/data").server).toMatchObject({ ROOTCLAW_CLOUD_EXPORT_ONLY: "1" });
+  const config = cloudHomeConfiguration(contract())!;
+  expect(cloudHomeChildEnvironments(config, { ...contract(), PATH: "/usr/bin", ROOTCLAW_CLOUD_EXPORT_ONLY: "1" }, "/data").server).toMatchObject({ ROOTCLAW_CLOUD_EXPORT_ONLY: "1" });
 });
 
 it("gives the server only an allow-listed environment: a secret added later, a test's key or anything unknown never reaches it", () => {
