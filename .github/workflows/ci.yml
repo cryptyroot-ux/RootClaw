@@ -81,6 +81,9 @@ jobs:
       # control plane cannot change what these three check.
       - if: steps.scope.outputs.build == 'true'
         run: pnpm typecheck
+        # tsc -b over the app plus the server project outgrows the runner's default heap.
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
       - if: steps.scope.outputs.build == 'true'
         run: pnpm check:electron
       - name: production UI build
