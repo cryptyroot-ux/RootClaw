@@ -1,64 +1,23 @@
 // Guided setup stays outside server/index: no server, store, or bot is started
 // until the user has saved a connection and explicitly starts the application.
-import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import {
-  DATA_DIR, instanceConfigs, loadConfig, parseStoredConfig, saveConfig,
-  stripWorkspaceCredentialEnv, PROVIDER_CREDENTIAL_ENV, type AppConfig,
+  DATA_DIR, instanceConfigs, loadConfig, parseStoredConfig, saveConfig, type AppConfig,
 } from "./config.ts";
-import type { InstanceConfig, ModelCatalog, ProviderSnapshot } from "./contracts.ts";
+import type { InstanceConfig, ModelCatalog } from "./contracts.ts";
 import { acquireDataDirLease } from "./data-dir-lease.ts";
-import { augmentedPath, resetPathCache } from "./env-path.ts";
-import { resolveCli } from "./procs.ts";
-import { ProviderRegistry } from "./harness/registry.ts";
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
 import { defaultSetupIo, SetupCancelled, type SetupIo } from "./cli-prompts.ts";
 import { API_ENDPOINTS, fetchSetupModels, normalizeApiUrl, verifySetupCompletion } from "./cli-api-setup.ts";
 
-type Inspection = { snapshot: ProviderSnapshot; models: ModelCatalog };
 interface SetupDependencies {
-  inspect(id: string, entry: InstanceConfig): Promise<Inspection>;
-  runCli(cli: string, args: string[], environment?: Record<string, string>): Promise<void>;
   models: typeof fetchSetupModels;
   verify: typeof verifySetupCompletion;
 }
 
-async function inspect(id: string, entry: InstanceConfig): Promise<Inspection> {
-  const registry = new ProviderRegistry(BUILT_IN_DRIVERS);
-  try {
-    await registry.load({ [id]: entry });
-    const provider = registry.get(id);
-    if (!provider) throw new Error("This provider configuration could not be loaded. Check it in app Settings.");
-    const snapshot = await provider.snapshot();
-    return { snapshot, models: provider.models };
-  } finally {
-    await registry.disposeAll();
-  }
-}
-
-/** Native CLIs own their OAuth flow; no tokens pass through our prompts. */
-export async function runSetupCli(cli: string, args: string[], environment: Record<string, string> = {}): Promise<void> {
-  const env: NodeJS.ProcessEnv = { ...process.env, ...environment, PATH: augmentedPath() };
-  stripWorkspaceCredentialEnv(env);
-  for (const key of PROVIDER_CREDENTIAL_ENV) delete env[key];
-  delete env.CLAUDECODE;
-  delete env.CLAUDE_CODE_ENTRYPOINT;
-  const command = resolveCli(cli, args);
-  await new Promise<void>((done, reject) => {
-    const child = spawn(command.command, command.args, { env, stdio: "inherit" });
-    child.once("error", () => reject(new Error(`Could not start ${cli}. Check that it is installed and on PATH.`)));
-    child.once("exit", (code, signal) => {
-      if (code === 0) done();
-      else if (signal === "SIGINT" || code === 130) reject(new SetupCancelled());
-      else reject(new Error(`${cli} did not finish successfully. Fix the error shown above, then try again.`));
-    });
-  });
-  resetPathCache();
-}
-
-const dependencies: SetupDependencies = { inspect, runCli: runSetupCli, models: fetchSetupModels, verify: verifySetupCompletion };
+const dependencies: SetupDependencies = { models: fetchSetupModels, verify: verifySetupCompletion };
 
 function assertDataDir(dataDir: string): void {
   if (resolve(dataDir) !== resolve(DATA_DIR)) throw new Error("Setup data directory mismatch. Restart the CLI with --data-dir.");
@@ -121,47 +80,6 @@ async function chooseModel(io: SetupIo, models: ModelCatalog): Promise<string> {
   }
 }
 
-const NATIVE = [
-  { id: "codex", driver: "codex", label: "ChatGPT / Codex — sign in with your account", cli: "codex", pkg: "@openai/codex" },
-  { id: "claude", driver: "claudeAgent", label: "Claude Code — sign in with your account", cli: "claude", pkg: "@anthropic-ai/claude-code" },
-] as const;
-
-async function connectNative(
-  choice: typeof NATIVE[number], id: string, entry: InstanceConfig, io: SetupIo, deps: SetupDependencies,
-): Promise<ModelCatalog> {
-  const cli = typeof rawObject(entry.config).cli === "string" ? rawObject(entry.config).cli as string : choice.cli;
-  io.log("Connecting your account…");
-  io.log("Sign-in stays with your provider. Its account limits apply; RootClaw never asks for your password.");
-  let state = await deps.inspect(id, entry);
-  if (state.snapshot.state !== "available") {
-    if (cli !== choice.cli) throw new Error("Your custom CLI path is unavailable. Fix that path in Settings before running setup again.");
-    if (!await io.confirm(`Install ${choice.cli} with npm install -g ${choice.pkg}?`, true)) throw new SetupCancelled();
-    await deps.runCli("npm", ["install", "-g", choice.pkg]);
-    state = await deps.inspect(id, entry);
-    if (state.snapshot.state !== "available") throw new Error(`${choice.cli} is still unavailable. Check the installation output and try again.`);
-  }
-  if (!state.snapshot.authenticated) {
-    let args = ["auth", "login"];
-    if (choice.id === "codex") {
-      const method = await io.choose("How would you like to sign in?", [
-        "Open a browser on this computer", "Use a device code (SSH / remote server)",
-      ], process.env.SSH_CONNECTION ? 1 : 0);
-      args = method === 1 ? ["login", "--device-auth"] : ["login"];
-    }
-    if (args.includes("--device-auth")) io.log("Enable device-code login in ChatGPT security settings if your account requests it.");
-    await deps.runCli(cli, args, entry.environment);
-    state = await deps.inspect(id, entry);
-    if (state.snapshot.state !== "available" || !state.snapshot.authenticated) {
-      throw new Error("Sign-in was not confirmed. Your RootClaw settings are unchanged; complete provider sign-in and try again.");
-    }
-  } else {
-    io.log("Existing sign-in found — you do not need to sign in again.");
-  }
-  if (state.snapshot.update) io.log(`${state.snapshot.update.title}: ${state.snapshot.update.command}`);
-  io.log("Sign-in confirmed. Model access is checked by the provider when you send your first message.");
-  return state.models;
-}
-
 export async function runSetup(
   options: { dataDir: string; port: number },
   io: SetupIo = defaultSetupIo(),
@@ -174,14 +92,13 @@ export async function runSetup(
     const cfg = loadConfig();
     const runtime = instanceConfigs(cfg);
     const existing = Object.entries(runtime).filter(([id, entry]) =>
-      !!cfg.instances?.[id] && ["codex", "claudeAgent", "openai-compat"].includes(entry.driver) && entry.enabled !== false);
+      !!cfg.instances?.[id] && entry.driver === "openai-compat" && entry.enabled !== false);
     io.log("\nWelcome to RootClaw\n");
     io.log("Let's connect your AI. Choose a provider, then a model.");
     io.log("Existing bots and conversations stay untouched. Ctrl-C cancels.");
     io.log("You can add integrations and change settings later.\n");
     const existingDefault = existing.findIndex(([id]) => id === cfg.defaultModelSelection?.instanceId);
     const providerOptions = [
-      ...NATIVE.map((n) => n.label),
       "API key — OpenAI, OpenRouter, Groq or a compatible service (chat only)",
       ...existing.map(([id, entry]) => `Use existing: ${entry.displayName ?? id}${id === cfg.defaultModelSelection?.instanceId ? " — current" : ""}`),
     ];
@@ -191,24 +108,12 @@ export async function runSetup(
     let entry: InstanceConfig;
     let model: string;
     for (;;) {
-      pick ??= await io.choose("Choose your AI connection", providerOptions, existingDefault < 0 ? 0 : existingDefault + 3);
-      const prior = pick >= 3 ? existing[pick - 3] : undefined;
-      const native = pick < 2 ? NATIVE[pick] : NATIVE.find((n) => n.driver === prior?.[1].driver);
+      pick ??= await io.choose("Choose your AI connection", providerOptions, existingDefault < 0 ? 0 : existingDefault + 1);
+      const prior = pick >= 1 ? existing[pick - 1] : undefined;
       try {
-        if (native) {
-          // Reuse native provider settings; an ID the user repurposed keeps its connection.
-          id = prior?.[0] ?? native.id;
-          if (!prior && runtime[id] && runtime[id]!.driver !== native.driver) id = `${native.id}-${randomUUID().slice(0, 8)}`;
-          entry = { ...(cfg.instances?.[id] ?? { driver: native.driver }), enabled: true };
-          const models = await connectNative(native, id, entry, io, deps);
-          const saved = cfg.defaultModelSelection;
-          model = await chooseModel(io, {
-            ...models,
-            default: saved?.instanceId === id ? saved.model : models.default,
-          });
-        } else {
+        {
           io.log("Connect an API key");
-          io.log("API usage is billed separately from ChatGPT/Claude subscriptions.");
+          io.log("API usage is billed separately by your provider, apart from any chat subscription.");
           io.log("This connection supports chat and approved MCP tools when the model supports tool calling. Native computer use requires another engine.");
           let url: string;
           let key: string;
@@ -284,8 +189,64 @@ export async function runSetup(
     return true;
   } catch (error) {
     if (!(error instanceof SetupCancelled)) throw error;
-    io.log("\nSetup cancelled. No RootClaw settings were changed. Provider sign-ins or installs already completed are kept.");
+    io.log("\nSetup cancelled. No RootClaw settings were changed.");
     return false;
+  } finally {
+    lease.release();
+  }
+}
+
+/** `rootclaw setup --provider … --api-key …`: the same connection, without prompts (VPS, CI, scripts). */
+export interface HeadlessSetup {
+  /** An API_ENDPOINTS id, or "custom" with `baseUrl`. */
+  provider: string;
+  apiKey: string;
+  baseUrl?: string;
+  /** Exact model ID; without it the catalog's first model is used. */
+  model?: string;
+  /** Skip the one metered test message. */
+  skipVerify?: boolean;
+  label?: string;
+}
+
+export async function runHeadlessSetup(
+  options: { dataDir: string },
+  answers: HeadlessSetup,
+  log: (line: string) => void = console.log,
+  deps: SetupDependencies = dependencies,
+): Promise<{ instanceId: string; model: string }> {
+  assertDataDir(options.dataDir);
+  const preset = API_ENDPOINTS.find((endpoint) => endpoint.id === answers.provider);
+  if (!preset && answers.provider !== "custom") {
+    throw new Error(`Unknown provider "${answers.provider}". Use one of: ${[...API_ENDPOINTS.map((e) => e.id), "custom"].join(", ")}.`);
+  }
+  if (!preset && !answers.baseUrl) throw new Error("--provider custom needs --base-url (including /v1).");
+  const url = preset && !answers.baseUrl ? preset.url : normalizeApiUrl(answers.baseUrl!);
+  const key = answers.apiKey.trim();
+  if (!key) throw new Error("An API key is required (--api-key or ROOTCLAW_API_KEY). Nothing was saved.");
+  const lease = acquireDataDirLease(options.dataDir);
+  try {
+    checkStoredConfig(options.dataDir);
+    let model = answers.model?.trim() ?? "";
+    try {
+      const catalog = await deps.models(url, key);
+      if (model && !catalog.some((entry) => entry.id === model)) log(`Model ${model} is not in the provider's catalog; checking it directly.`);
+      model ||= catalog[0]!.id;
+    } catch (error) {
+      if (!model) throw error;
+      log(`${error instanceof Error ? error.message : "Could not load the model catalog."} Using ${model} as given.`);
+    }
+    if (!answers.skipVerify) {
+      await deps.verify(url, key, model);
+      log("Test reply received.");
+    }
+    const cfg = loadConfig();
+    const id = `api-${randomUUID().slice(0, 8)}`;
+    const entry: InstanceConfig = { driver: "openai-compat", displayName: answers.label ?? preset?.label ?? new URL(url).hostname, config: { url, key, model, provider: "" } };
+    const instances = { ...(cfg.instances && Object.keys(cfg.instances).length ? cfg.instances : instanceConfigs({})), [id]: entry };
+    saveConfig({ instances, defaultModelSelection: { instanceId: id, model } });
+    log(`Setup saved: ${entry.displayName} / ${model} is the default for new bots. The key is stored in config.json (owner-only).`);
+    return { instanceId: id, model };
   } finally {
     lease.release();
   }

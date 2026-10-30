@@ -1,6 +1,6 @@
 // `rootclaw` on the command line: run the server anywhere and pair devices to it.
 //
-//   rootclaw setup [--data-dir ~/.rootclaw]
+//   rootclaw setup [--data-dir ~/.rootclaw] [--provider openai|openrouter|groq|meta|custom --api-key KEY [--base-url URL] [--model ID] [--skip-verify]]
 //   rootclaw start [serve options]
 //   rootclaw serve [--port 8799] [--data-dir ~/.rootclaw] [--label "cab mini"]
 //                     [--public-url https://host] [--tailscale | --tunnel | --domain HOST] [--no-pair]
@@ -108,6 +108,12 @@ export interface CliOptions {
   open?: boolean;
   guided?: boolean;
   phone?: "ios" | "android";
+  /** `setup --provider id --api-key k [--base-url u] [--model m] [--skip-verify]`: headless setup. */
+  setupProvider?: string;
+  setupApiKey?: string;
+  setupBaseUrl?: string;
+  setupModel?: string;
+  setupSkipVerify?: boolean;
 }
 
 const COMMANDS = ["setup", "start", "serve", "pair", "sessions", "status", "login", "logout", "access", "service", "browser", "fleet", "help", "--help", "-h"];
@@ -173,6 +179,11 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env):
       else if (options.command === "browser" && arg === "--with-deps") options.withDeps = true;
       else if (options.command === "fleet" && !options.fleetAction && ["init", "create", "list", "users", "suspend", "resume", "delete", "upgrade", "agent"].includes(arg)) options.fleetAction = arg as FleetInput["action"] | "agent";
       else if (options.command === "fleet" && options.fleetAction && !["init", "list", "upgrade", "agent"].includes(options.fleetAction) && !options.slug && !arg.startsWith("--")) options.slug = arg;
+      else if (options.command === "setup" && arg === "--provider") options.setupProvider = value();
+      else if (options.command === "setup" && arg === "--api-key") options.setupApiKey = value();
+      else if (options.command === "setup" && arg === "--base-url") options.setupBaseUrl = value();
+      else if (options.command === "setup" && arg === "--model") options.setupModel = value();
+      else if (options.command === "setup" && arg === "--skip-verify") options.setupSkipVerify = true;
       else if (options.command === "fleet" && arg === "--operator") options.operator = value();
       else if (options.command === "fleet" && arg === "--socket") options.socket = value();
       else if (options.command === "fleet" && arg === "--group") options.group = value();
@@ -944,8 +955,24 @@ export async function runOnboardingCommand(
   flow: { prompts?: SetupIo; phoneSetup?: typeof runPhoneSetup; running?: typeof isWorkspaceRunning; open?: typeof openDashboard } = {},
 ): Promise<number> {
   const interactive = process.stdin.isTTY === true && process.stdout.isTTY === true;
+  if (options.command === "setup" && options.setupProvider) {
+    process.env.ROOTCLAW_DATA_DIR = options.dataDir;
+    const { runHeadlessSetup } = await import("./cli-setup.ts");
+    try {
+      await runHeadlessSetup({ dataDir: options.dataDir }, {
+        provider: options.setupProvider, apiKey: options.setupApiKey ?? process.env.ROOTCLAW_API_KEY ?? "",
+        ...(options.setupBaseUrl ? { baseUrl: options.setupBaseUrl } : {}), ...(options.setupModel ? { model: options.setupModel } : {}),
+        ...(options.setupSkipVerify ? { skipVerify: true } : {}),
+      }, io.log);
+    } catch (error) {
+      io.error(error instanceof Error ? error.message : String(error));
+      return 1;
+    }
+    io.log("Start unattended with: rootclaw serve");
+    return 0;
+  }
   if (options.command === "setup" && !interactive) {
-    io.error("Setup needs an interactive terminal. Run `npx rootclaw setup` in a terminal, then use `npx rootclaw serve` for unattended starts.");
+    io.error("Setup needs an interactive terminal, or run it headless: rootclaw setup --provider openai|openrouter|groq|meta|custom --api-key KEY [--base-url URL] [--model ID] [--skip-verify]. Then use `rootclaw serve`.");
     return 1;
   }
   process.env.ROOTCLAW_DATA_DIR = options.dataDir;

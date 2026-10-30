@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DATA_DIR, instanceConfigs, loadConfig, PROVIDER_CREDENTIAL_ENV, WORKSPACE_CREDENTIAL_ENV, type AppConfig } from "./config.ts";
 import { acquireDataDirLease } from "./data-dir-lease.ts";
 import { SetupCancelled, type SetupIo } from "./cli-prompts.ts";
-import { isSetupComplete, readCliStartup, runSetup, saveCliStartup } from "./cli-setup.ts";
+import { isSetupComplete, readCliStartup, runHeadlessSetup, runSetup, saveCliStartup } from "./cli-setup.ts";
 import { OpenAICompatDriver } from "./drivers/openai-compat.ts";
 
 const options = { dataDir: DATA_DIR, port: 8799 };
@@ -21,10 +21,6 @@ type Dependencies = NonNullable<Parameters<typeof runSetup>[2]>;
 
 function dependencies() {
   return {
-    inspect: vi.fn<Dependencies["inspect"]>().mockResolvedValue({
-      snapshot: { state: "available", authenticated: true }, models,
-    }),
-    runCli: vi.fn<Dependencies["runCli"]>().mockResolvedValue(undefined),
     models: vi.fn<Dependencies["models"]>().mockResolvedValue(models.options),
     verify: vi.fn<Dependencies["verify"]>().mockResolvedValue(undefined),
   };
@@ -85,145 +81,6 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("native provider onboarding", () => {
-  it.each([{ choice: 0, id: "codex", driver: "codex" }, { choice: 1, id: "claude", driver: "claudeAgent" }])(
-    "uses an existing $id login and saves the selected model without starting an auth process",
-    async ({ choice, id, driver }) => {
-      const deps = dependencies();
-      const ui = prompts({ choices: [choice, 1], confirms: [true] });
-      expect(await runSetup(options, ui.io, deps)).toBe(true);
-      expect(deps.inspect).toHaveBeenCalledWith(id, { driver, enabled: true });
-      expect(deps.runCli).not.toHaveBeenCalled();
-      expect(deps.models).not.toHaveBeenCalled();
-      expect(deps.verify).not.toHaveBeenCalled();
-      expect(ui.io.choose.mock.calls[1]?.[1]).toEqual(["Fixture default", "Fixture selected", "Search models…"]);
-      expect(loadConfig().defaultModelSelection).toEqual({ instanceId: id, model: "fixture-selected" });
-      expect(loadConfig().instances?.[id]).toEqual({ driver, enabled: true });
-      expect(loadConfig().instances?.openaiCompat.driver).toBe("openai-compat");
-      expect(ui.lines.join("\n")).toContain("Existing sign-in found");
-      expect(await isSetupComplete(DATA_DIR)).toBe(true);
-      ui.assertConsumed();
-      expectLeaseReleased();
-    },
-  );
-
-  it("installs Codex only after confirmation and supports remote device sign-in", async () => {
-    const deps = dependencies();
-    deps.inspect
-      .mockResolvedValueOnce({ snapshot: { state: "unavailable", reason: "missing fixture CLI" }, models })
-      .mockResolvedValueOnce({ snapshot: { state: "available", authenticated: false }, models });
-    const ui = prompts({ choices: [0, 1, 0], confirms: [true, true] });
-    expect(await runSetup(options, ui.io, deps)).toBe(true);
-    expect(deps.runCli.mock.calls).toEqual([
-      ["npm", ["install", "-g", "@openai/codex"]],
-      ["codex", ["login", "--device-auth"], undefined],
-    ]);
-    expect(ui.io.confirm.mock.invocationCallOrder[0]).toBeLessThan(deps.runCli.mock.invocationCallOrder[0]!);
-    expect(deps.inspect).toHaveBeenCalledTimes(3);
-    ui.assertConsumed();
-  });
-
-  it("runs Claude's account login and retains a custom CLI path and environment", async () => {
-    const original = { driver: "claudeAgent", config: { cli: "/fixture/bin/claude" }, environment: { CLAUDE_CONFIG_DIR: "/fixture/account" } };
-    persist({ instances: { workClaude: original } });
-    const deps = dependencies();
-    deps.inspect.mockResolvedValueOnce({ snapshot: { state: "available", authenticated: false }, models });
-    const ui = prompts({ choices: [3, 0], confirms: [true] });
-    expect(await runSetup(options, ui.io, deps)).toBe(true);
-    expect(deps.runCli).toHaveBeenCalledWith("/fixture/bin/claude", ["auth", "login"], original.environment);
-    expect(loadConfig().instances?.workClaude).toEqual({ ...original, enabled: true });
-    expect(loadConfig().defaultModelSelection?.instanceId).toBe("workClaude");
-    ui.assertConsumed();
-  });
-
-  it("does not save after a CLI exits successfully without confirming sign-in", async () => {
-    const original = persist({ profile: { name: "Existing user" } });
-    const deps = dependencies();
-    deps.inspect.mockResolvedValue({ snapshot: { state: "available", authenticated: false }, models });
-    const ui = prompts({ choices: [0, 0, 2] });
-    expect(await runSetup(options, ui.io, deps)).toBe(false);
-    expect(ui.lines.join("\n")).toContain("Sign-in was not confirmed");
-    expect(ui.lines.join("\n")).not.toContain("Test reply received");
-    expect(readFileSync(configPath, "utf8")).toBe(original);
-    expectLeaseReleased();
-  });
-
-  it("keeps settings after sign-in cancellation", async () => {
-    const original = persist({ profile: { name: "Existing user" } });
-    const deps = dependencies();
-    deps.inspect.mockResolvedValueOnce({ snapshot: { state: "available", authenticated: false }, models });
-    deps.runCli.mockRejectedValue(new SetupCancelled());
-    const ui = prompts({ choices: [0, 0] });
-    expect(await runSetup(options, ui.io, deps)).toBe(false);
-    expect(readFileSync(configPath, "utf8")).toBe(original);
-    expectLeaseReleased();
-  });
-
-  it("cancels a declined install before running any command", async () => {
-    const deps = dependencies();
-    deps.inspect.mockResolvedValue({ snapshot: { state: "unavailable" }, models });
-    const ui = prompts({ choices: [0], confirms: [false] });
-    expect(await runSetup(options, ui.io, deps)).toBe(false);
-    expect(deps.runCli).not.toHaveBeenCalled();
-    expect(existsSync(configPath)).toBe(false);
-    expectLeaseReleased();
-  });
-
-  it("keeps the saved native model selected when setup is run again", async () => {
-    persist({ instances: { codex: { driver: "codex" } }, defaultModelSelection: { instanceId: "codex", model: "fixture-selected" } });
-    const ui = prompts({ choices: [3, 0], confirms: [true] });
-    expect(await runSetup(options, ui.io, dependencies())).toBe(true);
-    expect(ui.io.choose.mock.calls[0]?.[2]).toBe(3);
-    expect(ui.io.choose.mock.calls[1]?.[2]).toBe(0);
-    expect(ui.io.choose.mock.calls[1]?.[1][0]).toBe("Fixture selected");
-    expect(loadConfig().defaultModelSelection).toEqual({ instanceId: "codex", model: "fixture-selected" });
-  });
-
-  it("uses the model ID when the catalog has no human-readable name", async () => {
-    const deps = dependencies();
-    deps.inspect.mockResolvedValue({
-      snapshot: { state: "available", authenticated: true },
-      models: { default: "id-only", options: [{ id: "id-only", label: "id-only" }, { id: "unnamed", label: " " }] },
-    });
-    const ui = prompts({ choices: [0, 1], confirms: [true] });
-    expect(await runSetup(options, ui.io, deps)).toBe(true);
-    expect(ui.io.choose.mock.calls[1]?.[1]).toEqual(["id-only", "unnamed", "Search models…"]);
-    expect(loadConfig().defaultModelSelection?.model).toBe("unnamed");
-    ui.assertConsumed();
-  });
-
-  it("does not change a saved setup when the final native save is declined", async () => {
-    const original = persist({ profile: { name: "Keep" }, defaultModelSelection: { instanceId: "claude", model: "previous" } });
-    const ui = prompts({ choices: [0, 1], confirms: [false] });
-    expect(await runSetup(options, ui.io, dependencies())).toBe(false);
-    expect(readFileSync(configPath, "utf8")).toBe(original);
-    expectLeaseReleased();
-  });
-
-  it("does not install over an unavailable custom CLI path", async () => {
-    const original = persist({ instances: { codex: { driver: "codex", config: { cli: "/fixture/custom-codex" } } } });
-    const deps = dependencies();
-    deps.inspect.mockResolvedValue({ snapshot: { state: "unavailable" }, models });
-    const ui = prompts({ choices: [0, 2] });
-    expect(await runSetup(options, ui.io, deps)).toBe(false);
-    expect(ui.lines.join("\n")).toContain("custom CLI path is unavailable");
-    expect(deps.runCli).not.toHaveBeenCalled();
-    expect(readFileSync(configPath, "utf8")).toBe(original);
-    expectLeaseReleased();
-  });
-
-  it("does not overwrite an instance that repurposed a native provider ID", async () => {
-    const existing = { driver: "customAcp", displayName: "Keep this connection", config: { cli: "/fixture/other" } };
-    persist({ instances: { codex: existing } });
-    const ui = prompts({ choices: [0, 0], confirms: [true] });
-    expect(await runSetup(options, ui.io, dependencies())).toBe(true);
-    const saved = loadConfig();
-    expect(saved.instances?.codex).toEqual(existing);
-    expect(saved.defaultModelSelection?.instanceId).toMatch(/^codex-[\da-f]{8}$/);
-    expect(saved.instances?.[saved.defaultModelSelection!.instanceId]?.driver).toBe("codex");
-  });
-});
-
 describe("API onboarding", () => {
   it.each<{
     label: string;
@@ -266,7 +123,7 @@ describe("API onboarding", () => {
     };
     persist({ instances: { existing: original } });
     const deps = dependencies();
-    const ui = prompts({ choices: [3, 0], confirms: [true, true] });
+    const ui = prompts({ choices: [1, 0], confirms: [true, true] });
     expect(await runSetup(options, ui.io, deps)).toBe(true);
     expect(deps.models).toHaveBeenCalledWith("https://api.example.test/v1", expected);
     expect(deps.verify).toHaveBeenCalledWith("https://api.example.test/v1", expected, "fixture-default");
@@ -281,7 +138,7 @@ describe("API onboarding", () => {
       instances: { routed: { driver: "openai-compat", config: { url: "https://openrouter.ai/api/v1", key: "fixture-key" } } },
     });
     const deps = dependencies();
-    const ui = prompts({ choices: [3, 0], confirms: [true, true] });
+    const ui = prompts({ choices: [1, 0], confirms: [true, true] });
     expect(await runSetup(options, ui.io, deps)).toBe(true);
     expect(deps.verify).toHaveBeenCalledWith("https://openrouter.ai/api/v1", "fixture-key", "fixture-default", "fireworks");
     expect(loadConfig().instances?.routed.config).toEqual({ url: "https://openrouter.ai/api/v1", key: "fixture-key", model: "fixture-default" });
@@ -292,7 +149,7 @@ describe("API onboarding", () => {
     persist({ openaiCompat: { provider: "workspace-provider" } });
     vi.stubEnv("OPENAI_COMPAT_PROVIDER", "environment-provider");
     const deps = dependencies();
-    const ui = prompts({ choices: [2, 1, 0], secrets: ["fixture-new-key"], confirms: [true, true] });
+    const ui = prompts({ choices: [0, 1, 0], secrets: ["fixture-new-key"], confirms: [true, true] });
     expect(await runSetup(options, ui.io, deps)).toBe(true);
     expect(deps.verify).toHaveBeenCalledWith("https://openrouter.ai/api/v1", "fixture-new-key", "fixture-default");
     const saved = loadConfig();
@@ -310,7 +167,7 @@ describe("API onboarding", () => {
     };
     persist({ instances: { pinned: original } });
     const deps = dependencies();
-    const ui = prompts({ choices: [3, 0], secrets: ["fixture-new-key"], confirms: [true, true] });
+    const ui = prompts({ choices: [1, 0], secrets: ["fixture-new-key"], confirms: [true, true] });
     expect(await runSetup(options, ui.io, deps)).toBe(true);
     expect(ui.io.secret).toHaveBeenCalledTimes(1);
     expect(deps.verify).toHaveBeenCalledWith("https://openrouter.ai/api/v1", "fixture-new-key", "fixture-default", "fireworks");
@@ -338,7 +195,7 @@ describe("API onboarding", () => {
     writeFileSync(join(DATA_DIR, "bots.json"), sentinel);
     writeFileSync(join(DATA_DIR, "messages-existing-thread.json"), transcript);
     const deps = dependencies();
-    const ui = prompts({ choices: [2, 0, 1], secrets: ["  new-fixture-secret  "], confirms: [true, true] });
+    const ui = prompts({ choices: [0, 0, 1], secrets: ["  new-fixture-secret  "], confirms: [true, true] });
     expect(await runSetup(options, ui.io, deps)).toBe(true);
 
     expect(deps.models).toHaveBeenCalledWith("https://api.openai.com/v1", "new-fixture-secret");
@@ -367,7 +224,7 @@ describe("API onboarding", () => {
     async ({ confirms, verified }) => {
       const original = persist({ profile: { name: "Keep" } });
       const deps = dependencies();
-      const ui = prompts({ choices: [2, 1, 0], secrets: ["fixture-key"], confirms });
+      const ui = prompts({ choices: [0, 1, 0], secrets: ["fixture-key"], confirms });
       expect(await runSetup(options, ui.io, deps)).toBe(false);
       expect(deps.verify).toHaveBeenCalledTimes(verified ? 1 : 0);
       expect(readFileSync(configPath, "utf8")).toBe(original);
@@ -379,7 +236,7 @@ describe("API onboarding", () => {
     const original = persist({ profile: { name: "Keep" }, defaultModelSelection: { instanceId: "codex", model: "original" } });
     const deps = dependencies();
     deps.verify.mockRejectedValue(new Error("API returned HTTP 401. Check the API key."));
-    const ui = prompts({ choices: [2, 2, 0, 2], secrets: ["fixture-key"], confirms: [true] });
+    const ui = prompts({ choices: [0, 2, 0, 2], secrets: ["fixture-key"], confirms: [true] });
     expect(await runSetup(options, ui.io, deps)).toBe(false);
     expect(ui.lines.join("\n")).toContain("HTTP 401");
     expect(readFileSync(configPath, "utf8")).toBe(original);
@@ -388,7 +245,7 @@ describe("API onboarding", () => {
 
   it("cancels hidden key entry without saving or contacting the provider", async () => {
     const deps = dependencies();
-    const ui = prompts({ choices: [2, 0], secrets: [new SetupCancelled()] });
+    const ui = prompts({ choices: [0, 0], secrets: [new SetupCancelled()] });
     expect(await runSetup(options, ui.io, deps)).toBe(false);
     expect(deps.models).not.toHaveBeenCalled();
     expect(deps.verify).not.toHaveBeenCalled();
@@ -399,7 +256,7 @@ describe("API onboarding", () => {
   it("allows an exact model ID after a catalog failure and verifies it before saving", async () => {
     const deps = dependencies();
     deps.models.mockRejectedValue(new Error("The catalog is unavailable"));
-    const ui = prompts({ choices: [2, 0, 0], secrets: ["fixture-key"], answers: [" manual-chat-model "], confirms: [true, true, true] });
+    const ui = prompts({ choices: [0, 0, 0], secrets: ["fixture-key"], answers: [" manual-chat-model "], confirms: [true, true, true] });
     expect(await runSetup(options, ui.io, deps)).toBe(true);
     expect(deps.verify).toHaveBeenCalledWith("https://api.openai.com/v1", "fixture-key", "manual-chat-model");
     expect(loadConfig().defaultModelSelection?.model).toBe("manual-chat-model");
@@ -409,7 +266,7 @@ describe("API onboarding", () => {
   it("keeps custom API setup after the built-in endpoints", async () => {
     const deps = dependencies();
     const ui = prompts({
-      choices: [2, 4, 0], answers: ["https://custom.example.test/v1"],
+      choices: [0, 4, 0], answers: ["https://custom.example.test/v1"],
       secrets: ["fixture-custom-key"], confirms: [true, true],
     });
     expect(await runSetup(options, ui.io, deps)).toBe(true);
@@ -426,7 +283,7 @@ describe("API onboarding", () => {
 
   it("reuses an API connection without changing its endpoint or key and preselects the saved model", async () => {
     const deps = dependencies();
-    const first = prompts({ choices: [2, 0, 1], secrets: ["fixture-first-key"], confirms: [true, true] });
+    const first = prompts({ choices: [0, 0, 1], secrets: ["fixture-first-key"], confirms: [true, true] });
     expect(await runSetup(options, first.io, deps)).toBe(true);
     const before = loadConfig();
     const priorId = before.defaultModelSelection!.instanceId;
@@ -434,8 +291,8 @@ describe("API onboarding", () => {
     // The explicit saved fleet has Codex, Claude, OpenAI-compatible, then
     // this newly added API connection in the existing-connections list.
     const existingIds = Object.entries(before.instances!).filter(([, entry]) =>
-      ["codex", "claudeAgent", "openai-compat"].includes(entry.driver) && entry.enabled !== false).map(([id]) => id);
-    const chosen = existingIds.indexOf(priorId) + 3;
+      entry.driver === "openai-compat" && entry.enabled !== false).map(([id]) => id);
+    const chosen = existingIds.indexOf(priorId) + 1;
     const second = prompts({ choices: [chosen, 1], confirms: [true, true] });
     expect(await runSetup(options, second.io, deps)).toBe(true);
     expect(second.io.choose.mock.calls[0]?.[2]).toBe(chosen);
@@ -455,7 +312,7 @@ describe("API onboarding", () => {
     const deps = dependencies();
     const catalog = Array.from({ length: 25 }, (_, index) => ({ id: `fixture-model-${index}`, label: `Model ${index}` }));
     deps.models.mockResolvedValue(catalog);
-    const ui = prompts({ choices: [2, 0, 20, 0], secrets: ["fixture-key"], answers: ["fixture-model-24"], confirms: [true, true] });
+    const ui = prompts({ choices: [0, 0, 20, 0], secrets: ["fixture-key"], answers: ["fixture-model-24"], confirms: [true, true] });
     expect(await runSetup(options, ui.io, deps)).toBe(true);
     expect(deps.verify).toHaveBeenCalledWith("https://api.openai.com/v1", "fixture-key", "fixture-model-24");
     expect(loadConfig().defaultModelSelection?.model).toBe("fixture-model-24");
@@ -472,7 +329,7 @@ describe("API onboarding", () => {
     deps.models.mockResolvedValue(Array.from({ length: 25 }, (_, index) => ({ id: `fixture-model-${index}`, label: `Model ${index}` })));
     const ui = prompts({ confirms: [true, true] });
     ui.io.choose.mockImplementation(async (question, available, defaultIndex) => {
-      if (question === "Choose your AI connection") return 3;
+      if (question === "Choose your AI connection") return 1;
       expect(defaultIndex).toBeDefined();
       expect(available[defaultIndex!]).toBe("Model 24");
       return defaultIndex!;
@@ -492,7 +349,7 @@ describe("API onboarding", () => {
       defaultModelSelection: { instanceId: "primary", model: "fixture-selected" },
     });
     const deps = dependencies();
-    const ui = prompts({ choices: [4, 0], confirms: [true, true] });
+    const ui = prompts({ choices: [2, 0], confirms: [true, true] });
     expect(await runSetup(options, ui.io, deps)).toBe(true);
     expect(ui.io.choose.mock.calls[1]?.[2]).toBe(0);
     expect(deps.verify).toHaveBeenCalledWith("https://secondary.example.test/v1", "secondary-key", "fixture-default");
@@ -501,44 +358,37 @@ describe("API onboarding", () => {
   });
 });
 
-describe("connection recovery", () => {
-  it("retries a native connection without changing the saved setup during the failed attempt", async () => {
-    const original = persist({
-      profile: { name: "Keep" },
-      defaultModelSelection: { instanceId: "claude", model: "previous" },
-    });
+describe("headless setup", () => {
+  it("saves a verified connection from flags alone and makes it the default", async () => {
     const deps = dependencies();
-    deps.inspect.mockRejectedValueOnce(new Error("Could not read sign-in status. Try again."));
-    const ui = prompts({ choices: [0, 0, 0], confirms: [true] });
-    const choose = ui.io.choose.getMockImplementation()!;
-    ui.io.choose.mockImplementation(async (...args) => {
-      if (args[0] === "What would you like to do?") expect(readFileSync(configPath, "utf8")).toBe(original);
-      return choose(...args);
-    });
-    expect(await runSetup(options, ui.io, deps)).toBe(true);
-    expect(deps.inspect).toHaveBeenCalledTimes(2);
-    expect(deps.runCli).not.toHaveBeenCalled();
-    expect(deps.verify).not.toHaveBeenCalled();
-    expect(loadConfig().defaultModelSelection).toEqual({ instanceId: "codex", model: "fixture-default" });
-    expect(ui.lines.join("\n")).toContain("Model access is checked by the provider when you send your first message");
-    expect(ui.lines.join("\n")).not.toContain("Test reply received");
-    ui.assertConsumed();
+    const lines: string[] = [];
+    const saved = await runHeadlessSetup({ dataDir: DATA_DIR }, { provider: "groq", apiKey: " gsk-fixture ", model: "fixture-selected" }, (line) => lines.push(line), deps);
+    expect(deps.verify).toHaveBeenCalledWith("https://api.groq.com/openai/v1", "gsk-fixture", "fixture-selected");
+    expect(loadConfig().defaultModelSelection).toEqual({ instanceId: saved.instanceId, model: "fixture-selected" });
+    expect(loadConfig().instances?.[saved.instanceId]).toMatchObject({ driver: "openai-compat", config: { url: "https://api.groq.com/openai/v1", key: "gsk-fixture" } });
+    expect(lines.join("\n")).not.toContain("gsk-fixture");
+    expect(await isSetupComplete(DATA_DIR)).toBe(true);
     expectLeaseReleased();
   });
 
-  it("changes provider only after an explicit recovery choice", async () => {
-    const original = { driver: "codex", config: { cli: "/fixture/old-codex" } };
-    persist({ instances: { codex: original }, defaultModelSelection: { instanceId: "codex", model: "previous" } });
+  it("uses a custom base URL, the catalog's first model, and can skip the metered check", async () => {
     const deps = dependencies();
-    deps.inspect.mockRejectedValueOnce(new Error("This sign-in could not be checked."));
-    const ui = prompts({ choices: [0, 1, 1, 0], confirms: [true] });
-    expect(await runSetup(options, ui.io, deps)).toBe(true);
-    expect(deps.inspect.mock.calls.map(([id]) => id)).toEqual(["codex", "claude"]);
-    expect(loadConfig().instances?.codex).toEqual(original);
-    expect(loadConfig().defaultModelSelection).toEqual({ instanceId: "claude", model: "fixture-default" });
-    ui.assertConsumed();
+    const saved = await runHeadlessSetup({ dataDir: DATA_DIR }, { provider: "custom", baseUrl: "https://llm.example.test/v1", apiKey: "k", skipVerify: true }, () => {}, deps);
+    expect(saved.model).toBe("fixture-default");
+    expect(deps.verify).not.toHaveBeenCalled();
+    expect(loadConfig().instances?.[saved.instanceId]?.config).toMatchObject({ url: "https://llm.example.test/v1" });
   });
 
+  it("refuses unknown providers, a custom provider without a URL, and an empty key, saving nothing", async () => {
+    const deps = dependencies();
+    await expect(runHeadlessSetup({ dataDir: DATA_DIR }, { provider: "claude-pro", apiKey: "k" }, () => {}, deps)).rejects.toThrow(/Unknown provider/);
+    await expect(runHeadlessSetup({ dataDir: DATA_DIR }, { provider: "custom", apiKey: "k" }, () => {}, deps)).rejects.toThrow(/--base-url/);
+    await expect(runHeadlessSetup({ dataDir: DATA_DIR }, { provider: "openai", apiKey: "  " }, () => {}, deps)).rejects.toThrow(/API key is required/);
+    expect(existsSync(configPath)).toBe(false);
+  });
+});
+
+describe("connection recovery", () => {
   it("cancels at recovery without altering config, bots or conversations", async () => {
     const original = persist({ profile: { name: "Existing user" }, defaultModelSelection: { instanceId: "claude", model: "previous" } });
     const botsPath = join(DATA_DIR, "bots.json");
@@ -546,10 +396,10 @@ describe("connection recovery", () => {
     writeFileSync(botsPath, '[{"id":"keep"}]');
     writeFileSync(messagesPath, '[{"text":"keep conversation"}]');
     const deps = dependencies();
-    deps.inspect.mockRejectedValue(new Error("Sign-in service unavailable."));
-    const ui = prompts({ choices: [0, new SetupCancelled()] });
+    deps.models.mockRejectedValue(new Error("Catalog service unavailable."));
+    const ui = prompts({ choices: [0, 0, new SetupCancelled()], secrets: ["fixture-key"], confirms: [false] });
     expect(await runSetup(options, ui.io, deps)).toBe(false);
-    expect(deps.inspect).toHaveBeenCalledTimes(1);
+    expect(deps.models).toHaveBeenCalledTimes(1);
     expect(readFileSync(configPath, "utf8")).toBe(original);
     expect(readFileSync(botsPath, "utf8")).toBe('[{"id":"keep"}]');
     expect(readFileSync(messagesPath, "utf8")).toBe('[{"text":"keep conversation"}]');
@@ -566,7 +416,7 @@ describe("connection recovery", () => {
       throw new Error("API returned HTTP 401. Check the API key.");
     });
     const ui = prompts({
-      choices: [2, 2, 0, 0, 2, 0],
+      choices: [0, 2, 0, 0, 2, 0],
       secrets: ["fixture-wrong-key", "fixture-replacement-key"], confirms: [true, true, true],
     });
     expect(await runSetup(options, ui.io, deps)).toBe(true);
@@ -585,23 +435,11 @@ describe("connection recovery", () => {
     ui.assertConsumed();
   });
 
-  it("can leave a failing API route for a native account without saving the key", async () => {
-    const deps = dependencies();
-    deps.verify.mockRejectedValue(new Error("API returned HTTP 429. Check limits."));
-    const ui = prompts({ choices: [2, 0, 0, 1, 1, 0], secrets: ["fixture-unused-key"], confirms: [true, true] });
-    expect(await runSetup(options, ui.io, deps)).toBe(true);
-    expect(loadConfig().defaultModelSelection).toEqual({ instanceId: "claude", model: "fixture-default" });
-    expect(readFileSync(configPath, "utf8")).not.toContain("fixture-unused-key");
-    expect(deps.verify).toHaveBeenCalledTimes(1);
-    expect(deps.inspect).toHaveBeenCalledTimes(1);
-    ui.assertConsumed();
-  });
-
   it("offers recovery after a catalog failure when the user does not know a manual model ID", async () => {
     const deps = dependencies();
     deps.models.mockRejectedValueOnce(new Error("The model list timed out."));
     const ui = prompts({
-      choices: [2, 0, 0, 0, 0], secrets: ["fixture-key", "fixture-key"], confirms: [false, true, true],
+      choices: [0, 0, 0, 0, 0], secrets: ["fixture-key", "fixture-key"], confirms: [false, true, true],
     });
     expect(await runSetup(options, ui.io, deps)).toBe(true);
     expect(deps.models).toHaveBeenCalledTimes(2);
@@ -653,11 +491,11 @@ describe("CLI startup preferences", () => {
 describe("setup state and write boundaries", () => {
   it("requires a saved selection belonging to an enabled configured or built-in instance", async () => {
     expect(await isSetupComplete(DATA_DIR)).toBe(false);
-    persist({ defaultModelSelection: { instanceId: "codex", model: "fixture" } });
+    persist({ defaultModelSelection: { instanceId: "openaiCompat", model: "fixture" } });
     expect(await isSetupComplete(DATA_DIR)).toBe(true);
     persist({ defaultModelSelection: { instanceId: "missing", model: "fixture" } });
     expect(await isSetupComplete(DATA_DIR)).toBe(false);
-    persist({ instances: { codex: { driver: "codex", enabled: false } }, defaultModelSelection: { instanceId: "codex", model: "fixture" } });
+    persist({ instances: { openaiCompat: { driver: "openai-compat", enabled: false } }, defaultModelSelection: { instanceId: "openaiCompat", model: "fixture" } });
     expect(await isSetupComplete(DATA_DIR)).toBe(false);
     persist({ instances: { custom: { driver: "openai-compat" } }, defaultModelSelection: { instanceId: "custom", model: "fixture" } });
     expect(await isSetupComplete(DATA_DIR)).toBe(true);
@@ -676,7 +514,7 @@ describe("setup state and write boundaries", () => {
     await expect(isSetupComplete(DATA_DIR)).rejects.toThrow("Existing config.json");
     expect(readFileSync(configPath, "utf8")).toBe(raw);
     expect(ui.io.choose).not.toHaveBeenCalled();
-    expect(deps.inspect).not.toHaveBeenCalled();
+    expect(deps.models).not.toHaveBeenCalled();
     expectLeaseReleased();
   });
 
@@ -688,7 +526,7 @@ describe("setup state and write boundaries", () => {
       const deps = dependencies();
       await expect(runSetup(options, ui.io, deps)).rejects.toThrow(/already using this data directory/);
       expect(ui.io.choose).not.toHaveBeenCalled();
-      expect(deps.inspect).not.toHaveBeenCalled();
+      expect(deps.models).not.toHaveBeenCalled();
       expect(readFileSync(configPath, "utf8")).toBe(original);
     } finally { held.release(); }
     expectLeaseReleased();
