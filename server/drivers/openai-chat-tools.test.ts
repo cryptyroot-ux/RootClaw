@@ -7,6 +7,9 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+// Transport retries (429/5xx/network) wait for real; shrink them so failure cases settle fast.
+process.env.ROOTCLAW_RETRY_SCALE ??= "0.001";
+
 import { ensureDirs, NATIVE_DIR } from "../config.ts";
 import { BUILT_IN_DATA_SYSTEM_PROMPT } from "../data/instructions.ts";
 import type { ProviderInstance, SendTurnInput } from "../contracts.ts";
@@ -19,6 +22,7 @@ import { GrokDriver } from "./grok.ts";
 import { CerebrasDriver } from "./cerebras.ts";
 import { MinimaxDriver } from "./minimax.ts";
 import { OpenAICompatDriver } from "./openai-compat.ts";
+import { RETRY_MAX_ATTEMPTS } from "./retry.ts";
 
 interface ChatRequest {
   messages: Array<{
@@ -451,11 +455,12 @@ describe("optional built-in question compatibility", () => {
     });
     await f.start({ integrations: undefined });
     expect(await f.completed()).toMatchObject({ ok: false });
-    expect(f.requests).toHaveLength(1);
-    expect(f.requests[0].tools?.map(tool => tool.function.name)).toEqual(["ask_user"]);
+    // 429/5xx are transport retries of the same request; nothing is downgraded either way.
+    expect(f.requests).toHaveLength([429, 500].includes(status as number) ? RETRY_MAX_ATTEMPTS : 1);
+    for (const request of f.requests) expect(request.tools?.map(tool => tool.function.name)).toEqual(["ask_user"]);
   });
 
-  it("does not retry network failures or strip tools mounted by the person", async () => {
+  it("retries network failures as the same request and never strips tools mounted by the person", async () => {
     for (const network of [false, true]) {
       const f = await fixture((_body, response) => {
         if (network) return response.destroy(new Error("tools are not supported"));
@@ -464,7 +469,8 @@ describe("optional built-in question compatibility", () => {
       });
       await f.start(network ? { integrations: undefined } : {});
       expect(await f.completed()).toMatchObject({ ok: false });
-      expect(f.requests).toHaveLength(1);
+      expect(f.requests).toHaveLength(network ? RETRY_MAX_ATTEMPTS : 1);
+      if (network) for (const request of f.requests) expect(request.tools?.map(tool => tool.function.name)).toEqual(["ask_user"]);
       if (!network) expect(f.requests[0].tools?.some(tool => tool.function.name === "audit_write")).toBe(true);
       expect(f.effects()).toEqual([]);
     }

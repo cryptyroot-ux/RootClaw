@@ -12,6 +12,9 @@ import { MinimaxDriver } from "./minimax.ts";
 import { OpenAICompatDriver } from "./openai-compat.ts";
 import { MistralDriver } from "./mistral.ts";
 
+// Transport retries (429/5xx/network) wait for real; shrink them so failure cases settle fast.
+process.env.ROOTCLAW_RETRY_SCALE ??= "0.001";
+
 afterEach(() => vi.unstubAllGlobals());
 
 const sse = (body: string) => new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });

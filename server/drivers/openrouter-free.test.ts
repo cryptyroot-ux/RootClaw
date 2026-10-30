@@ -1,5 +1,9 @@
 import { readFileSync } from "node:fs";
+import { RETRY_MAX_ATTEMPTS } from "./retry.ts";
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+// Transport retries (429/5xx/network) wait for real; shrink them so failure cases settle fast.
+process.env.ROOTCLAW_RETRY_SCALE ??= "0.001";
 import type { RuntimeEvent } from "../contracts.ts";
 import { recordEvents } from "../testing/events.ts";
 import { engineFailureKind } from "./engine-errors.ts";
@@ -288,7 +292,8 @@ describe("OpenRouter failures in plain words", () => {
       await recorder.until((event) => event.type === "turn.completed" && event.threadId === "free");
       expect(errorFor("paid")).toBe(OPENROUTER_FAILURES.credits);
       expect(errorFor("free")).toBe(OPENROUTER_FAILURES.freeLimit);
-      expect(bodies.map((body) => body.model)).toEqual(["deepseek/deepseek-v4.1-flash-1017", PREFERRED]);
+      // The 402 goes once; the per-minute 429 is retried up to the shared attempt cap.
+      expect(bodies.map((body) => body.model)).toEqual(["deepseek/deepseek-v4.1-flash-1017", ...Array(RETRY_MAX_ATTEMPTS).fill(PREFERRED)]);
     } finally {
       recorder.stop();
       await instance.dispose();

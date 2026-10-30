@@ -137,14 +137,14 @@ describe("GrokDriver turns (fake fetch)", () => {
   }, 20_000);
 
   it("stops at the attempt cap and settles as failed", async () => {
-    script = [{ status: 500 }, { status: 500 }, { status: 500 }];
+    script = [{ status: 500 }, { status: 500 }, { status: 500 }, { status: 500 }];
     await create();
     await instance.adapter.sendTurn({ threadId: "t-cap", text: "go" });
     await recorder.until((e) => e.type === "turn.completed" && e.ok === false);
 
     const retries = recorder.events.filter((e) => e.type === "turn.retrying");
-    expect(retries.map((e) => e.attempt)).toEqual([1, 2]);
-    expect(calls).toBe(3);
+    expect(retries.map((e) => e.attempt)).toEqual([1, 2, 3]);
+    expect(calls).toBe(4);
     expect(recorder.events.some((e) => e.type === "runtime.error")).toBe(true);
   }, 20_000);
 
