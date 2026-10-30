@@ -37,6 +37,7 @@
     "mcp": "node --experimental-strip-types scripts/mcp-server.ts",
     "control:rootclaw": "node --experimental-strip-types scripts/control-rootclaw.ts",
     "eval": "node --experimental-strip-types evals/runners/run-evals.ts",
+    "eval:context": "node --experimental-strip-types evals/context/run-context-eval.ts",
     "dev:desktop": "node scripts/prepare-cloudflared.mjs --current && electron .",
     "build": "tsc -b && tsc -p tsconfig.server.json && vite build",
     "typecheck": "tsc -b && tsc -p tsconfig.server.json",
