@@ -64,3 +64,6 @@ The iOS companion app bundles a prebuilt WebRTC library for Live calls
 (stasel/WebRTC), built from the WebRTC project, Copyright (c) 2011, The WebRTC
 project authors, used under the BSD 3-Clause License. WebRTC includes
 third-party components under their own licenses, listed with the library.
+
+The native git and web tools (server/drivers/workspace-git.ts, server/drivers/web-tools.ts) adapt the design and the
+DuckDuckGo result parsing of the OMB-Claw native tools (https://github.com/cryptyroot-ux/OMB-Claw), Apache License 2.0.
