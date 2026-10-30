@@ -65,7 +65,6 @@ export function AppNotices({ quiet = false, viewer = null, now = Date.now }: { q
   const plan = useCloudPlanSnapshot(planBridge);
   const [offer, setOffer] = useState<CloudOffer | null | undefined>(undefined);
   const [offerFor, setOfferFor] = useState<string | null>(null);
-  const [organization, setOrganization] = useState<boolean | null>(window.ogb?.organization ? null : false);
   const [closed, setClosed] = useState(false);
   const [introOpen, setIntroOpen] = useState(false);
   const [trialOpen, setTrialOpen] = useState<string | null>(null);
@@ -88,18 +87,9 @@ export function AppNotices({ quiet = false, viewer = null, now = Date.now }: { q
     void bridge.state().then(next => { if (active && !updated) setAccount(next); }).catch(() => {});
     return () => { active = false; unsubscribe(); };
   }, [bridge]);
-  useEffect(() => {
-    const org = window.ogb?.organization;
-    if (!org) return;
-    let active = true;
-    const read = (next: { status: string; organization?: unknown }) => { if (active) setOrganization(next.status !== "signed-out" && Boolean(next.organization)); };
-    const unsubscribe = org.onState(read);
-    void org.state().then(read, () => { if (active) setOrganization(false); });
-    return () => { active = false; unsubscribe(); };
-  }, []);
   const view = bridge ? cloudPlanView(account) : null;
   const record = state.config?.onboarding;
-  const introAllowed = Boolean(bridge) && brandStatus().source !== "file" && organization !== true && !onboardingCloudOffered(record);
+  const introAllowed = Boolean(bridge) && brandStatus().source !== "file" && !onboardingCloudOffered(record);
   const stage = introStage(record, now());
   const trialDue = cloudTrialNotice(plan);
   const popupHere = Boolean(desktop) && (local ? Boolean(bridge) : viewer?.cloudHome === true) && brandStatus().source !== "file";
@@ -142,7 +132,7 @@ export function AppNotices({ quiet = false, viewer = null, now = Date.now }: { q
   const kind = view ? cloudNoticeKind(view, account) : null;
   const introDue = (): boolean | null => {
     if (!introAllowed || !view) return false;
-    if (view.kind === "unknown" || view.kind === "connecting" || organization === null) return null;
+    if (view.kind === "unknown" || view.kind === "connecting") return null;
     if (!buyOfferAllowed(view) || !usedBefore(state.bots)) return false;
     if (offer === undefined) return null;
     if (offerTrialDays(offer) === null) return false;
@@ -167,7 +157,7 @@ export function AppNotices({ quiet = false, viewer = null, now = Date.now }: { q
       : afterWelcome === null || rootClawFirst || popupState === "loading" || moving === null || (popupView !== null && popupBlocked) ? null : popupView !== null,
     [UPDATES_CONSENT_NOTICE]: consentNow,
     [PRODUCT_HUNT_NOTICE]: !cards || moving || firstChat === true || brandStatus().source === "file" || now() >= PRODUCT_HUNT_UNTIL ? false
-      : organization === null || moving === null || firstChat === null ? null : !organization,
+      : moving === null || firstChat === null ? null : true,
     [CLOUD_INTRO]: moving ? false : moving === null ? null : introDue(),
     [CLOUD_TRIAL_NOTICE]: planBridge && plan === null ? null : Boolean(key && (trialDue || trialOpen === key)),
     [CLOUD_NOTICE]: !view ? false : view.kind === "unknown" ? null

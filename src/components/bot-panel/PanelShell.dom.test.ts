@@ -22,7 +22,6 @@ vi.mock("../DesktopCapabilities", async (importOriginal) => ({
 }));
 vi.mock("../Avatar", () => ({ BotAvatar: () => null, RootClawAvatar: () => null }));
 vi.mock("../AvatarImageGenerator", () => ({ AvatarImageGenerator: () => null }));
-vi.mock("@/lib/use-organization-branding", () => ({ useOrganizationBranding: () => null }));
 const stub = (name: string) => (props: Record<string, unknown>) =>
   createElement("div", { [`data-stub-${name}`]: true, "data-editing-instructions": props.editingInstructions === true ? "true" : undefined });
 vi.mock("./DetailsTab", () => ({ DetailsTab: stub("details") }));

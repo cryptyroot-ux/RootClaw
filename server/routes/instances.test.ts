@@ -36,7 +36,6 @@ async function serve(extra: Partial<InstanceRouteDeps> = {}) {
     cfg: { instances: { a: { driver: "fake" } } } as unknown as AppConfig,
     registry,
     sessions: { isLive: () => true },
-    hostedModels: false,
     providerConfigBusy: { get: () => false, set: () => {} },
     providerInstancesChanging: new Set<string>(),
     describeInstances: () => registry.describe(),

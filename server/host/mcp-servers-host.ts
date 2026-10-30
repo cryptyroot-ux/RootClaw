@@ -19,8 +19,6 @@ export interface McpServersHostDeps {
   cfg(): AppConfig;
   persist(next: Record<string, unknown>): void;
   bots(): readonly Bot[];
-  /** The organisation's MCP policy over a bot's servers. */
-  policy<T extends object>(servers: Record<string, T>): Record<string, T>;
   /** One plain line for the person about `bot`. */
   tell(text: string, bot: { id: string; name: string }): void;
   /** Whether this bot's AI starts config.json servers at all. */
@@ -53,7 +51,7 @@ export function enabledCommandServers(cfg: AppConfig): Record<string, StdioMcpSp
 }
 
 export function createMcpServersHost(deps: McpServersHostDeps) {
-  const configured = (bot: Bot): Record<string, McpServerSpec> => deps.policy(customMcpServers(deps.cfg(), bot.mcpServers, bot.id));
+  const configured = (bot: Bot): Record<string, McpServerSpec> => customMcpServers(deps.cfg(), bot.mcpServers, bot.id);
   /** None on an AI that starts no servers, and only those its tool selection reaches. */
   const started = (bot: Bot): string[] => (deps.startsServers(bot.id) ? Object.keys(configured(bot)).filter((name) => canUseMcpServer(bot.toolScope, name)) : []);
   const start: McpHealthDeps["start"] = deps.start ?? (async (_name, server, botId) => {

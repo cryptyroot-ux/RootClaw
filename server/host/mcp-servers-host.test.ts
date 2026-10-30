@@ -40,7 +40,6 @@ function setup(options: { boxed?: boolean; data?: string; bots?: Array<{ id: str
     bots: () => options.bots ?? [IRIS, PAUL, ROSA, NOTES_ONLY, NO_SERVERS],
     startsServers: (botId) => botId !== NO_SERVERS.id,
     boxed: () => options.boxed ?? true,
-    policy: (servers) => servers,
     tell: (text, about) => told.push({ text, about: about.id }),
     // The image's python has no `mcp` module: these start only in Iris's own box, where it is installed.
     start: async (name, server, botId) => {
@@ -91,7 +90,7 @@ it("moves servers over once: a server added in Settings afterwards stays every b
   first.host.boot();
   first.cfg.mcpServers!.shared = { command: "/usr/bin/python3", args: [script(first.data, "workspaces", "iris", "tools", "shared", "server.py")], enabled: true };
   const again = createMcpServersHost({
-    dataDir: first.data, cfg: () => first.cfg, persist: (next) => { first.cfg.mcpServers = next; }, bots: () => [IRIS, PAUL], policy: (servers) => servers,
+    dataDir: first.data, cfg: () => first.cfg, persist: (next) => { first.cfg.mcpServers = next; }, bots: () => [IRIS, PAUL],
     tell: () => {}, startsServers: () => true, boxed: () => true, start: async () => ({ ok: true }),
   });
   again.boot();

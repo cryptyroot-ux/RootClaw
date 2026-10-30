@@ -4,7 +4,6 @@ import {
   aiWorks,
   beatsFor,
   cloudSignInDue,
-  companyModelCount,
   completionPatch,
   EMPTY_ONBOARDING,
   firstRunPatch,
@@ -16,7 +15,6 @@ import {
   MET_CHIEF_HINT,
   onboardingCloudOffered,
   ONBOARDING_CLOUD_HINT,
-  organisationSignIn,
   resumeBeat,
   showWelcome,
   welcomeOnScreen,
@@ -125,29 +123,6 @@ describe("first run on an ROOTCLAW Cloud home", () => {
       expect(cloudSignInDue(viewer, { connected: true, instances: signedOut }, ready)).toBe(false);
       expect(welcomeDue({ onboarding: EMPTY_ONBOARDING }, { remoteClient: false, legacyDone: false, ...viewer })).toBe(true);
     }
-  });
-});
-
-describe("organisation sign-in in the engines beat", () => {
-  const bridge = { begin: () => {} };
-
-  it("is offered only by the packaged local desktop", () => {
-    expect(organisationSignIn({ organization: bridge }, { hosted: false })).toBe(bridge);
-    expect(organisationSignIn(undefined, { hosted: false })).toBeUndefined();
-    expect(organisationSignIn({}, { hosted: false })).toBeUndefined();
-    expect(organisationSignIn({ organization: bridge, remoteClient: { active: true } }, { hosted: false })).toBeUndefined();
-    expect(organisationSignIn({ organization: bridge }, { hosted: true })).toBeUndefined();
-    expect(organisationSignIn({ organization: bridge, remoteClient: { active: false } }, { hosted: false })).toBe(bridge);
-  });
-
-  it("counts the models the organisation approved", () => {
-    expect(companyModelCount(null)).toBe(0);
-    expect(companyModelCount({})).toBe(0);
-    expect(companyModelCount({ providers: [
-      { configured: true, models: ["a", "b"] },
-      { configured: false, models: ["c"] },
-      { configured: true, models: ["d"] },
-    ] })).toBe(3);
   });
 });
 

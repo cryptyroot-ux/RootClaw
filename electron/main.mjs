@@ -30,7 +30,6 @@ import { createServerSupervisor } from "./server-supervisor.mjs";
 import { serverChildLaunch } from "./server-child-launch.mjs";
 import { packageUrlFromCommandLine, packageUrlFromDeepLink } from "./package-link.mjs";
 import { chatLinkFrom, chatLinkFromCommandLine } from "./chat-link.mjs";
-import { createOrganizationEntry, isOrganizationDeepLink, takeOrganizationDeepLink, organizationRestartIntent, withOrganizationRestartIntent, withoutOrganizationRestartIntent } from "./organization-entry.mjs";
 import { windowBackground, windowChromeOptions } from "./window-chrome.mjs";
 import { createAllWindowsClosedQuit } from "./window-all-closed.mjs";
 import { createStartupScreen } from "./startup-screen.mjs";
@@ -92,7 +91,6 @@ import { createComputerSharing, isHomeFolder, sharedCuaConnection, validateShare
 import { createHostScreenLease } from "./host-screen-lease.mjs";
 import { acquireDataDirLease } from "./data-dir-lease.mjs";
 import { switchLocalEnvironment } from "./environment-switch.mjs";
-import { createManagedDesktopClient, createManagedDesktopRelay, createManagedDesktopStore } from "./managed-desktop.mjs";
 import { CHECKOUT_SOURCES, cloudMenuSublabel, cloudTarget, createCloudAccountClient, createCloudAccountStore } from "./cloud-account.mjs";
 import { installCloudPlanIpc } from "./cloud-plan-ipc.mjs";
 import { cloudLinkOpensSheet, colorDotIcons, createCloudLook, createCloudReadyNotice, installCloudBuy, lookFile } from "./cloud-buy.mjs";
@@ -110,9 +108,6 @@ import { createTeamProfileSeeds } from "./team-profile-seed.mjs";
 import { createHomePlaces } from "./home-places.mjs"; import { createAddedCloudNotice, installCloudRail, railPlaces } from "./cloud-rail.mjs"; import { otherOwnClouds } from "./cloud-list.mjs"; import { installPlaceLook } from "./place-look.mjs"; import { CHROME_RAIL_PATH, createChromeRail } from "./chrome-rail.mjs";
 import { createWindowStateFile } from "./window-state-file.mjs";
 import { createEnvironmentsFile } from "./environments-file.mjs";
-import { createOrgLibrary } from "./org-library.mjs";
-import { createCompanyBackups } from "./company-backups.mjs";
-import { createCompanyBackupSchedule } from "./company-backup-schedule.mjs";
 import { installServerSessions, reportOwnListeners } from "./server-session.mjs";
 
 const { desktopCapabilities, localComputerReady, nativeDesktopActions } = capabilitiesModule;
@@ -138,7 +133,6 @@ let desktopViewerOwner = null;
 let desktopViewerContextId = null;
 let desktopWorkspaceManager = null;
 let desktopWorkspaceOwner = null;
-let pendingOrganizationEntry = takeOrganizationDeepLink(process.argv);
 function appWindows() {
   return BrowserWindow.getAllWindows().filter((win) => !isTalkPanel(win));
 }
@@ -151,9 +145,8 @@ const cloudEntry = createCloudEntry({
   },
 });
 cloudEntry.fromLaunch(process.argv);
-let pendingPackageInstallUrl = pendingOrganizationEntry ? null : packageUrlFromCommandLine(process.argv);
-let pendingChatLink = pendingOrganizationEntry ? null : chatLinkFromCommandLine(process.argv);
-let organizationEntryReady = false;
+let pendingPackageInstallUrl = packageUrlFromCommandLine(process.argv);
+let pendingChatLink = chatLinkFromCommandLine(process.argv);
 let mainWindow = null;
 const serverUnavailableWindows = new WeakSet();
 let unreadCount = 0;
@@ -241,15 +234,11 @@ function queueChatLink(rawLink) {
 }
 
 app.on("open-url", (event, url) => {
-  if (!queueOrganizationEntry(url) && !cloudEntry.fromUrl(url) && !queuePackageInstall(url) && !queueChatLink(url)) return;
+  if (!cloudEntry.fromUrl(url) && !queuePackageInstall(url) && !queueChatLink(url)) return;
   event.preventDefault();
 });
 
 app.on("second-instance", (_event, commandLine) => {
-  if (takeOrganizationDeepLink(commandLine)) {
-    queueOrganizationEntry("rootclaw://organization");
-    return;
-  }
   if (cloudEntry.fromArgs(commandLine)) return;
   const packageUrl = packageUrlFromCommandLine(commandLine);
   if (packageUrl) pendingPackageInstallUrl = packageUrl;
@@ -268,7 +257,6 @@ let desktopDataDirLease = null;
 // The folder this process leases; environmentsState.activeId can name a remote server instead.
 let runningDataDir = null;
 let localSwitchInFlight = false;
-let managedDesktop = null;
 let cloudAccount = null, updatesConsent = null, desktopPrefs = null;
 let cloudAccountStarted = Promise.resolve();
 let cloudAccountRestoring = false;
@@ -276,15 +264,6 @@ let cloudSignInRestored = false;
 function cloudAccountRestored() {
   return Promise.race([cloudAccountStarted, new Promise(resolve => setTimeout(resolve, 5_000).unref?.())]);
 }
-let orgLibrary = null;
-let companyBackupController = null;
-let companyBackupState = { busy: false };
-let preparedCompanyRestore = null;
-let companyBackupSchedule = null;
-let companyBackupClientStateRequest = null;
-let companyRestoreCommitting = false;
-let companyBackupConfigurationRevision = 0;
-const managedDesktopRelay = createManagedDesktopRelay();
 const includedX = createDesktopIncludedX({ account: () => cloudAccount, server: () => serverProc, log: slog }), includedPages = createDesktopIncludedPages({ account: () => cloudAccount, server: () => serverProc, log: slog });
 const cloudPower = createCloudPowerGate({ power: () => cloudAccount?.power() ?? null, wanted: () => Boolean(cloudSync?.running() || computerSharing?.lendingToCloud()) });
 const utilityServerExits = new WeakMap();
@@ -304,8 +283,6 @@ const serverSupervisor = createServerSupervisor({
     void readCloudOfferBrand();
     syncManagedComposioCredentials(); includedX.serverStarted(); includedPages.serverStarted(); railChanged();
     reportOwnListeners(proc);
-    orgLibrary?.runtimeReady();
-    if (managedDesktop) void managedDesktop.refresh().catch(() => {});
     routineWake.start();
     for (const win of appWindows()) {
       if (!serverUnavailableWindows.has(win) || activeRemote(environmentsState)) continue;
@@ -319,7 +296,6 @@ const serverSupervisor = createServerSupervisor({
   onUnavailable() {
     serverReady = false;
     serverProc = null;
-    companyBackupSchedule?.reconcile();
     routineWake.stop();
   },
   onExhausted() {
@@ -674,8 +650,6 @@ async function startManagedCompanionConnection({ waitForVerification = true } = 
 }
 
 async function startDesktopCompanion({ waitForHosted = true, remember = true } = {}) {
-  const refusal = managedRemoteAccessRefusal();
-  if (refusal) throw new Error(refusal);
   companionDesiredThisLaunch = true;
   companionLaunchGeneration += 1;
   const localState = await startCompanion(companionLaunchOptions());
@@ -902,204 +876,6 @@ const announceCloudReady = createCloudReadyNotice({ Notification, focused: () =>
   sheetOpen: () => cloudBuy.sheetOpen(), name: () => cloudLook.current().name, shown: () => cloudAccount?.checkoutDone(),
   open: () => { if (!desktopTray?.show()) activateExistingWindow(appWindows()); void workspaceMenuAction(() => (homeWindow.cloudOrigin() ? showHome({ place: "cloud" }) : connectCloudHome())); } });
 
-function ensureManagedDesktop() {
-  if (managedDesktop) return managedDesktop;
-  if (!app.isPackaged || desktopRemoteAccess) throw new Error("Organization sign-in requires the installed desktop app running on this computer.");
-  const encryption = {
-    available: async () => (await safeStorage.isAsyncEncryptionAvailable()) &&
-      (process.platform !== "linux" || safeStorage.getSelectedStorageBackend() !== "basic_text"),
-    encrypt: value => safeStorage.encryptStringAsync(value),
-    decrypt: value => safeStorage.decryptStringAsync(value),
-  };
-  const store = createManagedDesktopStore({ file: path.join(app.getPath("userData"), "company-connection.bin"), encryption });
-  orgLibrary = createOrgLibrary({
-    dataDir: path.join(desktopDataDir(), "org-library"),
-    store: createManagedDesktopStore({ file: path.join(app.getPath("userData"), "company-library.bin"), encryption }),
-    fetchBytes: (route, maxBytes, options) => managedDesktop.fetchLibraryBytes(route, maxBytes, options),
-    relay: library => managedDesktopRelay.sendLibrary(serverProc, library),
-    appVersion: app.getVersion(),
-    log: message => slog(message),
-  });
-  managedDesktop = createManagedDesktopClient({
-    store, platform: process.platform, deviceName: os.hostname().slice(0, 100) || "My computer",
-    applyConnection: connection => managedDesktopRelay.send(serverProc, connection),
-    applyPolicy: policy => managedDesktopRelay.sendPolicy(serverProc, policy),
-    migrateIdentity: identity => managedDesktopRelay.sendIdentity(serverProc, identity),
-    library: orgLibrary,
-    appVersion: app.getVersion(),
-    openBrowser: url => shell.openExternal(url),
-    onState: state => {
-      if (state.status === "license-expired") companyBackupController?.abort();
-      const lost = ["signed-out", "reauth-required"].includes(state.status), withoutStorage = state.status === "connected" && !state.cloudBackups;
-      if (lost || withoutStorage) {
-        companyBackupConfigurationRevision++;
-        companyBackupController?.abort();
-        preparedCompanyRestore = null;
-        if (withoutStorage) void companyBackupSchedule?.forget().catch(() => {});
-        publishCompanyBackupState({ busy: Boolean(companyBackupController) });
-      }
-      companyBackupSchedule?.reconcile();
-      // Remote pages never receive local identity events, even in a window that once subscribed locally.
-      if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents.mainFrame.url.startsWith(`${rendererOrigin()}/`) &&
-          !activeRemote(environmentsState) && !desktopRemoteAccess) {
-        mainWindow.webContents.send("organization:state-changed", state);
-      }
-    },
-  });
-  companyBackupSchedule = createCompanyBackupSchedule({
-    store: createManagedDesktopStore({ file: path.join(app.getPath("userData"), "company-backup-schedule.bin"), encryption }),
-    scope: companyBackupScope,
-    run: async (signal, scope) => {
-      if (companyBackupController || preparedCompanyRestore || companyRestoreCommitting || desktopShutdownStarted) throw companyBackupDeferred();
-      const proc = serverProc;
-      const status = await localBackupStatus(proc);
-      if (status.busy || status.pendingRestore) throw companyBackupDeferred();
-      const clientState = await collectCompanyBackupClientState(signal, scope, proc);
-      signal.throwIfAborted();
-      const current = companyBackupScope();
-      if (!current || current.key !== scope.key || current.generation !== scope.generation || proc !== serverProc || preparedCompanyRestore || companyRestoreCommitting) throw companyBackupDeferred();
-      return runCompanyBackup("backup", { clientState }, { signal, scope });
-    },
-    onState: schedule => publishCompanyBackupState({ ...companyBackupState, schedule }),
-  });
-  return managedDesktop;
-}
-
-function companyBackupScope() {
-  if (desktopShutdownStarted || desktopRemoteAccess || !serverReady || !serverProc || activeEnvironment(environmentsState)) return null;
-  const client = managedDesktop, connection = client?.connection(), state = client?.state();
-  if (!connection || state?.status !== "connected" || !state.cloudBackups || connection.expiresAt <= Date.now()) return null;
-  const dataDir = path.resolve(desktopDataDir());
-  return { key: JSON.stringify([connection.portalOrigin, connection.organizationId, connection.email, dataDir]),
-    adopts: saved => {
-      try {
-        const value = JSON.parse(saved);
-        return Array.isArray(value) && value.length === 5 && typeof value[3] === "string" && value[0] === connection.portalOrigin &&
-          value[1] === connection.organizationId && value[2] === connection.email && value[4] === dataDir;
-      } catch { return false; }
-    },
-    generation: client.backupGeneration() };
-}
-
-function companyBackupDeferred() {
-  return Object.assign(new Error("Wait for this installation to be available for its daily backup."), { code: "workspace_busy" });
-}
-
-function collectCompanyBackupClientState(signal, scope, proc) {
-  const win = mainWindow, contents = win?.webContents, frame = contents?.mainFrame;
-  if (companyBackupClientStateRequest || !win || win.isDestroyed() || desktopRemoteAccess || activeEnvironment(environmentsState) ||
-      !frame?.url.startsWith(`${rendererOrigin()}/`)) return Promise.reject(companyBackupDeferred());
-  return new Promise((resolve, reject) => {
-    const requestId = randomUUID();
-    const finish = (error, value) => {
-      if (companyBackupClientStateRequest?.requestId !== requestId) return;
-      companyBackupClientStateRequest = null;
-      clearTimeout(timer); signal.removeEventListener("abort", abort);
-      if (error) reject(error); else resolve(value);
-    };
-    const abort = () => finish(companyBackupDeferred());
-    const timer = setTimeout(abort, 10_000); timer.unref?.();
-    companyBackupClientStateRequest = { requestId, win, contents, frame, url: frame.url, scope, proc, finish };
-    signal.addEventListener("abort", abort, { once: true });
-    if (signal.aborted) { abort(); return; }
-    try { contents.send("company-backups:collect-client-state", { requestId }); }
-    catch { abort(); }
-  });
-}
-
-function receiveCompanyBackupClientState(event, input) {
-  const pending = companyBackupClientStateRequest;
-  if (!pending || input?.requestId !== pending.requestId || event.sender !== pending.contents || event.senderFrame !== pending.frame) return;
-  const scope = companyBackupScope();
-  if (pending.win !== mainWindow || mainWindow.isDestroyed() || pending.url !== pending.frame.url ||
-      !workspaceSenderAllowed(event, mainWindow.webContents, environmentsState, rendererOrigin()) ||
-      procUnavailable() || !scope || scope.key !== pending.scope.key || scope.generation !== pending.scope.generation) {
-    pending.finish(companyBackupDeferred()); return;
-  }
-  function procUnavailable() { return pending.proc !== serverProc || !serverReady || desktopRemoteAccess || desktopShutdownStarted; }
-  const value = input.clientState;
-  if (input.unavailable || !value || typeof value !== "object" || Array.isArray(value) ||
-      Object.values(value).some(entry => typeof entry !== "string") || Buffer.byteLength(JSON.stringify(value)) > 2 * 1024 ** 2) {
-    pending.finish(companyBackupDeferred()); return;
-  }
-  pending.finish(null, Object.fromEntries(Object.entries(value)));
-}
-
-function publishCompanyBackupState(value) {
-  companyBackupState = { ...value, ...(companyBackupSchedule ? { schedule: companyBackupSchedule.state() } : {}) };
-  if (mainWindow && !mainWindow.isDestroyed() && !activeRemote(environmentsState) && !desktopRemoteAccess &&
-      mainWindow.webContents.mainFrame.url.startsWith(`${rendererOrigin()}/`)) mainWindow.webContents.send("company-backups:state-changed", companyBackupState);
-}
-
-function localBackupRequest(proc, route, init = {}) {
-  if (!proc || proc !== serverProc || !serverReady || !/^\/api\/workspace-backup\/(?:status|export|upload|preview|restore|download\/[A-Za-z0-9_-]+)$/.test(route)) {
-    throw new Error("This installation changed. Start this backup operation again.");
-  }
-  return fetch(`http://127.0.0.1:${SERVER_PORT}${route}`, { ...init, redirect: "error", credentials: "omit",
-    headers: { ...Object.fromEntries(new Headers(init.headers)), [DESKTOP_MUTATION_HEADER]: desktopMutationToken } });
-}
-
-async function localBackupStatus(proc) {
-  const response = await localBackupRequest(proc, "/api/workspace-backup/status", { signal: AbortSignal.timeout(10_000) });
-  if (!response.ok) throw new Error("Local backup status is unavailable. Try again when this installation is ready.");
-  const status = await response.json();
-  if (proc !== serverProc || typeof status.busy !== "boolean" || typeof status.pendingRestore !== "boolean") throw new Error("This installation changed. Check backup status again.");
-  return status;
-}
-
-async function runCompanyBackup(kind, input, scheduled = null) {
-  if (companyBackupController || companyRestoreCommitting || desktopShutdownStarted || (scheduled && preparedCompanyRestore)) throw companyBackupDeferred();
-  const client = ensureManagedDesktop(), connection = client.connection();
-  if (!connection || !client.state().cloudBackups) throw new Error("Connect your organization and ask its administrator to enable cloud backups first.");
-  const generation = client.backupGeneration();
-  if (scheduled) {
-    scheduled.signal.throwIfAborted();
-    const scope = companyBackupScope();
-    if (!scope || scope.key !== scheduled.scope.key || scope.generation !== scheduled.scope.generation) throw companyBackupDeferred();
-  }
-  const proc = serverProc, controller = new AbortController();
-  const cancelScheduled = () => controller.abort();
-  scheduled?.signal.addEventListener("abort", cancelScheduled, { once: true });
-  const deadline = setTimeout(() => controller.abort(), 2 * 60 * 60_000); deadline.unref?.();
-  companyBackupController = controller;
-  preparedCompanyRestore = null;
-  publishCompanyBackupState({ busy: true, kind });
-  const progress = progress => publishCompanyBackupState({ busy: true, kind, progress });
-  try {
-    const status = await localBackupStatus(proc);
-    if (status.pendingRestore) {
-      publishCompanyBackupState({ busy: false, pendingRestore: true });
-      throw new Error("Restart RootClaw to finish the pending restore before starting another backup operation.");
-    }
-    if (status.busy) throw companyBackupDeferred();
-    const transfers = createCompanyBackups({
-      tempRoot: path.join(app.getPath("temp"), "rootclaw-company-backups"),
-      localRequest: (route, init) => localBackupRequest(proc, route, init),
-      portalRequest: (route, options) => client.requestBackup(route, { ...options, generation }),
-      availableBytes: async temporary => {
-        const volumes = await Promise.all([fs.promises.statfs(temporary), fs.promises.statfs(desktopDataDir())]);
-        return Math.min(...volumes.map(volume => volume.bavail * volume.bsize));
-      },
-    });
-    const result = kind === "backup" ? await transfers.backup({ ...input, appVersion: app.getVersion() }, controller.signal, progress)
-      : await transfers.prepareRestore(input, controller.signal, progress);
-    controller.signal.throwIfAborted();
-    if (proc !== serverProc || client.backupGeneration() !== generation || client.connection()?.deviceId !== connection.deviceId) throw new Error("This installation or its organization connection changed.");
-    if (kind === "restore") preparedCompanyRestore = { id: result.id, proc, deviceId: connection.deviceId };
-    publishCompanyBackupState({ busy: false, ...(kind === "backup" ? { lastBackupAt: Date.now() } : {}) });
-    return result;
-  } catch (error) {
-    const message = controller.signal.aborted ? "Cloud backup cancelled. This installation has not been replaced."
-      : error?.name === "CompanyBackupError" ? error.message : "Cloud backup could not complete. Check your organization connection and available disk space, then try again.";
-    publishCompanyBackupState({ busy: false, pendingRestore: companyBackupState.pendingRestore, message });
-    throw Object.assign(new Error(message), error?.code === "workspace_busy" ? { code: "workspace_busy" } : {});
-  } finally {
-    clearTimeout(deadline);
-    scheduled?.signal.removeEventListener("abort", cancelScheduled);
-    if (companyBackupController === controller) companyBackupController = null;
-  }
-}
-
 function syncDesktopMutationToken(proc) {
   try {
     proc.postMessage({
@@ -1177,8 +953,6 @@ async function startServerOn(port, dataDir = runningDataDir ?? startupEnvironmen
     if (!serverSupervisor.isCurrent(proc)) return;
     try {
       if (trustedApprovalMode.receive(proc, message)) return;
-      if (managedDesktopRelay.receive(proc, message)) return;
-      if (orgLibrary?.receive(message)) return;
       if (receivePhoneSecretSave(proc, message) || oneHome.receive(proc, message)) return;
     } catch (error) {
       slog(`desktop private sync rejected: ${error?.message ?? error}`);
@@ -1194,7 +968,6 @@ async function startServerOn(port, dataDir = runningDataDir ?? startupEnvironmen
   proc.once("exit", (code) => {
     exited = true;
     trustedApprovalMode.rejectProcess(proc);
-    managedDesktopRelay.rejectProcess(proc);
     resolveServerExit();
     slog(`exited code=${code}`);
   });
@@ -1560,7 +1333,6 @@ function refreshApplicationMenu() {
       onSwitch: (id) => void workspaceMenuAction(() => switchEnvironment(id)),
       onAddFromClipboard: () => void addServerFromClipboard(),
       onConnect: () => void workspaceMenuAction(openWorkspaceSettings),
-      onOrganizationSignIn: () => queueOrganizationEntry("rootclaw://organization"),
       onForget: (id) => void workspaceMenuAction(() => forgetEnvironment(id)),
       onOpenSettings: () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("app:open-settings"); },
       openAtLogin: loginItem.available() ? { checked: loginItem.chosen(), onToggle: on => { loginItem.choose(on); refreshApplicationMenu(); } } : null,
@@ -1737,63 +1509,6 @@ function createLocalEnvironment(name, dataDir) {
   if (!result.ok) return { ok: false, error: result.error, state };
   persistEnvironments(result.state);
   return { ok: true, state: environmentsState };
-}
-
-const organizationEntry = createOrganizationEntry({
-  readState: () => ({ environments: environmentsState, remoteAccess: desktopRemoteAccess,
-    restartIntent: organizationRestartIntent(secureCredentialState?.read() ?? secureCredentials) }),
-  confirm: async ({ kind, name, origin }) => {
-    const { response } = await dialog.showMessageBox({
-      type: "question",
-      buttons: [kind === "companion" ? "Disconnect and restart locally" : "Use this computer", "Cancel"],
-      defaultId: 1, cancelId: 1,
-      message: kind === "companion" ? `Disconnect from ${name} to sign in locally?` : `Leave ${name} and sign in on this computer?`,
-      detail: `${origin}\n\nOrganization sign-in connects company models to this computer. ${kind === "companion" ? "This disconnects desktop companion access and restarts the app. You can pair again later." : "The hosted connection stays saved and can be selected again from the Server menu."} No remote bots, conversations or provider accounts are moved or deleted.`,
-    });
-    return response === 0;
-  },
-  saveEnvironments: persistEnvironments,
-  disconnectAndRemember: async expected => {
-    await updateSecureCredentialDocument(credentials => {
-      const current = desktopCompanionAccess(credentials);
-      if (!current || current.endpoint !== expected.endpoint || current.deviceId !== expected.deviceId || current.token !== expected.token) {
-        throw new Error("The companion connection changed. Choose organization sign-in again.");
-      }
-      return withOrganizationRestartIntent(credentials);
-    });
-    desktopRemoteAccess = null;
-  },
-  clearRestartIntent: () => updateSecureCredentialDocument(credentials =>
-    organizationRestartIntent(credentials) && !desktopCompanionAccess(credentials)
-      ? withoutOrganizationRestartIntent(credentials) : credentials),
-  openLocalSettings: async () => {
-    if (!app.isPackaged) throw new Error("Organization sign-in requires the installed desktop app.");
-    if (!serverReady) throw new Error("This installation is unavailable. Restart the app and try organization sign-in again.");
-    if (desktopRemoteAccess || activeRemote(environmentsState)) throw new Error("Choose this computer before signing in with your organization.");
-    const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : createWindow({ deferNavigation: true });
-    if (!win.webContents.isLoadingMainFrame() && senderIsLocal({ sender: win.webContents })) {
-      win.webContents.send("app:open-settings", "organization");
-    } else {
-      await win.loadURL(`${rendererOrigin()}/?desktop-settings=organization`);
-    }
-  },
-  relaunch: relaunchAfterDesktopRemoteChange,
-});
-
-function queueOrganizationEntry(link) {
-  if (!isOrganizationDeepLink(link)) return false;
-  pendingOrganizationEntry = true;
-  if (!desktopTray?.show()) activateExistingWindow(appWindows());
-  void deliverOrganizationEntry();
-  return true;
-}
-
-async function deliverOrganizationEntry() {
-  if (!organizationEntryReady || !pendingOrganizationEntry) return false;
-  pendingOrganizationEntry = false;
-  let delivered = false;
-  await workspaceMenuAction(async () => { delivered = await organizationEntry.request(); });
-  return delivered;
 }
 
 async function openCloudEntry() {
@@ -2440,10 +2155,6 @@ const talk = installTalk({ ipcMain, localOnly, localOrHome, BrowserWindow, apple
   speech: { start: startSpeech, stop: stopSpeech, finish: finishSpeech, busy: speechBusy }, packaged: app.isPackaged, devUrl: DEV_URL, nativeImage, iconPath: APP_ICON, openLink: queueChatLink, reveal: revealForLink, log: slog });
 
 ipcMain.handle("companion:state", localOnly("companion:state", () => desktopCompanionState()));
-function managedRemoteAccessRefusal() {
-  const policy = managedDesktop?.policy?.();
-  return policy?.remoteAccess === false ? `${policy.organizationName} does not allow remote access to this computer.` : null;
-}
 ipcMain.handle("companion:start", localOnly("companion:start", () => startDesktopCompanion()));
 ipcMain.handle("companion:stop", localOnly("companion:stop", () => stopDesktopCompanion()));
 ipcMain.handle("companion:keep-awake", localOnly("companion:keep-awake", async (_event, enabled) => {
@@ -2457,8 +2168,6 @@ ipcMain.handle("routines:keep-awake", localOnly("routines:keep-awake", async (_e
 }));
 ipcMain.handle("companion:refresh-tailscale", localOnly("companion:refresh-tailscale", () => refreshDesktopCompanionTailscale()));
 ipcMain.handle("companion:pairing", localOnly("companion:pairing", (_event, open, expectedToken) => {
-  const refusal = open ? managedRemoteAccessRefusal() : null;
-  if (refusal) throw new Error(refusal);
   return companionPairing(Boolean(open), expectedToken).then(decorateDesktopCompanionState);
 }));
 ipcMain.handle("companion:cloud-desktop", localOnly("companion:cloud-desktop", (_event, deviceId, allowed) =>
@@ -2509,7 +2218,7 @@ ipcMain.handle("desktop-remote:pair", localOnly("desktop-remote:pair", async (ev
     code,
     deviceName: `${installationDisplayName()} desktop`,
   });
-  await updateSecureCredentialDocument((credentials) => withoutOrganizationRestartIntent(withDesktopCompanionAccess(credentials, access)));
+  await updateSecureCredentialDocument((credentials) => withDesktopCompanionAccess(credentials, access));
   desktopRemoteAccess = access;
   relaunchAfterDesktopRemoteChange();
   return publicDesktopRemoteState();
@@ -2532,8 +2241,6 @@ ipcMain.handle("companion-account:verify-code", localOnly("companion-account:ver
 ));
 ipcMain.handle("companion-account:retry", localOnly("companion-account:retry", () => ensureCompanionAccountService().retry()));
 ipcMain.handle("companion-account:prepare", localOnly("companion-account:prepare", () => {
-  const refusal = managedRemoteAccessRefusal();
-  if (refusal) throw new Error(refusal);
   return ensureCompanionAccountService().prepare();
 }));
 ipcMain.handle("companion-account:sign-out", localOnly("companion-account:sign-out", () => ensureCompanionAccountService().signOut()));
@@ -2568,60 +2275,6 @@ ipcMain.handle("cloud-account:openTeam", localWorkspaceOnly("cloud-account:openT
 // Cancel trial / Cancel plan and Keep my plan: the page sends the survey's words only; the Cloud is the verified session's own.
 ipcMain.handle("cloud-account:cancelPlan", localWorkspaceOnly("cloud-account:cancelPlan", (_event, survey) => ensureCloudAccount().cancelPlan(survey)));
 ipcMain.handle("cloud-account:keepPlan", localWorkspaceOnly("cloud-account:keepPlan", () => ensureCloudAccount().keepPlan()));
-ipcMain.handle("organization:settings-opened", localWorkspaceOnly("organization:settings-opened", () => organizationEntry.settingsOpened()));
-ipcMain.handle("organization:state", localWorkspaceOnly("organization:state", () => ensureManagedDesktop().state()));
-ipcMain.handle("organization:begin", localWorkspaceOnly("organization:begin", (_event, input) => ensureManagedDesktop().begin(input)));
-ipcMain.handle("organization:reopen", localWorkspaceOnly("organization:reopen", () => ensureManagedDesktop().reopen()));
-ipcMain.handle("organization:cancel", localWorkspaceOnly("organization:cancel", () => ensureManagedDesktop().cancelEnrollment()));
-ipcMain.handle("organization:refresh", localWorkspaceOnly("organization:refresh", () => ensureManagedDesktop().refresh()));
-ipcMain.handle("organization:disconnect", localWorkspaceOnly("organization:disconnect", () => {
-  companyBackupConfigurationRevision++;
-  companyBackupController?.abort(); preparedCompanyRestore = null;
-  const client = ensureManagedDesktop();
-  return client.disconnect();
-}));
-ipcMain.on("company-backups:client-state", receiveCompanyBackupClientState);
-ipcMain.handle("company-backups:configure-schedule", localWorkspaceOnly("company-backups:configure-schedule", async (_event, input) => {
-  ensureManagedDesktop();
-  const revision = ++companyBackupConfigurationRevision;
-  if (input?.enabled === true) {
-    const scope = companyBackupScope(), proc = serverProc;
-    if (!scope || companyBackupController || preparedCompanyRestore || companyRestoreCommitting) throw companyBackupDeferred();
-    const status = await localBackupStatus(proc), current = companyBackupScope();
-    if (revision !== companyBackupConfigurationRevision || status.busy || status.pendingRestore || !current || scope.key !== current.key || scope.generation !== current.generation ||
-        companyBackupController || preparedCompanyRestore || companyRestoreCommitting) throw companyBackupDeferred();
-  }
-  await companyBackupSchedule.configure(input);
-  return { ...companyBackupState, schedule: companyBackupSchedule.state() };
-}));
-ipcMain.handle("company-backups:state", localWorkspaceOnly("company-backups:state", async () => {
-  const status = await localBackupStatus(serverProc);
-  return { ...companyBackupState, pendingRestore: status.pendingRestore };
-}));
-ipcMain.handle("company-backups:list", localWorkspaceOnly("company-backups:list", () => ensureManagedDesktop().requestBackup("/api/desktop/backups")));
-ipcMain.handle("company-backups:create", localWorkspaceOnly("company-backups:create", (_event, input) => runCompanyBackup("backup", input)));
-ipcMain.handle("company-backups:preview", localWorkspaceOnly("company-backups:preview", (_event, input) => runCompanyBackup("restore", input)));
-ipcMain.handle("company-backups:cancel", localWorkspaceOnly("company-backups:cancel", () => { companyBackupController?.abort(); }));
-ipcMain.handle("company-backups:delete", localWorkspaceOnly("company-backups:delete", (_event, input) => {
-  if (companyBackupController || input?.confirmation !== "DELETE" || !/^[a-f0-9-]{36}$/.test(input?.id)) throw new Error("Confirm the exact backup to delete when no transfer is running.");
-  return ensureManagedDesktop().requestBackup(`/api/desktop/backups/${input.id}`, { method: "DELETE" });
-}));
-ipcMain.handle("company-backups:restore", localWorkspaceOnly("company-backups:restore", async (_event, input) => {
-  const client = ensureManagedDesktop(), connection = client.connection();
-  if (companyBackupController || companyRestoreCommitting || !preparedCompanyRestore || preparedCompanyRestore.id !== input?.id || input?.confirmation !== "REPLACE" ||
-      !connection || client.state().status !== "connected" || !client.state().cloudBackups || connection.expiresAt <= Date.now() ||
-      preparedCompanyRestore.proc !== serverProc || preparedCompanyRestore.deviceId !== connection.deviceId) throw new Error("Preview this backup again and type REPLACE to confirm.");
-  // Consume the preview before yielding, so duplicate IPC cannot commit it twice.
-  preparedCompanyRestore = null;
-  companyRestoreCommitting = true;
-  try {
-    const response = await localBackupRequest(serverProc, "/api/workspace-backup/restore", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: input.id, confirmation: "REPLACE" }) });
-    if (!response.ok) throw new Error("This installation could not be replaced. Check local backup status before trying again.");
-    publishCompanyBackupState({ busy: false, pendingRestore: true });
-    return await response.json();
-  } finally { companyRestoreCommitting = false; }
-}));
-
 function myCloud() {
   return myCloudOrigin({ account: cloudAccount, remembered: rememberedHome, remoteAccess: desktopRemoteAccess });
 }
@@ -3100,7 +2753,6 @@ app.whenReady().then(async () => {
     }
   }
   if (desktopShutdownStarted) return;
-  if (app.isPackaged && !desktopRemoteAccess) void ensureManagedDesktop().start().then(() => companyBackupSchedule.start()).catch(() => {});
   // Fresh local use never makes a Cloud request; start only restores an existing grant.
   if (app.isPackaged && !desktopRemoteAccess) {
     cloudAccountRestoring = true;
@@ -3108,9 +2760,7 @@ app.whenReady().then(async () => {
   }
   void cloudAccountStarted.then(() => { cloudSignInRestored = true; void oneHome.kick(); void homeWindow.refresh(); });
   if (!desktopRemoteAccess && serverReady && companionEnabledAtRest() && !oneHome.away()) {
-    // Wait until a saved organisation policy is known: it may turn remote access off.
-    void (managedDesktop?.whenRestored() ?? Promise.resolve())
-      .then(() => startDesktopCompanion({ waitForHosted: false, remember: false }))
+    void startDesktopCompanion({ waitForHosted: false, remember: false })
       .catch(error => slog(`companion auto-start skipped: ${error?.message ?? error}`));
   }
   setLocalOrigin(rendererOrigin());
@@ -3133,13 +2783,9 @@ app.whenReady().then(async () => {
     cloudSync.start();
     void cloudAccountStarted.then(() => computerSharing?.cloudChanged());
   });
-  let restoredOrganizationEntry = false;
-  await workspaceMenuAction(async () => { restoredOrganizationEntry = await organizationEntry.restore(); });
-  organizationEntryReady = true;
   // A cold-start action owns its first navigation; a default load started first would be aborted by it.
-  const deliveredOrganizationEntry = await deliverOrganizationEntry();
   const deliveredCloudEntry = await cloudEntry.ready();
-  if (!hiddenStart && !restoredOrganizationEntry && !deliveredOrganizationEntry && !deliveredCloudEntry) await showHome();
+  if (!hiddenStart && !deliveredCloudEntry) await showHome();
   // Reconcile incomplete setup and resume interrupted sign-out only once the local app is usable.
   if (hostedAccount) void hostedAccount.restore().catch(() => {});
   // Registering from an unreadable store would mint a second installation identity.
@@ -3193,11 +2839,7 @@ app.on("before-quit", (e) => {
   talk.close();
   desktopShutdownStarted = true;
   startupScreen?.dispose();
-  companyBackupSchedule?.close();
-  orgLibrary?.close();
-  managedDesktop?.close();
   cloudAccount?.close(); oneHome.close(); homeWindow.close();
-  companyBackupController?.abort();
   computerSharing?.close();
   cloudSync.close();
   lendingTray?.destroy();

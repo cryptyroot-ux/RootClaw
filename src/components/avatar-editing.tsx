@@ -2,7 +2,6 @@ import { useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEve
 
 import { useStore, type Bot } from "@/state/store";
 import { imageAttachmentFromFile } from "@/lib/composer-attachments";
-import { useOrganizationBranding } from "@/lib/use-organization-branding";
 import {
   AVATAR_FOCUS_CENTER,
   AVATAR_ZOOM_MAX,
@@ -115,19 +114,6 @@ export function AvatarFraming({
   );
 }
 
-export function OrganizationAvatarIcons({ busy, onUpload }: { busy: boolean; onUpload: (file: File) => void }) {
-  const organization = useOrganizationBranding();
-  if (!organization?.icons.length) return null;
-  return (
-    <div className="mb-3 border-b border-hairline/40 pb-3">
-      <div className="mb-2 text-[13px] font-medium text-ink-secondary">{organization.name} icons</div>
-      <div className="flex flex-wrap gap-2">{organization.icons.map(icon => <button key={icon.id} type="button" disabled={busy} title={icon.name} aria-label={`Use ${icon.name} icon`} className="flex size-12 items-center justify-center rounded-lg border border-hairline/40 hover:bg-control disabled:opacity-50" onClick={() => {
-        const bytes = Uint8Array.from(atob(icon.image.slice(22)), byte => byte.charCodeAt(0));
-        onUpload(new File([bytes], `${icon.id}.png`, { type: "image/png" }));
-      }}><img src={icon.image} alt="" className="size-10 rounded-md object-contain" /></button>)}</div>
-    </div>
-  );
-}
 
 export function useAvatarImage(bot: Bot, onPatch: (patch: AvatarPatch) => void) {
   const { flushBotPatches } = useStore();

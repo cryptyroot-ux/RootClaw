@@ -125,18 +125,18 @@ test("a consumed launch link is not replayed by the companion or updater relaunc
 test("main takes the link from launch arguments, open-url and a second instance", () => {
   assert.ok(main.indexOf("cloudEntry.fromLaunch(process.argv);") < main.indexOf("app.requestSingleInstanceLock()"),
     "the launch argument is consumed before anything can relaunch");
-  assert.match(between('app.on("open-url"', "});"), /!queueOrganizationEntry\(url\) && !cloudEntry\.fromUrl\(url\) && !queuePackageInstall\(url\)/);
+  assert.match(between('app.on("open-url"', "});"), /!cloudEntry\.fromUrl\(url\) && !queuePackageInstall\(url\)/);
   const secondInstance = between('app.on("second-instance"', "\n});");
-  assert.ok(secondInstance.indexOf("if (cloudEntry.fromArgs(commandLine)) return;") > secondInstance.indexOf("takeOrganizationDeepLink(commandLine)"));
+  assert.ok(secondInstance.indexOf("if (cloudEntry.fromArgs(commandLine)) return;") >= 0);
   assert.ok(secondInstance.indexOf("if (cloudEntry.fromArgs(commandLine)) return;") < secondInstance.indexOf("packageUrlFromCommandLine(commandLine)"));
 });
 
 test("startup delivers a pending Cloud link before default navigation", () => {
-  const startup = between("  let restoredOrganizationEntry = false;", "  // Reconcile incomplete setup");
+  const startup = between("  // A cold-start action owns its first navigation", "  // Reconcile incomplete setup");
   const delivered = startup.indexOf("const deliveredCloudEntry = await cloudEntry.ready();");
-  assert.ok(delivered > startup.indexOf("await deliverOrganizationEntry()"));
+  assert.ok(delivered > 0);
   assert.ok(delivered < startup.indexOf("await showHome()"));
-  assert.ok(main.indexOf("cloudAccountStarted = ensureCloudAccount().start()") < main.indexOf("  let restoredOrganizationEntry = false;"),
+  assert.ok(main.indexOf("cloudAccountStarted = ensureCloudAccount().start()") < main.indexOf("  // A cold-start action owns its first navigation"),
     "the saved sign-in starts restoring before the link is delivered");
 });
 

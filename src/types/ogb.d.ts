@@ -1,24 +1,6 @@
 // The narrow bridge the Electron preload exposes. Absent in the browser.
 
 declare global {
-  type CompanyBackupEntry = Omit<import("../../electron/company-backups.mjs").CompanyBackupMetadata, "status"> & { status: "creating" | "uploading" | "completing" | "ready" | "cleanup" };
-  interface CompanyBackupScheduleState {
-    enabled: boolean;
-    status: "off" | "waiting" | "running" | "paused" | "error";
-    nextBackupAt?: number;
-    lastAttemptAt?: number;
-    lastBackupAt?: number;
-    message?: string;
-  }
-  interface CompanyBackupState {
-    busy: boolean;
-    pendingRestore?: boolean;
-    kind?: "backup" | "restore";
-    progress?: import("../../electron/company-backups.mjs").CompanyBackupProgress;
-    message?: string;
-    lastBackupAt?: number;
-    schedule?: CompanyBackupScheduleState;
-  }
 /** The package.json version, inlined by Vite's define at build time. */
 const __APP_VERSION__: string;
 
@@ -117,7 +99,6 @@ const __APP_VERSION__: string;
       /** This app's own version, and whether this page is this app's own: false on a server added in the Server menu,
        * whose page carries that server's version. Absent in desktop builds before it. */
       app?: { version: string; ownPage: boolean };
-      organization?: import("../../electron/managed-desktop.mjs").ManagedDesktopBridge;
       cloudAccount?: import("../../electron/cloud-account.mjs").CloudAccountBridge;
       /** Either page in this app: the one-time move's line (on its way, what arrived, coming home). */
       cloudSendPage?: import("../../electron/cloud-send.mjs").CloudSendPageBridge;
@@ -132,17 +113,7 @@ const __APP_VERSION__: string;
       desktopLanguage?: import("../../electron/desktop-prefs.mjs").DesktopLanguageBridge;
       /** This computer's page and My Cloud's own page: the one-time "Get RootClaw updates?" answer. */
       updatesConsent?: import("../../electron/updates-consent.mjs").UpdatesConsentBridge;
-      companyBackups?: {
-        state(): Promise<CompanyBackupState>;
-        list(): Promise<{ backups: CompanyBackupEntry[]; usedBytes: number; limits: { ownerQuotaBytes: number; retainedSnapshots: number } }>;
-        create(input: { clientState: import("../../shared/workspace-backup").WorkspaceBackupClientState }): Promise<CompanyBackupEntry>;
-        configureSchedule?(input: { enabled: false } | { enabled: true; confirmation: "BACK UP THIS WORKSPACE DAILY" }): Promise<CompanyBackupState>;
-        prepareRestore(input: { id: string; password?: string }): Promise<{ id: string; summary: import("../../shared/workspace-backup").WorkspaceBackupSummary }>;
-        restore(input: { id: string; confirmation: "REPLACE" }): Promise<{ restoreId: string }>;
-        delete(input: { id: string; confirmation: "DELETE" }): Promise<unknown>;
-        cancel(): Promise<void>;
-        onState(callback: (state: CompanyBackupState) => void): () => void;
-      };
+
       /** The window's own rail of places: its page at /rail (a sheet of its own covers the window while open; the skin of
        * the page beside it comes from main), and the button on the page beside it that hides and shows it. */
       rail?: import("../../electron/chrome-rail.mjs").ChromeRailBridge;
@@ -342,7 +313,7 @@ const __APP_VERSION__: string;
        * app Settings. Local-shell only: remote server pages never receive
        * the channel, and the bridge is absent in the browser. "cloud" is the
        * rootclaw://cloud link (Settings → ROOTCLAW Cloud, opened by the link). */
-      onOpenAppSettings?(cb: (section?: "organization" | "cloud" | "cloud-settings" | "cloud-add" | "cloud-add-howto") => void): () => void;
+      onOpenAppSettings?(cb: (section?: "cloud" | "cloud-settings" | "cloud-add" | "cloud-add-howto") => void): () => void;
       /** Updates the native Dock/taskbar unread indicator. */
       setUnreadCount?(count: number): void;
       /** Opens a live desktop as a sandboxed window owned by RootClaw. */

@@ -67,16 +67,14 @@ test("the desktop holds its address on demand, read from the running companion",
   assert.equal(await options.managedEndpointNeeded(), null);
 });
 
-test("prepare is local-only, takes nothing from the page, and an organisation can refuse it", async () => {
+test("prepare is local-only and takes nothing from the page", async () => {
   const origin = "http://127.0.0.1:49210";
   const handlers = new Map();
   const prepared = [];
-  let refusal = null;
   localOrigin.setLocalOrigin(origin);
   const context = vm.createContext({
     ipcMain: { handle: (channel, handler) => handlers.set(channel, handler) },
     localOnly: localOrigin.localOnly,
-    managedRemoteAccessRefusal: () => refusal,
     ensureCompanionAccountService: () => ({
       state: () => ({ status: "ready" }),
       requestCode: () => ({}),
@@ -98,7 +96,4 @@ test("prepare is local-only, takes nothing from the page, and an organisation ca
   assert.deepEqual(prepared, [[]]);
   assert.throws(() => prepare({ senderFrame: { url: "https://remote.example.test/" } }), /only available/);
 
-  refusal = "Example Org does not allow remote access to this computer.";
-  assert.throws(() => prepare(local), /Example Org does not allow remote access/);
-  assert.equal(prepared.length, 1);
 });

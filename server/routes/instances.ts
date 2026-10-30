@@ -5,7 +5,6 @@ import { addEndpoint, addEndpointSchema, isAddedEndpoint, withEndpointUrls } fro
 import type { InstanceConfigMap, ModelSelection, ProviderInstance } from "../contracts.ts";
 import type { ProviderRegistry } from "../harness/registry.ts";
 import { checkEngine, type EngineCheck } from "../engine-check.ts";
-import { HOSTED_PROVIDER_SETTINGS_ERROR } from "../hosted-models.ts";
 import { providerIconPatchSchema, withInstanceIcon } from "../provider-icon.ts";
 import type { Store } from "../store.ts";
 import type { BusyFlag, ConfigStatus } from "./config.ts";
@@ -23,7 +22,6 @@ export interface InstanceRouteDeps {
   store: Pick<Store, "bots" | "tasks">;
   cfg: AppConfig;
   registry: Pick<ProviderRegistry, "get" | "refreshModels">;
-  hostedModels: boolean;
   providerConfigBusy: BusyFlag;
   providerInstancesChanging: Pick<Set<string>, "add" | "delete">;
   describeInstances(): Promise<unknown>;
@@ -39,11 +37,11 @@ export interface InstanceRouteDeps {
 
 export function createInstanceRoutes(deps: InstanceRouteDeps): RouteHandler {
   const {
-    store, cfg, registry, hostedModels, providerConfigBusy, providerInstancesChanging,
+    store, cfg, registry, providerConfigBusy, providerInstancesChanging,
     persistProviderInstance, configStatus, broadcast, threadBusy,
     botForThread, activeGroupTurnForBot,
   } = deps;
-  const describeInstances = async () => hostedModels ? deps.describeInstances() : withEndpointUrls(await deps.describeInstances(), cfg.instances ?? {});
+  const describeInstances = async () => withEndpointUrls(await deps.describeInstances(), cfg.instances ?? {});
   const busyProviderSelections = () => store.bots.flatMap((bot) => {
     const busyTasks = store.tasks(bot.id).filter((task) => threadBusy(bot.id, task.threadId));
     const selections = busyTasks.map((task) => botForThread(bot.id, task.threadId)!.modelSelection);
@@ -55,7 +53,6 @@ export function createInstanceRoutes(deps: InstanceRouteDeps): RouteHandler {
       return json(res, 200, { instances: await describeInstances() });
     }
     const companyMutation = /^\/api\/instances\/(company\.[\w.-]+)(?:\/|$)/.exec(path);
-    if (hostedModels && path.startsWith("/api/instances/") && method !== "GET") return json(res, 403, { error: HOSTED_PROVIDER_SETTINGS_ERROR });
     if (companyMutation && method !== "GET") return json(res, 403, { error: "Company accounts are read-only here. Manage this connection in desktop Settings." });
 
     const instanceIconPatch = /^\/api\/instances\/([\w.-]+)\/icon$/.exec(path);

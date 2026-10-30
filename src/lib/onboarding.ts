@@ -148,17 +148,7 @@ export function welcomeFinishedThisLaunch(): boolean {
 
 export const DEFAULT_ADMIN_ORIGIN = "https://admin.rootclaw.example";
 
-export function organisationSignIn<Bridge>(
-  ogb: { organization?: Bridge; remoteClient?: { active?: boolean } } | undefined,
-  options: { hosted: boolean },
-): Bridge | undefined {
-  if (options.hosted || !ogb || ogb.remoteClient?.active === true) return undefined;
-  return ogb.organization;
-}
 
-export function companyModelCount(state: { providers?: Array<{ configured: boolean; models: string[] }> } | null): number {
-  return (state?.providers ?? []).reduce((total, provider) => total + (provider.configured ? provider.models.length : 0), 0);
-}
 
 interface AiChoice {
   driverKind: string;

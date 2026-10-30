@@ -26,7 +26,7 @@ test("personal Cloud bridge is desktop-local, contains no capability access, and
   assert.equal(preload({ remote: true }).bridge.cloudAccount, undefined);
 });
 test("production personal Cloud IPC guards exact local main frame and forwards no arguments", async () => {
-  const source = readFileSync(new URL("./main.mjs", import.meta.url), "utf8"), start = source.indexOf("const workspaceOnly ="), end = source.indexOf('ipcMain.handle("organization:settings-opened"', start);
+  const source = readFileSync(new URL("./main.mjs", import.meta.url), "utf8"), start = source.indexOf("const workspaceOnly ="), end = source.indexOf("function myCloud() {", start);
   assert.ok(start >= 0 && end > start);
   const handlers = new Map(), calls = [], frame = { url: `${origin}/` }, contents = { mainFrame: frame };
   localOrigin.setLocalOrigin(origin);
@@ -49,7 +49,7 @@ test("a team's Cloud opens from the page by its id alone: the team comes from th
   const f = preload();
   await f.bridge.cloudAccount.openTeam({ toString: () => "team-acme" }, { origin: "https://evil.example.test" });
   assert.deepEqual(f.invoked, [["cloud-account:openTeam", "team-acme"]]);
-  const source = readFileSync(new URL("./main.mjs", import.meta.url), "utf8"), start = source.indexOf("const workspaceOnly ="), end = source.indexOf('ipcMain.handle("organization:settings-opened"', start);
+  const source = readFileSync(new URL("./main.mjs", import.meta.url), "utf8"), start = source.indexOf("const workspaceOnly ="), end = source.indexOf("function myCloud() {", start);
   const handlers = new Map(), shown = [], frame = { url: `${origin}/` }, contents = { mainFrame: frame };
   const acme = { id: "team-acme", name: "Acme", role: "member", machine: { status: "ready", origin: "https://rootclaw-t-2.fly.dev" } };
   let state = { status: "connected", teams: [acme] };
@@ -80,7 +80,7 @@ test("a checkout from the page carries only a plan and a source, as text; the se
 });
 test("main opens a checkout only for a plan the offer sells now and one of this app's sources, where Cloud is offered", async () => {
   const { CHECKOUT_SOURCES } = await import("./cloud-account.mjs");
-  const source = readFileSync(new URL("./main.mjs", import.meta.url), "utf8"), start = source.indexOf("const workspaceOnly ="), end = source.indexOf('ipcMain.handle("organization:settings-opened"', start);
+  const source = readFileSync(new URL("./main.mjs", import.meta.url), "utf8"), start = source.indexOf("const workspaceOnly ="), end = source.indexOf("function myCloud() {", start);
   const handlers = new Map(), calls = [], frame = { url: `${origin}/` }, contents = { mainFrame: frame };
   localOrigin.setLocalOrigin(origin);
   let allowed = true;
@@ -110,7 +110,7 @@ test("Cancel and Keep my plan from Settings carry only the survey's words, and o
   await f.bridge.cloudAccount.cancelPlan();
   await f.bridge.cloudAccount.keepPlan({ cloudId: "someone-elses" });
   assert.deepEqual(f.invoked, [["cloud-account:cancelPlan", { answer: "price", expected: "words" }], ["cloud-account:cancelPlan", null], ["cloud-account:keepPlan"]]);
-  const source = readFileSync(new URL("./main.mjs", import.meta.url), "utf8"), start = source.indexOf("const workspaceOnly ="), end = source.indexOf('ipcMain.handle("organization:settings-opened"', start);
+  const source = readFileSync(new URL("./main.mjs", import.meta.url), "utf8"), start = source.indexOf("const workspaceOnly ="), end = source.indexOf("function myCloud() {", start);
   const handlers = new Map(), calls = [], frame = { url: `${origin}/` }, contents = { mainFrame: frame };
   localOrigin.setLocalOrigin(origin);
   const context = vm.createContext({ ipcMain: { handle: (channel, handler) => handlers.set(channel, handler) },

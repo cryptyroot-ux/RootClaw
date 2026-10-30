@@ -5,10 +5,9 @@ import { engineReady } from "@/components/EngineLibrary";
 import { InstanceProviderMark } from "@/components/ProviderIcons";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
-import { aiChoices, aiWorks, organisationSignIn, plainSignIn } from "@/lib/onboarding";
+import { aiChoices, aiWorks, plainSignIn } from "@/lib/onboarding";
 import { api, useStore, type InstanceInfo } from "@/state/store";
 import { freeFallback } from "../../../shared/ai-ranking";
-import { OrganisationRow } from "./beats/OrganisationRow";
 import type { WelcomeAiNow } from "./welcome-ai";
 
 /** A local-model setup and a step finished in Terminal keep their own words; every other sign-in says the same plain line
@@ -43,9 +42,8 @@ function OtherWay({ instance, open, onToggle }: { instance: InstanceInfo; open: 
 /** Every way to connect an AI, until one has answered a test message (`tested`, from useWelcomeAi): the recommended
  * one's own setup first, then the organization and every other AI. One that didn't answer says why, with Check again;
  * OpenCode's free model is only ever a backup. */
-export function ConnectAi({ hosted = false, tested }: { hosted?: boolean; tested: WelcomeAiNow | null }) {
+export function ConnectAi({ tested }: { hosted?: boolean; tested: WelcomeAiNow | null }) {
   const { state, dispatch } = useStore();
-  const organisation = organisationSignIn(window.ogb, { hosted });
   const [failed, setFailed] = useState(false);
   const [checking, setChecking] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
@@ -123,15 +121,8 @@ export function ConnectAi({ hosted = false, tested }: { hosted?: boolean; tested
       )}
       {failed && <p role="alert" className="mt-2 text-[13px] text-danger">{t("onboarding.engines.error")}</p>}
 
-      {(organisation || others.length > 0) && (
+      {others.length > 0 && (
         <div className="mt-3 w-full divide-y divide-hairline/40 overflow-hidden rounded-2xl bg-card text-left">
-          {organisation && (
-            <OrganisationRow
-              bridge={organisation}
-              onOpenSettings={() => dispatch({ type: "toggleAppSettings", open: true, section: "organization" })}
-              onConnected={() => void refresh()}
-            />
-          )}
           {others.map((instance) => (
             <OtherWay key={instance.instanceId} instance={instance} open={open === instance.instanceId}
               onToggle={() => setOpen(open === instance.instanceId ? null : instance.instanceId)} />

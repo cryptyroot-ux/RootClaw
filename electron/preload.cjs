@@ -24,7 +24,7 @@ ipcRenderer.on("chat:open", (_event, link) => {
 });
 
 // Only fixed actions are retained, never a destination supplied by a renderer.
-const FIXED_SETTINGS_ACTIONS = new Set(["organization", "cloud", "cloud-settings", "cloud-add", "cloud-add-howto"]);
+const FIXED_SETTINGS_ACTIONS = new Set(["cloud", "cloud-settings", "cloud-add", "cloud-add-howto"]);
 let pendingSettingsAction = null;
 const appSettingsListeners = new Set();
 ipcRenderer.on("app:open-settings", (_event, section) => {
@@ -93,32 +93,6 @@ ipcRenderer.on("desktop-language:changed", (_event, language) => {
 const onHomePage = !isLocalPage && homePage();
 const remoteKeys = isLocalPage ? REMOTE_SAFE : new Set([...REMOTE_SAFE, ...(updaterOffered() ? ["updater"] : []), ...(onHomePage ? HOME_PAGE : [])]);
 
-// Keep in parity with shared/workspace-backup-client.ts (a sandboxed preload cannot import it).
-const COMPANY_BACKUP_CLIENT_KEYS = [
-  "rootclaw-drafts", "rootclaw-draft-attachments", "rootclaw-draft-send-ids", "rootclaw-draft-channel-modes",
-  "rootclaw-skin", "rootclaw-show-threads", "rootclaw-show-run-card", "rootclaw-send-key", "rootclaw-color-user-bubbles", "rootclaw-chat-width", "rootclaw.sidebarDensity",
-  "rootclaw.sidebarToolsLayout",
-  "rootclaw.sidebarCollapsedSections.v1", "rootclaw.sidebarSectionOrder.v1",
-  "rootclaw-analytics-opt-out", "rootclaw.remote-voice.v1",
-];
-if (isLocalPage && !desktopRemoteClient && process.argv.includes("--rootclaw-company-desktop=1")) {
-  ipcRenderer.on("company-backups:collect-client-state", (_event, request) => {
-    if (!request || typeof request.requestId !== "string" || !/^[a-f0-9-]{36}$/.test(request.requestId)) return;
-    try {
-      // Check the origin again; a later navigation must not export remote data.
-      if (!localOrigin || location.origin !== localOrigin) throw new Error("Not the local workspace");
-      const clientState = {};
-      for (const key of COMPANY_BACKUP_CLIENT_KEYS) {
-        const value = localStorage.getItem(key);
-        if (value !== null) clientState[key] = value;
-      }
-      if (new TextEncoder().encode(JSON.stringify(clientState)).byteLength > 2 * 1024 ** 2) throw new Error("Browser state too large");
-      ipcRenderer.send("company-backups:client-state", { requestId: request.requestId, clientState });
-    } catch {
-      ipcRenderer.send("company-backups:client-state", { requestId: request.requestId, unavailable: true });
-    }
-  });
-}
 
 // main passes app.getVersion(): a server's page carries that server's version, so About asks this for the app's own.
 const appVersion = (process.argv.find((arg) => arg.startsWith("--rootclaw-app-version="))?.slice("--rootclaw-app-version=".length) ?? "").slice(0, 64);
@@ -482,35 +456,6 @@ const bridge = {
       ? ipcRenderer.invoke("cloud-plan:cancel", survey ?? null) : Promise.reject(new Error("Choose Cancel to cancel your plan.")),
     keep: () => isLocalPage || navigator.userActivation?.isActive === true
       ? ipcRenderer.invoke("cloud-plan:keep") : Promise.reject(new Error("Choose Keep my plan to keep it.")),
-  } : undefined,
-  organization: process.argv.includes("--rootclaw-company-desktop=1") ? {
-    settingsOpened: () => ipcRenderer.invoke("organization:settings-opened"),
-    state: () => ipcRenderer.invoke("organization:state"),
-    begin: input => ipcRenderer.invoke("organization:begin", input),
-    reopen: () => ipcRenderer.invoke("organization:reopen"),
-    cancelEnrollment: () => ipcRenderer.invoke("organization:cancel"),
-    refresh: () => ipcRenderer.invoke("organization:refresh"),
-    disconnect: () => ipcRenderer.invoke("organization:disconnect"),
-    onState: cb => {
-      const handler = (_event, state) => cb(state);
-      ipcRenderer.on("organization:state-changed", handler);
-      return () => ipcRenderer.removeListener("organization:state-changed", handler);
-    },
-  } : undefined,
-  companyBackups: process.argv.includes("--rootclaw-company-desktop=1") ? {
-    state: () => ipcRenderer.invoke("company-backups:state"),
-    list: () => ipcRenderer.invoke("company-backups:list"),
-    create: input => ipcRenderer.invoke("company-backups:create", input),
-    configureSchedule: input => ipcRenderer.invoke("company-backups:configure-schedule", input),
-    prepareRestore: input => ipcRenderer.invoke("company-backups:preview", input),
-    restore: input => ipcRenderer.invoke("company-backups:restore", input),
-    delete: input => ipcRenderer.invoke("company-backups:delete", input),
-    cancel: () => ipcRenderer.invoke("company-backups:cancel"),
-    onState: cb => {
-      const handler = (_event, state) => cb(state);
-      ipcRenderer.on("company-backups:state-changed", handler);
-      return () => ipcRenderer.removeListener("company-backups:state-changed", handler);
-    },
   } : undefined,
   computerSharing: {
     state: id => ipcRenderer.invoke("sharing:state", id),
