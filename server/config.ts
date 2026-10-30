@@ -342,7 +342,10 @@ const appConfigSchema = z.object({
   meta: z.object({ key: optionalText, url: optionalText }).optional(),
   deepseek: z.object({ key: optionalText }).optional(),
   /** Gemini API key (or `oauth` from Google sign-in, see docs/api-providers.md); `url` for a proxy or test double. */
-  gemini: z.object({ key: optionalText, url: optionalText }).optional(),
+  gemini: z.object({ key: optionalText, url: optionalText,
+    /** Google OAuth with a client the person registers (docs/api-providers.md); the key wins when both are set. */
+    oauth: z.object({ clientId: optionalText, clientSecret: optionalText, refreshToken: optionalText, projectId: optionalText }).optional(),
+  }).optional(),
   /** Ollama Cloud API key; `url` defaults to https://ollama.com/v1 (its OpenAI-compatible endpoint). */
   ollama: z.object({ key: optionalText, url: optionalText }).optional(),
   xai: z.object({ key: optionalText, url: optionalText }).optional(),
@@ -494,7 +497,7 @@ export interface AppConfig extends HelperConfig {
   cerebras?: { key?: string }; treg?: { key?: string }; /** Postiz: an organisation API key and the server it belongs to (blank: Postiz Cloud). */ postiz?: { key?: string; url?: string };
   groq?: { key?: string; url?: string };
   meta?: { key?: string; url?: string };
-  gemini?: { key?: string; url?: string };
+  gemini?: { key?: string; url?: string; oauth?: { clientId?: string; clientSecret?: string; refreshToken?: string; projectId?: string } };
   ollama?: { key?: string; url?: string };
   /** DeepSeek API key for the DeepSeek Harness engine (`dsh`). */
   deepseek?: { key?: string };
@@ -789,6 +792,8 @@ export function loadConfig(): AppConfig {
   if (process.env.ROOTCLAW_META_API_KEY !== undefined) cfg.meta.key = process.env.ROOTCLAW_META_API_KEY;
   cfg.gemini = { ...cfg.gemini };
   if (process.env.ROOTCLAW_GEMINI_API_KEY !== undefined) cfg.gemini.key = process.env.ROOTCLAW_GEMINI_API_KEY;
+  if (process.env.ROOTCLAW_GOOGLE_OAUTH_CLIENT_ID !== undefined) cfg.gemini.oauth = { ...cfg.gemini.oauth, clientId: process.env.ROOTCLAW_GOOGLE_OAUTH_CLIENT_ID };
+  if (process.env.ROOTCLAW_GOOGLE_OAUTH_CLIENT_SECRET !== undefined) cfg.gemini.oauth = { ...cfg.gemini.oauth, clientSecret: process.env.ROOTCLAW_GOOGLE_OAUTH_CLIENT_SECRET };
   cfg.ollama = { ...cfg.ollama };
   if (process.env.ROOTCLAW_OLLAMA_API_KEY !== undefined) cfg.ollama.key = process.env.ROOTCLAW_OLLAMA_API_KEY;
   cfg.deepseek = { ...cfg.deepseek };
@@ -1114,6 +1119,13 @@ function injectedEnvironment(cfg: AppConfig, instanceId: string, driver: string)
   if (driver === "grok" && cfg.xai?.key) environment.set("XAI_API_KEY", cfg.xai.key);
   if (driver === "anthropic" && cfg.anthropic?.key) environment.set("ANTHROPIC_API_KEY", cfg.anthropic.key);
   if (driver === "gemini" && cfg.gemini?.key) environment.set("GEMINI_API_KEY", cfg.gemini.key);
+  const google = cfg.gemini?.oauth;
+  if (driver === "gemini" && !cfg.gemini?.key && google?.refreshToken && google.clientId) {
+    environment.set("GOOGLE_OAUTH_REFRESH_TOKEN", google.refreshToken);
+    environment.set("GOOGLE_OAUTH_CLIENT_ID", google.clientId);
+    if (google.clientSecret) environment.set("GOOGLE_OAUTH_CLIENT_SECRET", google.clientSecret);
+    if (google.projectId) environment.set("GOOGLE_CLOUD_PROJECT", google.projectId);
+  }
   if (driver === "openai-responses" && cfg.openai?.key) environment.set("OPENAI_API_KEY", cfg.openai.key);
   if (driver === "ollama" && cfg.ollama?.key) environment.set("OLLAMA_API_KEY", cfg.ollama.key);
   if (driver === "openai-compat" && instanceId === OPENAI_API_INSTANCE) {

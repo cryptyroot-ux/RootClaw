@@ -11,6 +11,7 @@ import { createAnthropicAdapter, ANTHROPIC_VERSION } from "./adapters/anthropic.
 import { createGeminiAdapter } from "./adapters/gemini.ts";
 import { createOpenAIResponsesAdapter } from "./adapters/openai-responses.ts";
 import type { ModelAdapter } from "./model-adapter.ts";
+import { googleAccessToken } from "../oauth/oauth.ts";
 import { createOpenAIChatRuntime } from "./openai-chat.ts";
 
 const configSchema = z.object({
@@ -124,10 +125,12 @@ export const GeminiDriver = apiProvider({
   models: { default: "gemini-3.8-flash", options: [
     { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash" }, { id: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro (preview)" }, { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
   ] },
-  // An OAuth access token (Google sign-in) is passed as GOOGLE_OAUTH_ACCESS_TOKEN; an API key always works too.
-  token: (env) => env.GOOGLE_OAUTH_ACCESS_TOKEN ?? "",
-  adapter: (url, key, env) => key && key === env.GOOGLE_OAUTH_ACCESS_TOKEN
-    ? createGeminiAdapter({ url, accessToken: async () => key }) : createGeminiAdapter({ url, apiKey: key }),
+  // Google sign-in (OAuth, the person's own client) stands in when no API key is saved; the key always works too.
+  token: (env) => env.GOOGLE_OAUTH_REFRESH_TOKEN ?? "",
+  adapter: (url, key, env) => env.GOOGLE_OAUTH_REFRESH_TOKEN && key === env.GOOGLE_OAUTH_REFRESH_TOKEN && env.GOOGLE_OAUTH_CLIENT_ID
+    ? createGeminiAdapter({ url, projectId: env.GOOGLE_CLOUD_PROJECT,
+      accessToken: googleAccessToken({ clientId: env.GOOGLE_OAUTH_CLIENT_ID, ...(env.GOOGLE_OAUTH_CLIENT_SECRET ? { clientSecret: env.GOOGLE_OAUTH_CLIENT_SECRET } : {}) }, key) })
+    : createGeminiAdapter({ url, apiKey: key }),
   catalog: async (url, key) => rows((await json(`${url}/models?pageSize=200`, { "x-goog-api-key": key })).models)
     .filter((row) => rows(row.supportedGenerationMethods).length === 0 || (row.supportedGenerationMethods as string[]).includes("generateContent"))
     .map((row) => ({ id: String(row.name).replace(/^models\//, ""), label: typeof row.displayName === "string" ? row.displayName : String(row.name) })),

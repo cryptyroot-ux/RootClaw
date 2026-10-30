@@ -16,7 +16,7 @@ export interface ConfigStatus {
   mistral?: SavedKey;
   cerebras?: SavedKey;
   groq?: SavedKey;
-  gemini?: SavedKey;
+  gemini?: SavedKey & { oauth?: { client: boolean; signedIn: boolean } };
   ollama?: SavedKey;
   deepseek?: SavedKey;
   meta?: SavedKey;

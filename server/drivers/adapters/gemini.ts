@@ -66,7 +66,7 @@ export function geminiRequest(messages: OpenAIChatMessage[]): { systemInstructio
   return { ...(system.length ? { systemInstruction: { parts: [{ text: system.join("\n\n") }] } } : {}), contents };
 }
 
-export function createGeminiAdapter(options: { url: string; apiKey?: string; accessToken?: () => Promise<string>; label?: string }): ModelAdapter {
+export function createGeminiAdapter(options: { url: string; apiKey?: string; accessToken?: () => Promise<string>; projectId?: string; label?: string }): ModelAdapter {
   const label = options.label ?? "Gemini";
   return {
     protocol: "gemini",
@@ -75,7 +75,8 @@ export function createGeminiAdapter(options: { url: string; apiKey?: string; acc
         name: tool.function.name, description: tool.function.description, parameters: geminiSchema(tool.function.parameters),
       })) }] : undefined;
       const auth: Record<string, string> = options.accessToken
-        ? { authorization: `Bearer ${await options.accessToken()}` } : { "x-goog-api-key": options.apiKey ?? "" };
+        ? { authorization: `Bearer ${await options.accessToken()}`, ...(options.projectId ? { "x-goog-user-project": options.projectId } : {}) }
+        : { "x-goog-api-key": options.apiKey ?? "" };
       const model = request.model.replace(/^models\//, "");
       const method = request.stream ? "streamGenerateContent?alt=sse" : "generateContent";
       const response = await postJson(label, `${options.url}/models/${encodeURIComponent(model)}:${method}`, auth,
