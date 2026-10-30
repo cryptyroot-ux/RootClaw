@@ -119,8 +119,8 @@ export function EffortRow({
   );
 }
 
-const variantLabel = (option: ModelVariantOption, driverKind?: string): string =>
-  option.id === "default" && driverKind === "opencodeGo" ? t("model.variant.openCodeDefault") : option.label;
+const variantLabel = (option: ModelVariantOption, _driverKind?: string): string =>
+  option.label;
 
 /** ACP variant ids are opaque; their model/session declares the available choices. */
 function variantChoices(state: Pick<AppState, "instances" | "modelVariantSessions">, selection: ModelSelection, threadId: string | undefined) {

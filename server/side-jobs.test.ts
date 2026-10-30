@@ -175,12 +175,10 @@ describe("the setup card's answers", () => {
     return { jobs, api, claude, remembered, booked };
   }
 
-  it("use the engine's fastest model, but leave Claude on its own one-off model", async () => {
-    const { jobs, api, claude } = card();
+  it("use the engine's fastest model", async () => {
+    const { jobs, api } = card();
     await jobs.text("setup-suggestions", "api")!.generateText("p");
     expect(api.calls[0]!.options?.model).toBe("x-mini");
-    await jobs.text("setup-suggestions", "claude")!.generateText("p");
-    expect(claude.calls[0]!.options?.model).toBeUndefined();
   });
 
   it("name no model where the sign-in refuses small ones or the workspace has not assigned it", async () => {

@@ -102,10 +102,9 @@ export function createSideJobs(deps: SideJobsDeps): SideJobs {
     },
   });
 
-  /** The engine's fastest model by the quick-turn rule. Not for Claude: its one-off call already runs its own small model,
-   * without thinking. */
+  /** The engine's fastest model by the quick-turn rule. */
   const quickModel = (bot: SideJobBot, own: SideJobInstance): { model?: string } => {
-    if (own.driverKind === "claudeAgent" || own.quickModelsUsable?.() === false) return {};
+    if (own.quickModelsUsable?.() === false) return {};
     const current = bot.modelSelection.instanceId === own.instanceId && bot.modelSelection.model ? bot.modelSelection.model : own.models.default;
     const model = fastModelFor(own.models, current, deps.smallModels.refused(own.instanceId));
     return model && (!deps.modelAllowed || deps.modelAllowed({ instanceId: own.instanceId, model })) ? { model } : {};

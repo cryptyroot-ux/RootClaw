@@ -86,7 +86,6 @@ function hostileState(): SnapshotState {
       openaiCompat: { configured: true, url: `https://${HOSTILE}.example.com/v1` }, xai: { configured: false },
       composio: { configured: true, mode: "self-hosted" }, box: { configured: true },
       vps: { configured: true, sshAlias: HOSTILE }, rooms: { turnTimeoutMinutes: 30 }, localVm: { mode: "per-bot", maxInstances: 2 },
-      opencodeGo: { configured: true, providerKeys: [HOSTILE] },
       tts: { configured: true, ready: true, voice: HOSTILE, provider: "fish" },
       decider: { provider: "jev", model: HOSTILE, configured: true, enabled: true, jobs: { roomRouting: true } },
       live: { configured: true, keySource: "live", voice: HOSTILE, readTypedReplies: false, idleMinutes: 5 },
@@ -99,11 +98,11 @@ function hostileState(): SnapshotState {
       onboarding: { completedAt: "2026-10-01T00:00:00.000Z", version: 1, reelSeen: true, hintsSeen: [HOSTILE], firstTurnAt: "2026-10-01T00:05:00.000Z" },
     } as unknown as ConfigStatus,
     instances: [
-      instance("claude-3f0c2b1e-9d1a-4c55-8a51-0a3a6f1e2b7c", "claudeAgent"),
-      instance("claude", "claudeAgent"),
+      instance("groq-3f0c2b1e-9d1a-4c55-8a51-0a3a6f1e2b7c", "groq"),
+      instance("groq", "groq"),
       instance("openai-compat-0a3a6f1e-2b7c-4c55-8a51-3f0c2b1e9d1a", "openai-compat", { url: `https://${HOSTILE}.example.com/v1` }),
       instance(HOSTILE, HOSTILE, { trialCredit: "used_up" }),
-      instance("codex", "codex", { snapshot: { state: "unavailable", reason: HOSTILE } }),
+      instance("minimax", "minimax", { snapshot: { state: "unavailable", reason: HOSTILE } }),
     ],
     bots: [
       hostileBot("cloud"), hostileBot("cloud", "box"), hostileBot("cloud", "vps"), hostileBot("vm"), hostileBot("local"), hostileBot("browser"),
@@ -195,12 +194,12 @@ describe("the daily usage snapshot", () => {
     expect(await snapshot.sendDailySnapshot(hostileState(), hostileSources(), DAY)).toBe(true);
     const [sent] = snapshots();
     expect(sent).toEqual({
-      key_providers: ["anthropic", "openai_compat", "boat", "composio", "opencode_go", "fish_audio", "jev", "custom_image", "openai_live"],
-      key_count: 9, has_boat_key: true, cloud_computer_source: "own_key", cloud_computers: 3, team_computers: 1,
+      key_providers: ["anthropic", "openai_compat", "boat", "composio", "fish_audio", "jev", "custom_image", "openai_live"],
+      key_count: 8, has_boat_key: true, cloud_computer_source: "own_key", cloud_computers: 3, team_computers: 1,
       bots_cloud_boat: 2, bots_cloud_vps: 1, bots: 9, bots_local_vm: 1, bots_this_computer: 1, bots_browser: 1, bots_off: 1, bots_auto: 2,
       rooms: 2, bot_channels: 1, teams: 2,
       routines: 4, routines_enabled: 3, routines_cloud: 1, routines_room_goal: 1, routines_once: 1, routines_daily: 1, routines_interval: 1, routines_cron: 1,
-      webhooks: 1, engines: ["claude", "openai_compat", "other"], engine_count: 4, custom_endpoints: 1, trial_credit: "used_up",
+      webhooks: 1, engines: ["groq", "openai_compat", "other"], engine_count: 4, custom_endpoints: 1, trial_credit: "used_up",
       apps: ["gmail", "other"], apps_connected: 4, connectors_mode: "self_hosted", local_vm_mode: "per_bot", vps_configured: true,
       voice: "fish", voice_included: false, decider: "jev", decider_included: false, live_calls: true,
       phones_paired: 2, paired_devices: 2, phone_paired: true, members: 1,

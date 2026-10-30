@@ -7,7 +7,7 @@ import { DATA_DIR, type AppConfig } from "./config.ts";
 import { createSkillsLibraryHost } from "./host/skills-library.ts";
 import {
   expandImportedSkillCommand, IMPORTED_CHANGED_WARNING, IMPORTED_SKILLS_DIR, importedSkillListings, importedSkillsFor, importedSkillsPrompt,
-  nativeSkillFolders, readImportedSkillFile, setImportedSkillEnabled, storeImportedSkills, syncImportedSkillLinks, type ImportedSkillInput,
+  readImportedSkillFile, setImportedSkillEnabled, storeImportedSkills, syncImportedSkillLinks, type ImportedSkillInput,
 } from "./imported-skills.ts";
 import { ensureTaskWorkspaceWithSkills } from "./skill-task-links.ts";
 import { installSkill, setSkillEnabled } from "./skills.ts";
@@ -111,29 +111,6 @@ describe("skills brought in from this computer", () => {
     expect(setImportedSkillEnabled(mine, "review", true)).toMatchObject({ enabled: true });
     expect(names(importedSkillsFor(mine, new Set()))).toEqual(["pdf", "review"]);
     expect(setImportedSkillEnabled(mine, "missing", true)).toHaveProperty("error");
-  });
-
-  it("stays out of a turn whose engine loads the same folder itself, and only while the original is there", () => {
-    store([input("pdf"), input("review", { source: "codex" })]);
-    mkdirSync(join(HOME, ".claude", "skills", "pdf"), { recursive: true });
-    mkdirSync(join(HOME, ".codex", "skills", "review"), { recursive: true });
-    const bot = newBot();
-    const claude = (claudeUserSkills: boolean, environment?: Record<string, string>) =>
-      names(importedSkillsFor(bot, new Set(), nativeSkillFolders({ driverKind: "claudeAgent", ...(environment ? { environment } : {}) }, { claudeUserSkills, home: HOME, env: {} })));
-    const codex = (config?: unknown, environment?: Record<string, string>) =>
-      names(importedSkillsFor(bot, new Set(), nativeSkillFolders({ driverKind: "codex", config, ...(environment ? { environment } : {}) }, { claudeUserSkills: true, home: HOME, env: {} })));
-    // "Also use my Claude Code skills" already hands Claude ~/.claude/skills: the copy would be a second pdf.
-    expect(claude(true)).toEqual(["review"]);
-    expect(claude(false)).toEqual(["pdf", "review"]);
-    expect(claude(false, { ROOTCLAW_CLAUDE_INHERIT_USER_CONFIG: "1" })).toEqual(["review"]);
-    // Codex loads $CODEX_HOME/skills from the person's own home; a ChatGPT-plan or company home does not.
-    expect(codex()).toEqual(["pdf"]);
-    expect(codex({ authMode: "chatgpt-plan" })).toEqual(["pdf", "review"]);
-    expect(codex(undefined, { CODEX_HOME: join(DATA_DIR, "providers", "company", "codex") })).toEqual(["pdf", "review"]);
-    expect(names(importedSkillsFor(bot, new Set(), nativeSkillFolders({ driverKind: "geminiAgent" }, { claudeUserSkills: true, home: HOME, env: {} })))).toEqual(["pdf", "review"]);
-    // Gone from ~/.claude/skills: Claude no longer has it, so the copy stays in.
-    rmSync(join(HOME, ".claude", "skills", "pdf"), { recursive: true });
-    expect(claude(true)).toEqual(["pdf", "review"]);
   });
 
   it("keeps the links of a task folder to what the turn uses, and never touches a bot's own link or folder", () => {

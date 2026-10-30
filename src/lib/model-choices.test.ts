@@ -3,23 +3,19 @@ import { describe, expect, it } from "vitest";
 import type { InstanceInfo } from "@/state/store";
 import { choiceIsSelected, modelChoices } from "./model-choices";
 
-const antigravity = {
-  instanceId: "google",
-  driverKind: "antigravityAgent",
-  displayName: "Google Gemini (Antigravity)",
-  snapshot: { state: "available", version: "1.4.3" },
-  models: { default: "gemini-3.8-flash", options: [{
-    id: "gemini-3.8-flash", label: "Gemini 3.8 Flash",
-    variants: [{ id: "low", label: "Low" }, { id: "medium", label: "Medium" }, { id: "high", label: "High" }],
-  }] },
+const xai = {
+  instanceId: "xaiApi",
+  driverKind: "grok",
+  displayName: "xAI",
+  snapshot: { state: "available" },
+  models: { default: "grok-4", options: [{ id: "grok-4", label: "Grok 4" }, { id: "grok-4-mini", label: "Grok 4 Mini" }] },
 } as InstanceInfo;
 
-describe("Antigravity model choices", () => {
-  it("presents each advertised thinking level as a selectable model row", () => {
-    const choices = modelChoices(antigravity, antigravity.models.options);
-    expect(choices.map((choice) => choice.label)).toEqual([
-      "Gemini 3.8 Flash · Low", "Gemini 3.8 Flash · Medium", "Gemini 3.8 Flash · High",
-    ]);
-    expect(choiceIsSelected(choices[1]!, { instanceId: "google", model: "gemini-3.8-flash", variant: "medium" })).toBe(true);
+describe("model choices", () => {
+  it("lists the instance's models as they are, and matches the selected one", () => {
+    const choices = modelChoices(xai, xai.models.options);
+    expect(choices.map((choice) => choice.label)).toEqual(["Grok 4", "Grok 4 Mini"]);
+    expect(choiceIsSelected(choices[1]!, { instanceId: "xaiApi", model: "grok-4-mini" })).toBe(true);
+    expect(choiceIsSelected(choices[0]!, { instanceId: "xaiApi", model: "grok-4-mini" })).toBe(false);
   });
 });

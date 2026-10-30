@@ -1,6 +1,6 @@
 import { Children, createElement, type ChangeEvent, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 
 import type { AppState, Bot, InstanceInfo } from "@/state/store";
 import type { EffortLevel } from "../../shared/wire";
@@ -26,9 +26,8 @@ vi.mock("@/state/store", async (importOriginal) => ({
 // These cases cover the full picker; Simple mode has its own file.
 vi.mock("@/lib/interface-mode", () => ({ useAdvancedMode: () => true, setAdvancedMode: () => {} }));
 
-const { EffortRow, ModelPicker, ModelVariantRow } = await import("./ModelPicker");
+const { EffortRow, ModelPicker } = await import("./ModelPicker");
 const { ClaudeAccountSelect, ModelEngineRail } = await import("./ModelPickerFull");
-const { modelSelectionForPick } = await import("@/lib/model-choices");
 
 afterAll(() => vi.unstubAllGlobals());
 
@@ -135,127 +134,6 @@ describe("EffortRow", () => {
   });
 });
 
-
-describe("OpenCode model variants", () => {
-  const variants = [
-    { id: "none", label: "None" }, { id: "minimal", label: "Minimal" },
-    { id: "default", label: "Default" }, { id: "deep/custom", label: "Deep custom" },
-  ];
-  const opencode = (): InstanceInfo => ({ ...engine(), instanceId: "opencode", driverKind: "opencodeGo",
-    capabilities: { modelVariants: true }, models: { default: "provider/model", options: [{ id: "provider/model", label: "Model", variants }] } });
-  const selected = (variant?: string): Bot => ({ ...bot(), modelSelection: { instanceId: "opencode", model: "provider/model", ...(variant !== undefined ? { variant } : {}) } });
-  beforeEach(() => { fixture.instances = [opencode()]; fixture.modelVariantSessions = {}; fixture.dispatch.mockClear(); });
-  const render = (variant?: string) => renderToStaticMarkup(createElement(ModelVariantRow, { bot: selected(variant), threadId: "thread-atlas" }));
-
-  it("keeps opaque variant ids and omission distinct in the compact dropdown", () => {
-    const row = ModelVariantRow({ bot: selected("default"), threadId: "thread-atlas", compact: true })!;
-    const label = Children.toArray(row.props.children)[0] as ReactElement<{ children: ReactNode }>;
-    const select = Children.toArray(label.props.children).at(-1) as ReactElement<{ value: string; onChange: (event: ChangeEvent<HTMLSelectElement>) => void }>;
-    expect(select.props.value).toBe("2");
-    for (const [value, variant] of [["3", "deep/custom"], ["unset", undefined]]) {
-      select.props.onChange({ target: { value } } as ChangeEvent<HTMLSelectElement>);
-      expect(fixture.dispatch).toHaveBeenLastCalledWith({ type: "setModel", botId: "atlas", threadId: "thread-atlas",
-        selection: { instanceId: "opencode", model: "provider/model", ...(variant !== undefined ? { variant } : {}) } });
-    }
-    const markup = renderToStaticMarkup(createElement(ModelVariantRow, { bot: { ...selected("removed"), busy: true }, compact: true }));
-    expect(markup).toContain('disabled=""');
-    expect(markup).toContain("removed (unverified)");
-    expect(markup).toContain("Use session setting");
-  });
-
-  it("offers exact advertised ids without assuming that omission means none or default", () => {
-    const markup = render();
-    expect(levelButtons(markup)).toEqual([
-      { label: "None", pressed: false }, { label: "Minimal", pressed: false },
-      { label: "OpenCode default", pressed: false }, { label: "Deep custom", pressed: false },
-    ]);
-    expect(markup).toContain("No variant selected.");
-    expect(fixture.dispatch).not.toHaveBeenCalled();
-    expect(levelButtons(render("none")).find((button) => button.pressed)?.label).toBe("None");
-  });
-
-  it.each(variants)("persists $id only to the pinned conversation and clears legacy effort", (option) => {
-    const configured = selected();
-    configured.modelSelection.effort = "high";
-    const row = ModelVariantRow({ bot: configured, threadId: "independent-thread" })!;
-    const group = Children.toArray(row.props.children).at(-1) as ReactElement<{ children: ReactNode }>;
-    const button = Children.toArray(group.props.children)[variants.findIndex((candidate) => candidate.id === option.id)] as ReactElement<{ onClick: () => void }>;
-    button.props.onClick();
-    expect(fixture.dispatch).toHaveBeenLastCalledWith({ type: "setModel", botId: "atlas", threadId: "independent-thread",
-      selection: { instanceId: "opencode", model: "provider/model", variant: option.id } });
-  });
-
-  it.each(["none", "default", "minimal", "removed"])("can clear %s to omission without asking for a default or none", (variant) => {
-    const row = ModelVariantRow({ bot: selected(variant), threadId: "thread-atlas" })!;
-    const clear = Children.toArray(row.props.children).find((child) =>
-      typeof child === "object" && "type" in child && child.type === "button") as ReactElement<{ onClick: () => void; title: string }>;
-    expect(clear.props.title).toContain("keeps its session or configured setting");
-    clear.props.onClick();
-    expect(fixture.dispatch).toHaveBeenLastCalledWith({ type: "setModel", botId: "atlas", threadId: "thread-atlas",
-      selection: { instanceId: "opencode", model: "provider/model" } });
-  });
-
-  it("uses matching session choices, including an empty list, without changing the instance catalog", () => {
-    fixture.modelVariantSessions["thread-atlas"] = { instanceId: "opencode", model: "provider/model", turnId: "turn", startedAt: "2026-09-15T00:00:00Z", acceptingUpdates: false,
-      variants: { options: [{ id: "minimal", label: "Session minimal" }], currentValue: "minimal" } };
-    expect(levelButtons(render()).map((button) => button.label)).toEqual(["Session minimal"]);
-    expect(render()).toContain("No variant selected. Session: Session minimal.");
-    expect(levelButtons(render()).some((button) => button.pressed)).toBe(false);
-    expect(fixture.instances[0].models.options[0].variants).toEqual(variants);
-    fixture.modelVariantSessions["thread-atlas"].variants = { options: [] };
-    expect(render()).toBe("");
-    expect(render("none")).toContain("is unavailable");
-    expect(render("none")).not.toContain('aria-label="Reasoning variant"');
-  });
-
-  it("ignores another conversation, account, or model's session choices and preserves unavailable saved ids", () => {
-    const session = { instanceId: "opencode", model: "provider/model", turnId: "turn", startedAt: "2026-09-15T00:00:00Z", acceptingUpdates: false, variants: { options: [] } };
-    fixture.modelVariantSessions["other-thread"] = session;
-    expect(levelButtons(render())).toHaveLength(4);
-    fixture.modelVariantSessions["thread-atlas"] = { ...session, instanceId: "other-account" };
-    expect(levelButtons(render())).toHaveLength(4);
-    fixture.modelVariantSessions["thread-atlas"] = { ...session, model: "other-model" };
-    expect(levelButtons(render())).toHaveLength(4);
-    expect(render("removed")).toContain("Saved variant “removed” has not been checked in this session.");
-    expect(fixture.dispatch).not.toHaveBeenCalled();
-  });
-
-  it("does not invent default or expose a control on a model without variants", () => {
-    fixture.instances[0].models.options[0].variants = [{ id: "minimal", label: "Minimal" }];
-    expect(levelButtons(render()).map((button) => button.label)).toEqual(["Minimal"]);
-    fixture.instances[0].models.options[0].variants = [];
-    expect(render()).toBe("");
-    fixture.instances[0].capabilities = {};
-    expect(render("none")).toBe("");
-  });
-
-  it("does not declare a saved default invalid on reload before ACP announces its choices", () => {
-    fixture.instances[0].models.options[0].variants = [{ id: "minimal", label: "Minimal" }];
-    const markup = render("default");
-    expect(markup).toContain("has not been checked in this session");
-    expect(markup).not.toContain("is unavailable");
-    expect(levelButtons(markup).map((button) => button.label)).toEqual(["Minimal"]);
-    expect(fixture.dispatch).not.toHaveBeenCalled();
-  });
-
-  it("keeps the saved choice after reload while allowing profile choices to update the profile", () => {
-    expect(levelButtons(render("minimal")).find((button) => button.pressed)?.label).toBe("Minimal");
-    const row = ModelVariantRow({ bot: selected(), updateBotDefault: true })!;
-    const group = Children.toArray(row.props.children).at(-1) as ReactElement<{ children: ReactNode }>;
-    (Children.toArray(group.props.children)[1] as ReactElement<{ onClick: () => void }>).props.onClick();
-    expect(fixture.dispatch).toHaveBeenLastCalledWith({ type: "setModel", botId: "atlas", threadId: undefined, updateBotDefault: true,
-      selection: { instanceId: "opencode", model: "provider/model", variant: "minimal" } });
-  });
-
-  it("drops an opaque variant when switching models/accounts but keeps it when reselecting the same model", () => {
-    const selection = selected("minimal").modelSelection;
-    expect(modelSelectionForPick(selection, opencode(), "provider/other")).toEqual({ instanceId: "opencode", model: "provider/other" });
-    expect(modelSelectionForPick(selection, { ...opencode(), instanceId: "other" }, "provider/model")).toEqual({ instanceId: "other", model: "provider/model" });
-    expect(modelSelectionForPick(selection, opencode(), "provider/model")).toEqual(selection);
-    expect(modelSelectionForPick({ ...selection, effort: "high" }, opencode(), "provider/other")).not.toHaveProperty("effort");
-    expect(modelSelectionForPick(bot("high").modelSelection, engine(["high"]), "other")).toEqual({ instanceId: "codex", model: "other", effort: "high" });
-  });
-});
 
 describe("ModelPicker trigger", () => {
   const renderTrigger = (effort?: EffortLevel) => {

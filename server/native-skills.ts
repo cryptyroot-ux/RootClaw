@@ -1,28 +1,15 @@
 import { createHash } from "node:crypto";
 import { lstatSync, readdirSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { join } from "node:path";
 
 import { DESCRIPTION_MAX, isSkillName, readSkillFrontmatter, SKILL_FILE_MAX_BYTES } from "../shared/skill-md.ts";
 import { nativeSkillFolders, readFileNoFollow, type ImportedSkillView, type SkillTurnEngine } from "./imported-skills.ts";
-import { entryExistsWithoutFollowing } from "./skill-storage.ts";
 import type { SkillListing } from "./skills.ts";
 
 export interface NativeSkill extends ImportedSkillView {
   /** The skills folder it was found in. */
   source: string;
   sha256: string;
-}
-
-/** Claude Code (2.1.304) loads `.claude/skills` from a turn's folder and each folder above it, up to the nearest git
- * root, and never the home folder's, which holds the person's own skills. */
-function projectSkillFolders(cwd: string, home: string): string[] {
-  const folders: string[] = [];
-  for (let at = resolve(cwd); at !== resolve(home); at = dirname(at)) {
-    folders.push(join(at, ".claude", "skills"));
-    if (entryExistsWithoutFollowing(join(at, ".git")) || dirname(at) === at) break;
-  }
-  return folders;
 }
 
 /** A skill folder may be a link, as the engine follows it; SKILL.md itself must be a plain file of a skill's size. As in
@@ -52,9 +39,8 @@ export function nativeSkills(
   engine: SkillTurnEngine,
   options: { claudeUserSkills: boolean; cwd: string | null; home?: string },
 ): NativeSkill[] {
-  const project = engine.driverKind === "claudeAgent" && options.cwd ? projectSkillFolders(options.cwd, options.home ?? homedir()) : [];
   const seen = new Set<string>();
-  return [...nativeSkillFolders(engine, options), ...project].flatMap((root) => {
+  return nativeSkillFolders(engine, options).flatMap((root) => {
     let names: string[];
     try {
       names = readdirSync(root).filter(isSkillName).sort();

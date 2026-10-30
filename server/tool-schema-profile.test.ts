@@ -144,15 +144,14 @@ describe("fitting a tool schema to Moonshot's per-tool limit", () => {
 });
 
 describe("which turns carry a schema profile", () => {
-  it("is Kimi Code's engine, Moonshot's own endpoint, or a Moonshot model on OpenRouter", () => {
-    expect(toolSchemaProfileFor({ engine: "kimiAgent" })).toBe(MOONSHOT);
+  it("is Moonshot's own endpoint, or a Moonshot model on OpenRouter", () => {
     expect(toolSchemaProfileFor({ url: "https://api.moonshot.ai/v1" })).toBe(MOONSHOT);
     expect(toolSchemaProfileFor({ url: "https://api.moonshot.cn/v1", model: "kimi-k2.6" })).toBe(MOONSHOT);
     expect(toolSchemaProfileFor({ url: "https://openrouter.ai/api/v1", model: "moonshotai/kimi-k2.6" })).toBe(MOONSHOT);
   });
 
   it("is no other engine or endpoint, so their tool lists are unchanged", () => {
-    for (const engine of ["claudeAgent", "codex", "geminiAgent", "grokAgent", "opencodeGo", "qwenAgent", "cursorAgent", "hermesAgent"]) {
+    for (const engine of ["grok", "openai-compat", "groq", "mistral", "cerebras", "meta", "minimax", "kimiAgent"]) {
       expect(toolSchemaProfileFor({ engine, model: "kimi-k2.6" })).toBeUndefined();
     }
     expect(toolSchemaProfileFor({ url: "https://api.groq.com/openai/v1", model: "moonshotai/kimi-k2-instruct-0905" })).toBeUndefined();

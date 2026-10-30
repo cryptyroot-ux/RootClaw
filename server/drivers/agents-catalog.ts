@@ -622,7 +622,7 @@ const TOOL_DEFINITIONS = [
         app: { type: "string", description: "app_event: app slug from trigger_info action=events." },
         event: { type: "string", description: "app_event: event slug from trigger_info action=events." },
         account: { type: "string", description: "app_event: account id or alias, only when the app has several." },
-        engine: { type: "string", description: "limit_reset: the engine id whose limit to wait for, e.g. claude or codex. Omit for your own engine." },
+        engine: { type: "string", description: "limit_reset: the engine id whose limit to wait for, e.g. xaiApi or groq. Omit for your own engine." },
         repeat: { type: "string", enum: ["once", "every_reset"], description: "limit_reset: once (default) or every_reset." },
         for_bot_id: { type: "string", description: "Only for ANOTHER bot's trigger: that bot's id, from list_bots." },
       },
@@ -690,7 +690,7 @@ const TOOL_DEFINITIONS = [
           type: "object",
           additionalProperties: false,
           properties: {
-            instanceId: { type: "string", minLength: 1, description: "Engine instance id, for example codex or claude." },
+            instanceId: { type: "string", minLength: 1, description: "Engine instance id, for example xaiApi or groq." },
             model: { type: "string", minLength: 1, description: "Exact model id on that instance." },
             effort: { type: "string", description: "Optional effort level the instance offers; omit for the engine default." },
             variant: { type: "string", description: "Optional explicit model variant; choose this or effort, not both." },

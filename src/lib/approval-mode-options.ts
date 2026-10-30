@@ -29,10 +29,9 @@ const SIMPLE_NAME_KEYS: Record<ApprovalMode, LocaleKey> = {
   custom: "botSettings.simple.custom",
 };
 
-/** Simple mode's name for a level, the one the bot panel uses. Antigravity's full-access grant shows as Auto, as it
- * does in Advanced. */
-export function simpleApprovalName(mode: ApprovalMode, driverKind?: string): string {
-  return t(SIMPLE_NAME_KEYS[driverKind === "antigravityAgent" && mode === "full" ? "auto" : mode]);
+/** Simple mode's name for a level, the one the bot panel uses. */
+export function simpleApprovalName(mode: ApprovalMode, _driverKind?: string): string {
+  return t(SIMPLE_NAME_KEYS[mode]);
 }
 
 export interface ApprovalModeOption {
@@ -72,7 +71,7 @@ export function approvalModeSelectionRequiresLocalDesktop(
   return currentMode === "custom" && !trustedModesAvailable;
 }
 
-/** The mode to show as chosen. Security: old Antigravity Auto settings still ask; never display or silently grant the new Auto until it is chosen. */
-export function shownApprovalMode(driverKind: string, savedMode: ApprovalMode): ApprovalMode {
-  return driverKind === "antigravityAgent" && savedMode === "auto" ? "ask" : savedMode;
+/** The mode to show as chosen. */
+export function shownApprovalMode(_driverKind: string, savedMode: ApprovalMode): ApprovalMode {
+  return savedMode;
 }
