@@ -196,12 +196,12 @@ describe("the Cloud Pro popup", () => {
 });
 
 describe("with no AI working yet", () => {
-  it("keeps the screen's shape: the pill signs in, and the line under it offers other ways or later", async () => {
+  it("keeps the screen's shape: the pill opens Connect an AI, and the line under it offers other ways or later", async () => {
     f.state = { ...f.state, instances: [signIn()] };
     await show();
     expect(host.querySelector("h1")?.textContent).toBe("Meet RootClaw");
     expect(button("Next")).toBeUndefined();
-    expect(button("Sign in with Claude")).toBeDefined();
+    expect(button("Connect Claude")).toBeDefined();
     expect(button("Other ways to connect")).toBeDefined();
     expect(host.querySelector("[data-engine-setup]"), "no setup card on the screen itself").toBeNull();
     await toChief("Set up later");

@@ -837,7 +837,7 @@ export function ModelPicker({
                     ) : pane === "main" ? (
                       <>
                         {railInstance.snapshot.update && (
-                          <EngineUpdateNotice update={railInstance.snapshot.update} instance={railInstance} className="mx-0.5 mb-1.5" />
+                          <EngineUpdateNotice update={railInstance.snapshot.update} className="mx-0.5 mb-1.5" />
                         )}
                         <div className={MENU_LABEL}>
                           {query

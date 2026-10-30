@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowUp, Check, Plus } from "lucide-react";
+import { ArrowUp, Check, LoaderCircle, Plus } from "lucide-react";
 import { BotAvatar, RootClawAvatar } from "@/components/Avatar";
 import { engineReady } from "@/components/EngineLibrary";
 import { usePrefersReducedMotion } from "@/components/mascot-clock";
@@ -10,12 +10,12 @@ import { activeLocale, t } from "@/lib/i18n";
 import { aiChoices, aiWorks } from "@/lib/onboarding";
 import { useStore } from "@/state/store";
 import { ConnectAiDialog } from "./ConnectAi";
-import { PILL, SignInPill, useSignInPill } from "./SignInPill";
 import { useWelcomeAi } from "./welcome-ai";
 
 const MASCOT_SIZE = 72;
 const PLACEHOLDER_MS = 700;
 const GRAPHEME_MS = 35;
+const PILL = "ui-button ui-button-pill ui-button-lg ui-button-primary w-[288px] max-w-full";
 
 function graphemes(text: string): string[] {
   const Segmenter = (Intl as { Segmenter?: typeof Intl.Segmenter }).Segmenter;
@@ -68,13 +68,12 @@ export function MeetScreen({ hosted, onNext }: { hosted: boolean; onNext: () => 
     if (!hosted && known && !ready && tested?.state !== "testing") setAsking(true);
   }, [hosted, known, ready, tested?.state]);
   const { recommended } = aiChoices(state.instances.filter((instance) => instance.install && !engineReady(instance)));
-  const pill = useSignInPill(recommended);
   const [dialog, setDialog] = useState(false);
   const [typing, setTyping] = useState(false);
 
   const logo = brand().logo;
   const face = typing ? "listening" : "idle";
-  const failure = pill.error ?? (tested?.state === "failed" ? tested.error ?? t("onboarding.engines.noAnswer", { name: tested.instance.displayName }) : null);
+  const failure = (tested?.state === "failed" ? tested.error ?? t("onboarding.engines.noAnswer", { name: tested.instance.displayName }) : null);
   const signingIn = asking && !ready;
   return (
     <div className="relative h-full min-h-[600px] w-full text-center">
@@ -103,7 +102,15 @@ export function MeetScreen({ hosted, onNext }: { hosted: boolean; onNext: () => 
           </p>
         )}
         {signingIn ? (
-          <SignInPill pill={pill} instance={recommended} waiting={tested?.state === "testing"} onDialog={() => setDialog(true)} />
+          tested?.state === "testing" ? (
+            <button type="button" data-sign-in="waiting" className={PILL} aria-disabled>
+              <LoaderCircle size={14} aria-hidden="true" className="shrink-0 animate-spin" />{t("onboarding.meet.waiting", { name: recommended?.displayName ?? "" })}
+            </button>
+          ) : (
+            <button type="button" data-primary="" data-sign-in="dialog" className={PILL} onClick={() => setDialog(true)}>
+              {recommended ? t("onboarding.meet.connectNamed", { name: recommended.displayName }) : t("onboarding.meet.connectAi")}
+            </button>
+          )
         ) : (
           <button type="button" data-primary="" onClick={onNext} className={cn(PILL, asking && "animate-fade-in [animation-duration:150ms]")}>
             {t("onboarding.meet.next")}

@@ -1,10 +1,9 @@
-import { useEffect, useState } from "react";
-import { AlertTriangle, Check, Copy, Download, ExternalLink, KeyRound, Loader2, LogIn, TerminalSquare, X } from "lucide-react";
-import { api, type EngineInstall, type InstanceInfo, useStore } from "@/state/store";
+import { useState } from "react";
+import { AlertTriangle, Check, Copy, Download, ExternalLink, KeyRound, LogIn, TerminalSquare, X } from "lucide-react";
+import { type EngineInstall, type InstanceInfo, useStore } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 import { copyText } from "@/lib/copy-text";
-import { DEVICE_SIGN_IN_COPY, DeviceSignIn, deviceSignInProvider } from "./DeviceSignIn";
 import { RefreshEngines } from "./EngineLibrary";
 import { keyEntry, keyForInstance, type KeyId } from "./keys/key-catalog";
 import { openKeySettings } from "./keys/key-focus";
@@ -160,79 +159,12 @@ export function CommandRow({
   );
 }
 
-function ServerEngineInstall({ instance, mode, command, quiet = false }: { instance: InstanceInfo; mode: "install" | "update"; command: string | null; quiet?: boolean }) {
-  const { state, dispatch, refreshModels } = useStore();
-  const [busy, setBusy] = useState(false);
-  const [done, setDone] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const standalone = instance.install?.server?.standalone;
-  // The app installs its own build without npm; the npm command only helps when the server has npm.
-  const terminalCommand = standalone && !instance.install?.server?.package ? null : command;
-
-  const run = async () => {
-    if (busy) return;
-    setBusy(true);
-    setDone(false);
-    setError(null);
-    try {
-      const { instances } = await api(`/api/instances/${encodeURIComponent(instance.instanceId)}/install`, { method: "POST" });
-      const installed = (instances as InstanceInfo[] | undefined)?.find((candidate) => candidate.instanceId === instance.instanceId);
-      if (instances) dispatch({ type: "instances", instances });
-      if (installed?.snapshot.state !== "available") {
-        throw new Error(t("engineSetup.installNotVerified", { reason: installed?.snapshot.reason ?? t("engineSetup.noReason") }));
-      }
-      setDone(true);
-      await refreshModels(instance.instanceId).catch(() => {});
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="mt-3 space-y-2">
-      <button
-        type="button"
-        disabled={busy}
-        onClick={() => void run()}
-        className={cn("flex w-full items-center justify-center gap-2 rounded-lg px-3 py-2 text-[13px] font-semibold disabled:cursor-wait disabled:opacity-70",
-          quiet ? "bg-control text-ink hover:bg-raised-hover" : "ui-button-primary bg-accent text-white hover:brightness-110")}
-      >
-        {busy ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
-        {busy
-          ? t("engineSetup.serverInstalling")
-          : t(mode === "update" ? "engineSetup.serverUpdate" : "engineSetup.serverInstall", { name: instance.displayName })}
-      </button>
-      {standalone && mode === "install" && !busy && !done && (
-        <p className="text-center text-[11px] text-ink-tertiary">
-          {/* Decimal megabytes, as macOS and Windows show file sizes. */}
-          {t("engineSetup.standaloneDownloadNote", { mb: Math.max(1, Math.round(standalone.downloadBytes / 1_000_000)) })}
-        </p>
-      )}
-      {done && !busy && <p role="status" className="text-center text-[11px] text-success">{t("engineSetup.installVerified")}</p>}
-      {error && <p role="alert" className="whitespace-pre-wrap text-[12px] leading-relaxed text-danger">{error}</p>}
-      {terminalCommand && (
-        <details className="rounded-lg border border-hairline/50 bg-app px-2.5 py-2 text-[12px] text-ink-secondary">
-          <summary className="cursor-pointer select-none">{t("engineSetup.preferTerminal")}</summary>
-          <CommandRow command={terminalCommand} actionLabel={t(mode === "update" ? "engineSetup.openUpdate" : "engineSetup.openInstall")} compact allowTerminal={state.config?.cloudHome !== true} />
-        </details>
-      )}
-    </div>
-  );
-}
-
-/** `quiet` keeps an optional update from competing with a card's main action (Sign in). */
 export function EngineUpdateNotice({
   update,
-  instance,
   className,
-  quiet = false,
 }: {
   update: NonNullable<InstanceInfo["snapshot"]["update"]>;
-  instance?: InstanceInfo;
   className?: string;
-  quiet?: boolean;
 }) {
   return (
     <div
@@ -246,9 +178,7 @@ export function EngineUpdateNotice({
           <p className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">{update.message}</p>
         </div>
       </div>
-      {instance?.install?.server
-        ? <ServerEngineInstall instance={instance} mode="update" command={update.command} quiet={quiet} />
-        : <CommandRow command={update.command} actionLabel={t("engineSetup.openUpdate")} compact />}
+      <CommandRow command={update.command} actionLabel={t("engineSetup.openUpdate")} compact />
     </div>
   );
 }
@@ -272,132 +202,6 @@ export function EngineWarningNotice({
           <p className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">{warning.message}</p>
         </div>
       </div>
-    </div>
-  );
-}
-
-function ManagedEngineSetup({ instance, signInOnly }: { instance: InstanceInfo; signInOnly: boolean }) {
-  const { refreshInstances, refreshModels } = useStore();
-  const [busy, setBusy] = useState<"install" | "signin" | "complete" | "check" | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [flow, setFlow] = useState<{ flowId: string; authorizationUrl: string } | null>(null);
-  const [callbackUrl, setCallbackUrl] = useState("");
-  const managed = instance.install!.managed!;
-
-  useEffect(() => {
-    if (!flow || instance.snapshot.authenticated) return;
-    const timer = window.setInterval(() => void refreshInstances(), 2_000);
-    return () => window.clearInterval(timer);
-  }, [flow, instance.snapshot.authenticated, refreshInstances]);
-
-  const run = async (kind: NonNullable<typeof busy>, action: () => Promise<void>) => {
-    setBusy(kind);
-    setError(null);
-    try { await action(); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
-    finally { setBusy(null); }
-  };
-
-  const install = () => run("install", async () => {
-    try {
-      await api(`/api/instances/${encodeURIComponent(instance.instanceId)}/install`, { method: "POST" });
-    } finally {
-      await refreshInstances().catch(() => {});
-    }
-  });
-
-  const signIn = () => run("signin", async () => {
-    const { auth } = await api(`/api/instances/${encodeURIComponent(instance.instanceId)}/auth/start`, { method: "POST" });
-    if (auth.phase === "succeeded") {
-      await refreshInstances();
-      await refreshModels(instance.instanceId);
-      return;
-    }
-    if (!auth.flowId || !auth.authorizationUrl) throw new Error(t("engineSetup.googleNoLink"));
-    setFlow({ flowId: auth.flowId, authorizationUrl: auth.authorizationUrl });
-    if (window.ogb?.openExternal) await window.ogb.openExternal(auth.authorizationUrl);
-    else window.open(auth.authorizationUrl, "_blank", "noopener,noreferrer");
-  });
-
-  const complete = () => run("complete", async () => {
-    if (!flow) return;
-    await api(`/api/instances/${encodeURIComponent(instance.instanceId)}/auth/complete`, {
-      method: "POST",
-      body: JSON.stringify({ flowId: flow.flowId, callbackUrl }),
-    });
-    setCallbackUrl("");
-    await refreshInstances();
-    await refreshModels(instance.instanceId);
-  });
-
-  const check = () => run("check", async () => {
-    await refreshInstances();
-    await refreshModels(instance.instanceId);
-  });
-
-  if (!signInOnly) {
-    return (
-      <div className="mt-3">
-        <button
-          type="button"
-          disabled={busy !== null}
-          onClick={() => void install()}
-          className="flex w-full items-center justify-center gap-2 rounded-lg bg-accent px-3 py-2 text-[13px] font-semibold text-white hover:brightness-110 disabled:cursor-wait disabled:opacity-70"
-        >
-          {busy === "install" ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
-          {busy === "install" ? t("engineSetup.installing") : managed.label}
-        </button>
-        <p className="mt-1.5 text-center text-[11px] text-ink-tertiary">
-          {t("engineSetup.downloadNote", { mb: Math.ceil(managed.downloadBytes / 1024 / 1024) })}
-        </p>
-        {error && <p className="mt-2 text-[12px] text-danger">{error}</p>}
-      </div>
-    );
-  }
-
-  return (
-    <div className="mt-3 space-y-2">
-      <button
-        type="button"
-        disabled={busy !== null}
-        onClick={() => void signIn()}
-        className="flex w-full items-center justify-center gap-2 rounded-lg bg-accent px-3 py-2 text-[13px] font-semibold text-white hover:brightness-110 disabled:cursor-wait disabled:opacity-70"
-      >
-        {busy === "signin" ? <Loader2 size={14} className="animate-spin" /> : <LogIn size={14} />}
-        {busy === "signin"
-          ? t("engineSetup.startingGoogle")
-          : flow
-            ? t("engineSetup.openGoogleAgain")
-            : t("engineSetup.signInGoogle")}
-      </button>
-      {busy === "signin" && <p role="status" className="text-[12px] text-ink-secondary">{t("engineSetup.antigravitySlow")}</p>}
-      {flow && (
-        <>
-          <button type="button" onClick={() => void check()} className="w-full rounded-lg bg-control px-3 py-2 text-[12px] font-semibold text-ink hover:bg-raised-hover">
-            {busy === "check" ? t("common.checking") : t("engineSetup.finishedSignIn")}
-          </button>
-          <details className="rounded-lg border border-hairline/50 bg-app px-2.5 py-2 text-[12px] text-ink-secondary">
-            <summary className="cursor-pointer select-none">{t("engineSetup.otherComputer")}</summary>
-            <p className="mt-2 leading-relaxed">{t("engineSetup.otherComputerHint")}</p>
-            <input
-              value={callbackUrl}
-              onChange={(event) => setCallbackUrl(event.target.value)}
-              aria-label={t("engineSetup.otherComputerUrl")}
-              placeholder="http://127.0.0.1:…/?code=…"
-              className="mt-2 w-full rounded-md border border-hairline bg-inset px-2 py-1.5 text-[11px] text-ink outline-none focus:border-accent"
-            />
-            <button
-              type="button"
-              disabled={!callbackUrl.trim() || busy !== null}
-              onClick={() => void complete()}
-              className="mt-2 w-full rounded-md bg-control px-2 py-1.5 font-medium text-ink disabled:opacity-50"
-            >
-              {busy === "complete" ? t("engineSetup.sending") : t("engineSetup.sendRedirect")}
-            </button>
-          </details>
-        </>
-      )}
-      {error && <p className="text-[12px] text-danger">{error}</p>}
     </div>
   );
 }
@@ -514,30 +318,14 @@ export function EngineSetup({
   const installCommand = installCommandFor(install);
   const signInCommand = install?.signInCommand;
   const signInOnly = intent === "cloud" && needsSignIn(instance);
-  const deviceSignIn = signInOnly && instance.authentication?.method === "device-code";
-  const browserSignIn = signInOnly && instance.authentication?.method === "browser-pkce";
-  const pasteSignIn = signInOnly && instance.authentication?.method === "paste-code";
-  const provider = deviceSignInProvider(instance.driverKind);
   const command = signInOnly ? signInCommand : installCommand;
   const title = signInOnly
     ? t("engineSetup.signInTitle", { name: instance.displayName })
     : t("engineSetup.setupTitle", { name: instance.displayName });
   const description = descriptionOverride ?? (signInOnly
-    ? browserSignIn
-      ? t("engineSetup.chatgpt.description")
-      : deviceSignIn
-      ? t(DEVICE_SIGN_IN_COPY[provider].description)
-      : pasteSignIn
-      ? t("engineSetup.claude.description")
-      : install?.managed
-      ? t("engineSetup.managedSignIn")
-      : t("engineSetup.terminalSignInCheck")
+    ? t("engineSetup.terminalSignInCheck")
     : intent === "inject"
       ? t("engineSetup.injectDesc")
-      : install?.server
-        ? t("engineSetup.serverInstallDesc")
-      : install?.managed
-        ? t("engineSetup.managedDesc")
       : signInCommand
         ? t("engineSetup.installDescSignIn")
         : t("engineSetup.installDesc"));
@@ -584,21 +372,7 @@ export function EngineSetup({
         </p>
       ))}
 
-      {deviceSignIn || browserSignIn ? (
-        <>
-          <DeviceSignIn key={instance.instanceId} instanceId={instance.instanceId} browserPkce={browserSignIn} provider={provider} />
-          {deviceSignIn && provider === "grok" && signInCommand && serverTerminal(cloudHome) && (
-            <details className="mt-2 rounded-lg border border-hairline/50 bg-app px-2.5 py-2 text-[12px] text-ink-secondary">
-              <summary className="cursor-pointer select-none">{t("engineSetup.preferTerminal")}</summary>
-              <CommandRow command={signInCommand} actionLabel={t("engineSetup.openSignIn")} compact />
-            </details>
-          )}
-        </>
-      ) : install.server && !signInOnly ? (
-        <ServerEngineInstall instance={instance} mode="install" command={installCommand} />
-      ) : install.managed ? (
-        <ManagedEngineSetup instance={instance} signInOnly={signInOnly} />
-      ) : command ? (
+      {command ? (
         <CommandRow
           command={command}
           actionLabel={signInOnly ? t("engineSetup.openSignIn") : t("engineSetup.openInstall")}
@@ -610,7 +384,7 @@ export function EngineSetup({
         </p>
       )}
 
-      {!signInOnly && install.needsNode && !install.server && (
+      {!signInOnly && install.needsNode && (
         <p className="mt-2 text-[11px] leading-relaxed text-ink-tertiary">
           {t("engineSetup.needsNode").split("{npm}").flatMap((part, index) =>
             index === 0
@@ -620,7 +394,7 @@ export function EngineSetup({
         </p>
       )}
 
-      {(install.command || signInCommand) && !deviceSignIn && !browserSignIn && !pasteSignIn && !install.managed && (
+      {(install.command || signInCommand) && (
         <div className="mt-3 border-t border-hairline/40 pt-2">
           <p className="mb-1 text-[12px] leading-relaxed text-ink-secondary">{t("engineSetup.sameMachine")}</p>
           {needsCli(instance) && <p className="mb-1 text-[12px] leading-relaxed text-ink-secondary">{t("engineSetup.pathHint")}</p>}
