@@ -262,16 +262,6 @@ describe("the stall handler", () => {
     expect(context.watchdog.options).toMatchObject({ stallMs: 3_900_000, toolStallMs: 2 * 60 * 60_000 });
   });
 
-  it("says when the Cloud ran out of memory while the stalled turn ran", () => {
-    const memory = new EngineMemory({ enabled: true, read: () => ({ totalBytes: 4 * 1024 ** 3, availableBytes: 0, swapFreeBytes: 0, oomKills: 0, fullStall10: 60 }),
-      groups: () => new Map(), log: () => {} });
-    memory.turnStarted("t1");
-    memory.tick();
-    const { context, settled } = load(memory);
-    context.watchdog.options.onStall({ threadId: "t1", botId: "eli" }, 20 * 60_000);
-    expect(settled[0]!.text).toMatch(/^No activity for 20 minutes — the turn was stopped\. This Cloud ran out of memory while 1 task ran at once \(not a problem with the AI provider\)\. Before it stopped/);
-  });
-
   it("gives a stopped turn's own end the cause the harness noted before interrupting it", () => {
     const { context } = load();
     expect(context.stoppedTurnText("t1", "turn-1", undefined, "interrupted")).toMatch(/^The turn did not complete \(interrupted\)\. /);
