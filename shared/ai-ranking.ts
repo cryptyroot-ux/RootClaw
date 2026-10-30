@@ -1,6 +1,6 @@
 // Which of a person's AIs a new bot uses, and which one the welcome offers first: one ranking for the server's new-bot
-// default and the welcome. A Claude account, then a ChatGPT plan, then Gemini, then Grok, then every other AI in the
-// order the app lists them; OpenCode running only its free no-login models comes last, as a backup.
+// default and the welcome. Grok first, then every other AI in the order the app lists them; an AI ready only through
+// free no-login models comes last, as a backup.
 
 export interface RankableAi {
   driverKind: string;
@@ -11,17 +11,12 @@ export interface RankableAi {
 export type AiTestState = "testing" | "passed" | "failed" | "untestable";
 
 const TIERS: Readonly<Record<string, number>> = {
-  claudeAgent: 0,
-  codex: 1,
-  geminiAgent: 2,
-  antigravityAgent: 2,
-  grokAgent: 3,
-  grok: 3,
+  grok: 0,
 };
-const OTHER = 4;
-const FREE_FALLBACK = 5;
+const OTHER = 1;
+const FREE_FALLBACK = 2;
 
-/** Ready only through OpenCode's free models: no login, no subscription, no key of the person's own. */
+/** Ready only through free models: no login, no subscription, no key of the person's own. */
 export function freeFallback(instance: RankableAi): boolean {
   return instance.snapshot?.freeFallback === true;
 }

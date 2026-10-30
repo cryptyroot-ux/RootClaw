@@ -15,30 +15,14 @@ import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
 import { createApprovalModeSupport } from "./harness-capabilities.ts";
 
 describe("approval modes", () => {
-  it("carries Full silently to any engine that runs it; Custom never crosses engines", () => {
-    for (const driver of ["codex", "claudeAgent", "grokAgent", "antigravityAgent", "piAgent", "customAcp"]) {
-      expect(modelSwitchNeedsAsk("ask", "codex", driver)).toBe(false);
-      expect(modelSwitchNeedsAsk("auto", "codex", driver)).toBe(false);
-      expect(modelSwitchNeedsAsk("full", "codex", driver)).toBe(false);
-      expect(modelSwitchNeedsAsk("custom", "codex", driver)).toBe(driver !== "codex");
+  it("carries Full silently to any engine; Edits and Custom are never offered natively", () => {
+    for (const driver of ["grok", "openai-compat", "groq", undefined]) {
+      expect(modelSwitchNeedsAsk("ask", "grok", driver)).toBe(false);
+      expect(modelSwitchNeedsAsk("auto", "grok", driver)).toBe(false);
+      expect(modelSwitchNeedsAsk("full", "grok", driver)).toBe(false);
+      expect(modelSwitchNeedsAsk("edits", "grok", driver)).toBe(true);
+      expect(modelSwitchNeedsAsk("custom", "grok", driver)).toBe(true);
     }
-    expect(modelSwitchNeedsAsk("full", "codex", "claudeAgent")).toBe(false);
-    expect(modelSwitchNeedsAsk("full", "claudeAgent", "openai-compat")).toBe(false);
-    expect(modelSwitchNeedsAsk("edits", "claudeAgent", "codex")).toBe(true);
-    expect(modelSwitchNeedsAsk("edits", "claudeAgent", "grokAgent")).toBe(false);
-    expect(modelSwitchNeedsAsk("full", "claudeAgent", "claudeAgent")).toBe(false);
-    expect(modelSwitchNeedsAsk("full", "codex", undefined)).toBe(false);
-  });
-  it("only exposes implemented provider capabilities", () => {
-    for (const driver of ["codex", "claudeAgent", "antigravityAgent", "cursorAgent", "grokAgent", "opencodeGo", "qwenAgent", "geminiAgent"]) {
-      expect(supportsApprovalMode(driver, "full")).toBe(true);
-      expect(supportsApprovalMode(driver, "custom")).toBe(driver === "codex");
-      // Qwen's `--approval-mode auto` is an LLM classifier; Gemini has no reviewer
-      expect(hasNativeAutoReview(driver)).toBe(["codex", "claudeAgent", "cursorAgent", "grokAgent", "qwenAgent"].includes(driver));
-      expect(supportsApprovalMode(driver, "edits")).toBe(["claudeAgent", "grokAgent", "antigravityAgent", "qwenAgent", "geminiAgent"].includes(driver));
-    }
-    expect(supportsApprovalMode(undefined, "full")).toBe(true);
-    expect(supportsApprovalMode(undefined, "edits")).toBe(false);
   });
 
   it("runs Full access, the default level, on every engine", () => {
@@ -47,10 +31,7 @@ describe("approval modes", () => {
 
   // No permissive mode of their own: the harness answers the permission
   // requests they leave, so Full runs there too.
-  it.each([
-    "kimiAgent", "droidAgent", "hermesAgent", "customAcp",
-    "piAgent", "unknown",
-  ])("runs Full on %s without claiming native Auto or Edits", (driver) => {
+  it.each(["unknown"])("runs Full on %s without claiming native Auto or Edits", (driver) => {
     expect(supportsApprovalMode(driver, "ask")).toBe(true);
     expect(supportsApprovalMode(driver, "auto")).toBe(true);
     expect(supportsApprovalMode(driver, "edits")).toBe(false);
@@ -138,17 +119,17 @@ describe("approval modes", () => {
 describe("approval support bound to a registry", () => {
   const registry = {
     cliTarget: (instanceId: string) =>
-      instanceId === "codex-fixture" ? { driverKind: "codex" }
-        : instanceId === "pi-fixture" ? { driverKind: "piAgent" }
+      instanceId === "grok-fixture" ? { driverKind: "grok" }
+        : instanceId === "compat-fixture" ? { driverKind: "openai-compat" }
         : null,
   };
   const supports = createApprovalModeSupport(registry);
 
   it("resolves model selections through the registry", () => {
-    const codex = { instanceId: "codex-fixture", model: "fixture" };
-    const pi = { instanceId: "pi-fixture", model: "fixture" };
-    expect(supports(codex, "full")).toBe(true);
-    expect(supports(codex, "custom")).toBe(true);
+    const grok = { instanceId: "grok-fixture", model: "fixture" };
+    const pi = { instanceId: "compat-fixture", model: "fixture" };
+    expect(supports(grok, "full")).toBe(true);
+    expect(supports(grok, "custom")).toBe(false);
     expect(supports(pi, "ask")).toBe(true);
     expect(supports(pi, "auto")).toBe(true);
     expect(supports(pi, "full")).toBe(true);
@@ -165,14 +146,14 @@ describe("approval support bound to a registry", () => {
   });
 
   it("passes already-resolved driver views to the table unchanged", () => {
-    expect(supports({ driverKind: "codex" }, "custom")).toBe(true);
-    expect(supports({ driverKind: "piAgent" }, "full")).toBe(true);
+    expect(supports({ driverKind: "grok" }, "custom")).toBe(false);
+    expect(supports({ driverKind: "openai-compat" }, "full")).toBe(true);
     expect(supports({ driverKind: undefined }, "ask")).toBe(true);
     expect(supports({ driverKind: undefined }, "full")).toBe(true);
   });
 
   it("agrees with the pure table across every mode", () => {
-    for (const driverKind of ["codex", "claudeAgent", "piAgent", undefined] as const) {
+    for (const driverKind of ["grok", "openai-compat", "groq", undefined] as const) {
       for (const mode of APPROVAL_MODES) {
         expect(supports({ driverKind }, mode)).toBe(supportsApprovalMode(driverKind, mode));
       }

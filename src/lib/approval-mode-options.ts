@@ -56,19 +56,8 @@ export function approvalModeOptions(): ApprovalModeOption[] {
 export function approvalModeOptionsFor(driverKind: string, trustedModesAvailable = true) {
   return approvalModeOptions()
     .filter((option) => supportsApprovalMode(driverKind, option.mode)
-      // Antigravity has no native reviewer: its full-access grant is shown as Auto below, and the real Auto, which
-      // behaves as Ask, is not offered.
-      && (driverKind !== "antigravityAgent" || option.mode !== "auto")
       && (trustedModesAvailable || option.mode !== "custom"))
     .map((option) => {
-      if (driverKind === "antigravityAgent" && option.mode === "full") {
-        return {
-          ...option,
-          label: t("approvalMode.antigravity.label"),
-          chip: t("approvalMode.auto.chip"),
-          description: t("approvalMode.antigravity.desc"),
-        };
-      }
       return option.mode === "auto" && !hasNativeAutoReview(driverKind)
         ? { ...option, description: t("approvalMode.noNativeReview") }
         : option;

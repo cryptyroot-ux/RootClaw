@@ -1,7 +1,6 @@
 // Guards against internal runtime harness notifications leaking into user-facing
-// assistant responses. When background tasks or subagents finish, ACP runtimes
-// (like Google Antigravity or Anthropic harness) inject notifications into the model
-// context using <SYSTEM_MESSAGE> wrappers. Confused or echoing models can sometimes
+// assistant responses. Some model hosts and harnesses inject background-task
+// notifications into the model context using <SYSTEM_MESSAGE> wrappers. Confused or echoing models can sometimes
 // regurgitate these blocks into the assistant message stream.
 
 const PREAMBLE_REGEX = /^(?:The following is a|Notice: This is a)\s*<SYSTEM_(?:MESSAGE|NOTIFICATION)>[^\n]*\n?/gim;

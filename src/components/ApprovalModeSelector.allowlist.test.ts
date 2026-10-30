@@ -21,7 +21,7 @@ function nodes(value: ReactNode): Node[] {
 function render(onSelect: (mode: ApprovalMode) => void, onManageCommandAllowlist?: () => void, trustedModesAvailable = true, busy = false) {
   let tree: ReactNode;
   function Capture() {
-    tree = ApprovalModeSelector({ providerName: "Codex", driverKind: "codex", approvalMode: "ask", onSelect, onManageCommandAllowlist, trustedModesAvailable, busy });
+    tree = ApprovalModeSelector({ providerName: "xAI", driverKind: "grok", approvalMode: "ask", onSelect, onManageCommandAllowlist, trustedModesAvailable, busy });
     return tree;
   }
   return { html: renderToStaticMarkup(createElement(Capture)), nodes: nodes(tree) };
@@ -34,7 +34,7 @@ describe("command allowlist menu access", () => {
     render(select, manage).nodes.find((node) => node.props["aria-haspopup"] === "menu")!.props.onClick!();
     const open = render(select, manage);
     expect(open.html.indexOf("Full access")).toBeLessThan(open.html.indexOf("Command allowlist"));
-    expect(open.html.indexOf("Command allowlist")).toBeLessThan(open.html.indexOf("Custom (config.toml)"));
+    expect(open.html).not.toContain("Custom (config.toml)");
     open.nodes.find((node) => node.props.role === "menuitem")!.props.onClick!();
     expect(manage).toHaveBeenCalledOnce();
     expect(select).not.toHaveBeenCalled();
@@ -56,7 +56,6 @@ describe("command allowlist menu access", () => {
     fixture.open = true;
     const open = render(select, undefined, false);
     expect(open.html).not.toContain("Custom (config.toml)");
-    expect(open.html).toContain("Custom approval must be changed in the local packaged desktop app.");
     expect(open.html).not.toContain("Full and Custom are available in the packaged desktop app.");
     open.nodes.filter((node) => node.props.role === "menuitemradio")
       .find((node) => renderToStaticMarkup(node).includes("Full access"))!.props.onClick!();

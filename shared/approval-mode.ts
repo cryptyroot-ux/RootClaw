@@ -6,19 +6,12 @@ export const APPROVAL_MODES = ["ask", "edits", "auto", "full", "custom"] as cons
 
 export type ApprovalMode = (typeof APPROVAL_MODES)[number];
 
-/** Only providers with an implemented permission mapping may expose a level.
- * `edits` (auto-accept edits) exists where the engine has such a mode:
- * Claude and Grok `acceptEdits`, Antigravity `auto_edit`, Qwen `auto-edit`,
- * Gemini `auto_edit`. Codex's Ask already runs `workspace-write`, so an edits
- * level would change nothing there. Full access, the default level, runs on
- * every engine: in the engine's own most permissive mode, or, where it has
- * none, with the harness answering the permission requests it leaves (the
- * chat-completions family, ACP agents such as Kimi or Hermes, Pi's computer
- * confirms). */
-export function supportsApprovalMode(driverKind: string | undefined, mode: ApprovalMode): boolean {
-  if (mode === "custom") return driverKind === "codex";
-  if (mode === "edits") return ["claudeAgent", "grokAgent", "antigravityAgent", "qwenAgent", "geminiAgent"].includes(driverKind ?? "");
-  return true;
+/** Only levels the native engine implements may be exposed. Native engines
+ * have no auto-accept-edits mode and no provider-specific Custom grant, so
+ * those two levels are unavailable; Full access runs with the harness
+ * answering the permission requests it leaves. */
+export function supportsApprovalMode(_driverKind: string | undefined, mode: ApprovalMode): boolean {
+  return mode !== "custom" && mode !== "edits";
 }
 
 /** Whether switching engines must first drop this level to Ask. A Custom
@@ -34,10 +27,9 @@ export function modelSwitchNeedsAsk(
   return !supportsApprovalMode(toDriver, mode) || (mode === "custom" && fromDriver !== toDriver);
 }
 
-export function hasNativeAutoReview(driverKind: string | undefined): boolean {
-  // Qwen Code's `--approval-mode auto` is an LLM classifier that approves
-  // safe actions and blocks risky ones — a reviewer, not a rubber stamp.
-  return ["codex", "claudeAgent", "cursorAgent", "grokAgent", "qwenAgent"].includes(driverKind ?? "");
+/** No native engine ships its own approval reviewer. */
+export function hasNativeAutoReview(_driverKind: string | undefined): boolean {
+  return false;
 }
 
 const APPROVAL_RANK: Record<ApprovalMode, number> = { ask: 0, edits: 1, auto: 2, full: 3, custom: 4 };
