@@ -174,6 +174,20 @@ export function workspaceToolView(name: string, args: Record<string, unknown>): 
   return { title: name, input: args, ask: true, grant };
 }
 
+/** The exact command and the real folder it would run in, the scope a saved-command allowlist rule matches.
+ * Undefined when the folder is not one the shell may run in, so no rule can answer for it. */
+export function shellCommandScope(args: Record<string, unknown>, config: WorkspaceToolsConfig): { command: string; cwd: string } | undefined {
+  if (typeof args.command !== "string" || !args.command.trim()) return undefined;
+  try {
+    const paths = createWorkspacePaths(config);
+    const cwd = paths.resolve(args.cwd, "read", paths.root);
+    if (!statSync(cwd).isDirectory()) return undefined;
+    return { command: args.command, cwd: realpathSync(cwd) };
+  } catch {
+    return undefined;
+  }
+}
+
 export function validateWorkspaceArgs(name: string, args: Record<string, unknown>): void {
   const definition = WORKSPACE_TOOL_DEFINITIONS.find((entry) => entry.function.name === name);
   if (!definition) throw new Error(`Unknown workspace tool ${name}`);

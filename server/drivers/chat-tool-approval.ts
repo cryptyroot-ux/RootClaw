@@ -6,7 +6,9 @@ import type { ChatToolCallView } from "./chat-mcp-tools.ts";
 import { REFUSED_NEXT_STEP } from "../reply-habits.ts";
 
 /** `grant`: what "Always allow this session" would keep allowed; absent when the card can only allow once. */
-interface Ask { id: string; tool: string; summary: string; grant?: string }
+interface Ask { id: string; tool: string; summary: string; grant?: string;
+  /** A shell call's exact command and real folder: what a saved-command allowlist rule matches. */
+  command?: { command: string; cwd: string } }
 type Source = "user" | "timeout" | "system";
 
 interface Card {
@@ -45,10 +47,10 @@ export function createChatToolApproval(options: {
       if (!call.shown.ask || !(call.full || covered(call.shown.grant))) return null;
       return floorBlockForToolCall({ threadId: call.threadId, botId: call.botId, tool: call.shown.title, summary: call.summary, input: call.shown.input });
     },
-    ask(tool: string, summary: string, grant?: string): Promise<boolean> {
+    ask(tool: string, summary: string, grant?: string, command?: { command: string; cwd: string }): Promise<boolean> {
       if (closed || options.signal.aborted) return Promise.resolve(false);
       if (covered(grant)) return Promise.resolve(true);
-      const ask: Ask = { id: newId(), tool, summary, ...(grant !== undefined && options.granted ? { grant } : {}) };
+      const ask: Ask = { id: newId(), tool, summary, ...(grant !== undefined && options.granted ? { grant } : {}), ...(command ? { command } : {}) };
       return new Promise((resolve) => {
         let timer: ReturnType<typeof setTimeout>;
         const card: Card = {

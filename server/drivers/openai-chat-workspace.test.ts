@@ -1,6 +1,6 @@
 // The native workspace tools through a real driver turn: approval gating, prompt, skills, parallel order.
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -92,6 +92,29 @@ describe("native workspace tools in a turn", () => {
     await f.instance.adapter.respondToRequest(f.threadId, opened.requestId!, { behavior: "allow" });
     await f.completed();
     expect(readFileSync(join(f.cwd, "out.txt"), "utf8")).toBe("hi\n");
+  });
+
+  it("names the exact shell command and its real folder on the card, for the saved-command allowlist", async () => {
+    const f = await fixture([[["shell", { command: "ls", cwd: "sub" }]]]);
+    mkdirSync(join(f.cwd, "real"));
+    symlinkSync(join(f.cwd, "real"), join(f.cwd, "sub"));
+    await f.start();
+    const opened = await f.recorder.until((event) => event.type === "request.opened");
+    if (opened.type !== "request.opened") throw new Error("expected a card");
+    expect(opened.command).toEqual({ command: "ls", cwd: realpathSync(join(f.cwd, "real")) });
+    expect(opened.commandLine).toBe("ls");
+    await f.instance.adapter.respondToRequest(f.threadId, opened.requestId!, { behavior: "deny" });
+    await f.completed();
+  });
+
+  it("names no command scope for a write, or a shell folder outside the workspace", async () => {
+    const f = await fixture([[["shell", { command: "ls", cwd: "/" }]]]);
+    await f.start();
+    const opened = await f.recorder.until((event) => event.type === "request.opened");
+    if (opened.type !== "request.opened") throw new Error("expected a card");
+    expect(opened.command).toBeUndefined();
+    await f.instance.adapter.respondToRequest(f.threadId, opened.requestId!, { behavior: "deny" });
+    await f.completed();
   });
 
   it("reads without asking", async () => {
