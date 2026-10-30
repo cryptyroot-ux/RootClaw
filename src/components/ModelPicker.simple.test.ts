@@ -203,9 +203,9 @@ describe("the model picker in Simple mode", () => {
     fixture.instances = [codex, grok, cursor, openaiKey, claudeKey, local, claude()];
     const opened = open(bot());
     expect(list(opened).groups.map((entry) => entry.label))
-      .toEqual(["Claude", "OpenAI", "Grok", "Cursor", "OpenAI · API key", "Claude · API key", "pi"]);
+      .toEqual(["Claude", "Codex", "Grok", "Cursor", "OpenAI · API key", "Claude · API key", "pi"]);
     const html = menu(opened.html);
-    for (const name of ["OpenAI", "Grok", "Cursor", "OpenAI · API key", "Claude · API key", "pi"]) expect(html).toContain(`>${name}</span>`);
+    for (const name of ["Codex", "Grok", "Cursor", "OpenAI · API key", "Claude · API key", "pi"]) expect(html).toContain(`>${name}</span>`);
     expect(html).not.toContain("data-simple-key");
     expect(html).not.toContain("(API key)");
     expect(labels(opened, "codex")).toEqual(["GPT-5.6"]);
@@ -645,81 +645,6 @@ describe("the model picker in Simple mode", () => {
     expect(menu(opened.html)).toContain("Manage AI accounts");
   });
 
-  it("asks a provider with nothing to list to check again", async () => {
-    const plan: InstanceInfo = {
-      ...engine("chatgpt", "codex", "ChatGPT plan", "subscription", []),
-      snapshot: { state: "available", version: "1.0.0", authenticated: true, chatgptPlan: true },
-    };
-    fixture.instances = [claude(), plan];
-    const opened = open(bot());
-    const html = region(menu(opened.html), 'data-simple-provider="chatgpt"', "data-simple-effort-band");
-    expect(html).toContain("No models to show here yet.");
-    expect(html).toContain(">Check again</span>");
-    pane(opened)!.props.onCheckAgain(plan);
-    await vi.waitFor(() => expect(fixture.refreshModels).toHaveBeenCalledWith("chatgpt"));
-    expect(fixture.refreshInstances).toHaveBeenCalled();
-  });
-
-  it("says it is loading a provider's models while it asks for them, and holds every other Check again until then", async () => {
-    let arrive!: () => void;
-    fixture.refreshModels = vi.fn(() => new Promise<void>((resolve) => { arrive = resolve; }));
-    const plan: InstanceInfo = {
-      ...engine("chatgpt", "codex", "ChatGPT plan", "subscription", []),
-      snapshot: { state: "available", version: "1.0.0", authenticated: true, chatgptPlan: true },
-    };
-    const work: InstanceInfo = { ...plan, instanceId: "chatgpt-work", displayName: "Work plan" };
-    fixture.instances = [claude(), plan, work];
-    const forBot = bot();
-    const other = (html: string) => region(html, 'data-simple-provider="chatgpt-work"', "data-simple-effort-band");
-    expect(other(menu(open(forBot).html))).not.toMatch(/data-simple-refresh="true"[^>]* disabled=""/);
-    pane(render(forBot))!.props.onCheckAgain(plan);
-    await vi.waitFor(() => expect(fixture.refreshModels).toHaveBeenCalledWith("chatgpt"));
-    const reading = menu(render(forBot).html);
-    const html = region(reading, 'data-simple-provider="chatgpt"', 'data-simple-provider="chatgpt-work"');
-    expect(html).toContain("Loading OpenAI models…");
-    expect(html).toContain('role="status"');
-    expect(html).not.toContain("Check again");
-    expect(other(reading)).toMatch(/data-simple-refresh="true"[^>]* disabled=""/);
-    expect(other(reading)).toContain("animate-spin");
-    arrive();
-    await vi.waitFor(() => expect(region(menu(render(forBot).html), 'data-simple-provider="chatgpt"', 'data-simple-provider="chatgpt-work"')).toContain("Check again"));
-    expect(other(menu(render(forBot).html))).not.toMatch(/data-simple-refresh="true"[^>]* disabled=""/);
-  });
-
-  it("lists each ready Claude account as its own provider, and a signed-out one as one to sign in", () => {
-    const work: InstanceInfo = { ...claude(true, [{ id: "claude-sonnet-5-5", label: "Sonnet 5.5" }, { id: "claude-fable", label: "Fable 5" }]), instanceId: "claude-work", displayName: "Work" };
-    const home: InstanceInfo = { ...claude(false), instanceId: "claude-home", displayName: "Home" };
-    fixture.instances = [claude(), work, home];
-    const forBot = bot();
-    const opened = open(forBot);
-    expect(list(opened).groups.map((entry) => [entry.label, entry.body.kind]))
-      .toEqual([["Claude", "models"], ["Claude · Work", "models"], ["Claude · Home", "signIn"]]);
-    expect(list(opened).current!.meta).toBe("Claude");
-    pane(opened)!.props.onPick(work, "claude-sonnet-5-5");
-    expect(fixture.dispatch).toHaveBeenLastCalledWith(expect.objectContaining({
-      type: "setModel", selection: expect.objectContaining({ instanceId: "claude-work", model: "claude-sonnet-5-5" }),
-    }));
-    fixture.values = [];
-    pane(open(forBot))!.props.onSetUp(home, false);
-    const full = render(forBot);
-    expect(full.html).toContain('<option value="claude-home" selected="">Home</option>');
-  });
-
-  it("lists Codex and the ChatGPT plan each under OpenAI", () => {
-    const plan: InstanceInfo = {
-      ...engine("chatgpt", "codex", "ChatGPT plan", "subscription", [{ id: "gpt-5.6-plan", label: "GPT-5.6 (plan)" }]),
-      snapshot: { state: "available", version: "1.0.0", authenticated: true, chatgptPlan: true },
-    };
-    fixture.instances = [claude(), codex, plan];
-    const opened = open(bot());
-    expect(list(opened).groups.map((entry) => entry.label)).toEqual(["Claude", "OpenAI · Codex", "OpenAI · ChatGPT plan"]);
-    expect(labels(opened, "chatgpt")).toEqual(["GPT-5.6 (plan)"]);
-    pane(opened)!.props.onPick(plan, "gpt-5.6-plan");
-    expect(fixture.dispatch).toHaveBeenLastCalledWith(expect.objectContaining({
-      type: "setModel", selection: expect.objectContaining({ instanceId: "chatgpt", model: "gpt-5.6-plan" }),
-    }));
-  });
-
   it("says who manages a provider its organisation blocks, with nothing to pick or set up", () => {
     const blocked: InstanceInfo = { ...openaiKey, policy: { organizationName: "Acme", reason: "Acme allows only company models." } };
     fixture.instances = [claude(), blocked];
@@ -934,7 +859,6 @@ describe("every capability of the picker stays reachable", () => {
       "show every model of a provider": html.includes("data-simple-show-all"),
       "a signed-out account signs in": body("claude-work") === "signIn",
       "a managed provider says who manages it": body("openai") === "policy" && html.includes("Managed by Acme"),
-      "a provider with nothing listed checks again": body("chatgpt") === "empty" && html.includes("data-simple-refresh"),
       "thinking levels in the provider's own names, and back to Default": html.includes(">X-High</button>") && html.includes(">Use default</button>"),
       "AI accounts in Settings": html.includes("data-simple-manage"),
     };
@@ -950,7 +874,6 @@ describe("every capability of the picker stays reachable", () => {
       "engine rail with API keys": full.nodes.some((node) => node.type === ModelEngineRail) && fullHtml.includes(">API keys<"),
       "this thread or the bot's default": fullHtml.includes("Only this thread") && fullHtml.includes("Thread + bot default"),
       "engine status and refresh": fullHtml.includes("Sign-in required") && fullHtml.includes("data-model-refresh"),
-      "the account select": fullHtml.includes('<option value="claude-work" selected="">Work</option>'),
       "install and sign-in help": full.nodes.some((node) => node.type === EngineSetup),
       "providers and accounts, and API keys": fullHtml.includes("Model providers and accounts") && fullHtml.includes("data-model-add-api-keys"),
     };
@@ -970,13 +893,12 @@ describe("every capability of the picker stays reachable", () => {
     const opened = open(forBot);
     const html = menu(opened.html);
     const checks = {
-      "chip shows account, model and effort": chipHtml.includes("data-model-account") && chipHtml.includes("data-model-effort"),
+      "chip shows model and effort": chipHtml.includes("data-model-effort"),
       "use the bot's model, checked while following": opened.nodes.some((node) => node.type === FollowBotModelRow),
       "engine rail with Cloud, API keys and Local, and a way to add keys": html.includes(">Cloud<") && html.includes(">API keys<") && html.includes(">Local<") && html.includes("data-rail-add-api-key"),
       "a managed engine stays on the rail, dimmed": html.includes("Managed by Acme") && html.includes("opacity-40"),
       "this thread or the bot's default": html.includes("Only this thread"),
       "engine name, refresh and version": html.includes("data-model-refresh") && html.includes("2.1.300"),
-      "the Claude account select": html.includes('aria-label="Account"'),
       "the engine's update notice": html.includes("Update Claude"),
       "suggested models, the default and the bot's model tagged": html.includes(">Suggested<") && html.includes("(bot&#x27;s model)"),
       "effort select": html.includes('aria-label="Reasoning effort"'),

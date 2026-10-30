@@ -59,7 +59,7 @@ export function NoEngines() {
 
         <div className="mt-6 flex flex-col gap-2.5">
           {(() => {
-            const { subscription, api, custom } = splitEngineRail(engines);
+            const { native, api, custom } = splitEngineRail(engines);
             const card = (instance: (typeof engines)[number]) => (
               <div key={instance.instanceId} className="rounded-xl border border-hairline/40 bg-card p-3.5">
                 <div className="flex items-center gap-2 text-[14px] font-medium text-ink">
@@ -75,8 +75,8 @@ export function NoEngines() {
             );
             return (
               <>
-                {subscription.length > 0 && <EngineGroupLabel className="px-1">{t("engines.cloud")}</EngineGroupLabel>}
-                {subscription.map(card)}
+                {native.length > 0 && <EngineGroupLabel className="px-1">{t("engines.cloud")}</EngineGroupLabel>}
+                {native.map(card)}
                 {api.length > 0 && window.ogb?.remoteClient?.active !== true && (
                   <button
                     type="button"

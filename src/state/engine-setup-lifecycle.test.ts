@@ -49,8 +49,9 @@ it("recovers from offline, detects installation, and becomes ready on focus with
     offline = false;
     snapshot = { state: "available", authenticated: false, version: "1.0.0" };
     await check();
-    expect(host.textContent).toContain("Sign in to Kimi");
-    expect(host.textContent).toContain("Sign-in required");
+    // No subscription sign-in card: the engine keeps its generic setup until it reports ready.
+    expect(host.textContent).not.toContain("Sign in to Kimi");
+    expect(host.textContent).toContain("Set up Kimi");
     expect(host.querySelector("details")).toBe(card);
     expect(card.open).toBe(true);
     snapshot = { state: "available", authenticated: true, version: "1.0.0" };

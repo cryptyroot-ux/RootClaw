@@ -305,7 +305,7 @@ it("says why a ready Cloud can't be reached when the Admin knows, with no button
 it("promises no included AI: the person signs in with their own account there", async () => {
   await ready({ ...pro, machine: { status: "ready", origin } });
   const html = render().html;
-  expect(html).toContain("sign in there with your own Claude or ChatGPT account, or an API key");
+  expect(html).toContain("add an API key there, or sign in with OpenRouter or Google");
   expect(html).not.toMatch(/included/i);
 });
 it("connects with one click, sending nothing from the page", async () => {
@@ -498,7 +498,7 @@ it("an ended trial is one message: what happens to the files, and Subscribe to k
     trial: onTrial("ended", { deleteAt: ENDS + 3 * DAY, keep: "checkout" }), credit: { grantedUsd: 5, remainingUsd: 0, state: "used_up" } });
   const html = render().html;
   all(html, ["Your free trial has ended", "The Cloud is stopped. Its files are kept until Oct 18, then deleted.", 'data-cloud-home="stopped"', ">The Cloud is stopped.</p>",
-    "Your $5 trial Claude credit is used up. To keep your bots working, sign in with your own Claude or ChatGPT account in the Cloud, or add an API key there."]);
+    "Your $5 trial Claude credit is used up. To keep your bots working, add an API key in the Cloud, or sign in there with OpenRouter or Google."]);
   none(html, ["Subscribe again on your Plan page", "Your plan is not active right now", ...BUY]);
   expect(button("Subscribe to keep it")).toBeTruthy();
 });

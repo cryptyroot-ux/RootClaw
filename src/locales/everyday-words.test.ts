@@ -46,10 +46,6 @@ const EVERYDAY_KEYS: Record<string, readonly string[]> = {
   ],
   "adding and sharing a bot": ["newBot.presetKeeps", "presetShare.never"],
   "signing in to an AI, the Cloud's own sign-in included": [
-    "engineSetup.claude.description", "engineSetup.claude.connectedAccount", "engineSetup.device.description", "engineSetup.device.security",
-    "engineSetup.device.connectedAccount", "engineSetup.device.failed", "engineSetup.device.enableHint", "engineSetup.grok.description",
-    "engineSetup.grok.security", "engineSetup.grok.connectedAccount", "engineSetup.grok.failed", "engineSetup.grok.notInstalled",
-    "engineSetup.serverInstall", "engineSetup.serverUpdate", "engineSetup.serverInstalling", "engineSetup.sendRedirect",
     "engineSetup.sameMachine", "engineSetup.invalidStatus", "engines.account.signInHint", "engines.trialCredit", "engines.trialCreditEnded",
     "grokFinish.messageApps", "keys.cerebras.desc", "keys.groq.desc", "keys.meta.desc",
   ],

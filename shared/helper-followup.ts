@@ -32,8 +32,8 @@ export const FOLLOWUP_ENGLISH = {
   "helperIntro.followup.offer": "If you'd like me to keep an eye on your day, I can connect your email and calendar so I can flag what matters each morning. Just say the word, or hand me whatever's on your plate today.",
   "helperIntro.followup.apps": "I can already use {apps}. Hand me whatever's on your plate today, or ask me to set up a bot for something you do every week.",
   "helperIntro.followup.more": "{count} more",
-  "helperIntro.followup.noAi": "I looked around. Before I can do real work, I need an AI to think with. Sign in with an account you already have, like Claude or ChatGPT, and I'll take it from there.",
-  "helperIntro.followup.backup": "I looked around. For now I'm thinking with a free backup model. Sign in with an account you already have, like Claude or ChatGPT, and I'll take it from there.",
+  "helperIntro.followup.noAi": "I looked around. Before I can do real work, I need an AI to think with. Add an API key (OpenAI, Anthropic, Gemini, OpenRouter or Ollama Cloud) and I'll take it from there.",
+  "helperIntro.followup.backup": "I looked around. For now I'm thinking with a free backup model. Add an API key (OpenAI, Anthropic, Gemini, OpenRouter or Ollama Cloud) and I'll take it from there.",
 } as const;
 
 export type FollowupKey = keyof typeof FOLLOWUP_ENGLISH;

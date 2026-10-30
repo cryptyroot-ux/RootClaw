@@ -39,7 +39,7 @@ describe("an empty key row", () => {
 
   it("keeps a key's warning in view before it is added", () => {
     expect(render({ id: "box" })).toContain("Boat is a paid service after its trial.");
-    expect(render({ id: "openai" })).toContain("Codex doesn&#x27;t use this key");
+    expect(render({ id: "openai" })).not.toContain("Codex");
   });
 });
 

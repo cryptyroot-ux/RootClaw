@@ -5,7 +5,7 @@ import { useStore, currentTaskBot, type AppState, type Bot, type InstanceInfo, t
 import type { EffortLevel } from "../../shared/wire";
 import type { ModelVariantOption } from "../../shared/runtime-events";
 import { filterCustomModels, partitionCustomModels, suggestedModels } from "@/lib/custom-models";
-import { configuredModelInstances, isClaudeAccount, isCustomOnly, SIGN_IN_FAMILY_LABEL, signInFamily } from "@/lib/engine-rail";
+import { configuredModelInstances, isCustomOnly } from "@/lib/engine-rail";
 import { modelName, simpleModelMenu } from "@/lib/simple-model-menu";
 import { choiceIsSelected, modelChoices, modelSelectionForPick, type ModelChoice } from "@/lib/model-choices";
 export { modelSelectionForPick } from "@/lib/model-choices";
@@ -21,7 +21,7 @@ import { approvalModeFor, modelSwitchNeedsAsk } from "../../shared/approval-mode
 import { cn } from "@/lib/cn";
 import { useMenuMotion } from "./MenuMotion";
 import { SimpleModelMenu, type SimpleThinking } from "./SimpleModelMenu";
-import { apiKeysLabel, ClaudeAccountSelect, engineStatus, FollowBotModelRow, ModelEngineRail, ModelRow, ModelSearch } from "./ModelPickerFull";
+import { apiKeysLabel, engineStatus, FollowBotModelRow, ModelEngineRail, ModelRow, ModelSearch } from "./ModelPickerFull";
 import { MENU_LABEL, MENU_LINE, MENU_ROW, MENU_SEPARATOR, MENU_STROKE, MENU_TRAILING } from "./menu-recipe";
 import { modelMenuKey, modelMenuPointerMove } from "./model-menu-keys";
 import { useAdvancedMode } from "@/lib/interface-mode";
@@ -258,8 +258,6 @@ export function ModelPicker({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const refreshingRef = useRef(false);
-  const lastClaudeIdRef = useRef<string | null>(null);
-  const lastOpenaiIdRef = useRef<string | null>(null);
   const focusOnPlace = useRef<string | null>(null);
   const typed = useRef<Typeahead | null>(null);
   const menuId = useId();
@@ -313,14 +311,6 @@ export function ModelPicker({
       ?? { id: selection.variant, label: selection.variant },
     active?.driverKind,
   );
-  const claudeAccounts = pickerInstances.filter(isClaudeAccount);
-  const openaiAccounts = pickerInstances.filter((instance) => signInFamily(instance) === "openai");
-  const openaiRailInstance = openaiAccounts.find((instance) => instance.instanceId === lastOpenaiIdRef.current)
-    ?? openaiAccounts.find((instance) => instance.instanceId === selection.instanceId) ?? openaiAccounts[0];
-  const multipleClaudeAccounts = state.instances.filter(isClaudeAccount).length > 1;
-  const showActiveAccount = (multipleClaudeAccounts && isClaudeAccount(active)) || Boolean(active?.snapshot.chatgptPlan);
-  const claudeRailInstance = claudeAccounts.find((instance) => instance.instanceId === lastClaudeIdRef.current)
-    ?? claudeAccounts.find((instance) => instance.instanceId === selection.instanceId) ?? claudeAccounts[0];
   const railInstance =
     pickerInstances.find((instance) => instance.instanceId === (railId ?? selection.instanceId)) ?? pickerInstances[0];
   const displayedInstanceId = railInstance?.instanceId;
@@ -416,8 +406,6 @@ export function ModelPicker({
   };
 
   const selectRail = (instance: InstanceInfo) => {
-    if (isClaudeAccount(instance)) lastClaudeIdRef.current = instance.instanceId;
-    if (signInFamily(instance) === "openai") lastOpenaiIdRef.current = instance.instanceId;
     setRailId(instance.instanceId);
     const official = instance.models.options.filter((option) => !option.custom);
     setPane(isCustomOnly(instance) || (official.length === 0 && !instance.snapshot.chatgptPlan) ? "custom" : "main");
@@ -426,8 +414,6 @@ export function ModelPicker({
 
   const openMenu = () => {
     if (bot.busy) return;
-    if (active && isClaudeAccount(active)) lastClaudeIdRef.current = active.instanceId;
-    if (active && signInFamily(active) === "openai") lastOpenaiIdRef.current = active.instanceId;
     const initial = pickerInstances.find((instance) => instance.instanceId === selection.instanceId) ?? pickerInstances[0];
     setRailId(initial?.instanceId ?? null);
     setChangedBotModel(false);
@@ -620,20 +606,14 @@ export function ModelPicker({
         contained
           ? "hover:bg-ink/[0.06] aria-expanded:bg-ink/[0.08] disabled:opacity-50 disabled:hover:bg-transparent"
           : cn(ELEVATED_FLOAT, ELEVATED_HOVER, "disabled:text-ink-tertiary disabled:hover:bg-composer"),
-        !contained && active && !showActiveAccount && COMPACT_SQUARE,
+        !contained && active && COMPACT_SQUARE,
       )}
     >
       {active && (contained
         ? <InstanceProviderMark instance={active} size={14} subtle />
         : <span className="flex shrink-0 group-disabled:opacity-50"><InstanceProviderMark instance={active} size={14} subtle /></span>)}
-      {!contained && active && showActiveAccount && (
-        <span data-model-account-compact className="hidden max-w-20 truncate @max-4xl/chathead:inline">{active.displayName}</span>
-      )}
       <span className={cn("flex min-w-0 items-center gap-1", !contained && active && "@max-4xl/chathead:hidden")}>
         <span className="max-w-[160px] truncate">
-          {active && showActiveAccount && (
-            <span data-model-account className="text-ink-secondary">{active.displayName} · </span>
-          )}
           {modelLabel(active, selection.model)}
           {active && modelProvider(active, selection.model) && (
             <span className="text-ink-secondary"> · {modelProvider(active, selection.model)}</span>
@@ -704,7 +684,7 @@ export function ModelPicker({
         <FollowBotModelRow name={profile.name} model={botModelName} follows={follows} onPick={pickBotModel} />
       )}
       <div className="flex min-h-0 min-w-0 flex-1">
-        {pickerInstances.length > 0 && <ModelEngineRail instances={pickerInstances} selectedInstance={railInstance} claudeInstance={claudeRailInstance} openaiInstance={openaiRailInstance} onSelect={selectRail}
+        {pickerInstances.length > 0 && <ModelEngineRail instances={pickerInstances} selectedInstance={railInstance} onSelect={selectRail}
           onAddApiKeys={remote ? undefined : openApiKeys} />}
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
@@ -728,7 +708,7 @@ export function ModelPicker({
             <>
               <div className="shrink-0 px-3.5 pb-2 pt-3">
                 <div className="flex items-center justify-between gap-3">
-                  <div className="truncate text-[14px] font-semibold leading-5 text-ink">{signInFamily(railInstance) ? SIGN_IN_FAMILY_LABEL[signInFamily(railInstance)!] : railInstance.displayName}</div>
+                  <div className="truncate text-[14px] font-semibold leading-5 text-ink">{railInstance.displayName}</div>
                   <div className="flex shrink-0 items-center gap-1">
                     <button
                       type="button"
@@ -759,12 +739,6 @@ export function ModelPicker({
                     </span>
                   </div>
                 </div>
-                {isClaudeAccount(railInstance) && claudeAccounts.length > 1 && (
-                  <ClaudeAccountSelect accounts={claudeAccounts} selectedId={railInstance.instanceId} onSelect={selectRail} />
-                )}
-                {signInFamily(railInstance) === "openai" && openaiAccounts.length > 1 && (
-                  <ClaudeAccountSelect accounts={openaiAccounts} selectedId={railInstance.instanceId} onSelect={selectRail} />
-                )}
                 {railInstance.snapshot.authenticated && railInstance.snapshot.account && (
                   <p className="mt-1 truncate text-[12px] leading-4 text-ink-tertiary" title={[railInstance.snapshot.account.email, railInstance.snapshot.account.organization].filter(Boolean).join(" · ")}>
                     {[railInstance.snapshot.account.email, railInstance.snapshot.account.organization].filter(Boolean).join(" · ")}

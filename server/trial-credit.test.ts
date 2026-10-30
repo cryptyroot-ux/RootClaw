@@ -47,9 +47,9 @@ describe("the trial Claude credit's refusal", () => {
   });
 
   it("says each in plain words, with the next step, never a retired word or the API's own, and the app tells each back from its words", () => {
-    expect(TRIAL_CREDIT_REFUSED.used_up).toBe("Your trial Claude credit is used up. To keep your bots working, sign in with your own Claude or ChatGPT account, or add an API key.");
+    expect(TRIAL_CREDIT_REFUSED.used_up).toBe("Your trial Claude credit is used up. To keep your bots working, add an API key, or sign in with OpenRouter or Google.");
     for (const [kind, sentence] of Object.entries(TRIAL_CREDIT_REFUSED)) {
-      expect(sentence).toMatch(/own Claude or ChatGPT account, or add an API key\.$/);
+      expect(sentence).toMatch(/[Aa]dd an API key, or sign in with OpenRouter or Google\.$/);
       expect(sentence).not.toMatch(/\{|HTTP|insufficient_quota|billing_error|your Cloud|AI credit/);
       expect(trialCreditKind(sentence)).toBe(kind);
     }

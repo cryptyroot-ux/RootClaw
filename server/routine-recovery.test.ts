@@ -389,7 +389,7 @@ describe("an unattended run only its owner can fix", () => {
     const trial = await h.start(h.routine("rootclaw-2").id);
     h.fail(trial.threadId!, TRIAL_CREDIT_REFUSED.used_up, { setup: true, trialCredit: "used_up" });
     expect(h.run(trial.id)).toMatchObject({ status: "failed", error: TRIAL_CREDIT_REFUSED.used_up });
-    expect(h.failed[1]!.alert).toEqual({ detail: "The trial Claude credit can't run this. Sign in with your own Claude or ChatGPT account, or add an API key." });
+    expect(h.failed[1]!.alert).toEqual({ detail: "The trial Claude credit can't run this. Add an API key, or sign in with OpenRouter or Google." });
   });
 
   it("waits out a usage limit that resets within twelve hours, once, and says so once", async () => {

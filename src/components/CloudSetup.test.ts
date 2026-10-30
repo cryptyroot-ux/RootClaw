@@ -131,7 +131,7 @@ it("when the person steps away from the welcome, it is the welcome's steps in sh
   expect(html).toContain("You&#x27;re on this step");
   f.state.activeView = "routines";
   ({ html } = render());
-  expect(html).toContain("Required. Cloud bots use your own Claude or ChatGPT account, or an API key.");
+  expect(html).toContain("Required. Cloud bots use your own API key, or an OpenRouter or Google sign-in.");
   button("Continue setup")!.props.onClick!();
   expect(takeWelcomeRequest()).toBe("engine");
   expect(api).not.toHaveBeenCalled();

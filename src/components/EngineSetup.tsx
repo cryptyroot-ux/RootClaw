@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { AlertTriangle, Check, Copy, Download, ExternalLink, KeyRound, LogIn, TerminalSquare, X } from "lucide-react";
+import { AlertTriangle, Check, Copy, Download, ExternalLink, KeyRound, TerminalSquare, X } from "lucide-react";
 import { type EngineInstall, type InstanceInfo, useStore } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
@@ -39,10 +39,6 @@ export function needsCli(instance: InstanceInfo | undefined): boolean {
 
 export function serverTerminal(cloudHome: boolean): boolean {
   return Boolean(window.ogb?.openInstallTerminal) && window.ogb?.remoteClient?.active !== true && !cloudHome;
-}
-
-export function grokKeyInstead(instance: InstanceInfo, cloudHome: boolean): boolean {
-  return instance.driverKind === "grokAgent" && needsCli(instance) && !serverTerminal(cloudHome);
 }
 
 export function CommandRow({
@@ -240,21 +236,6 @@ export function ApiKeyHint({ instance }: { instance: InstanceInfo }) {
   );
 }
 
-function GrokKeyInstead({ className, unframed }: { className?: string; unframed: boolean }) {
-  const remote = window.ogb?.remoteClient?.active === true;
-  return (
-    <div data-engine-setup-key-instead className={cn(!unframed && "rounded-xl border border-hairline/40 bg-control/30 p-3", className)}>
-      <div className="flex items-start gap-2.5">
-        <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg bg-inset text-ink-secondary">
-          <KeyRound size={14} />
-        </span>
-        <p className="min-w-0 text-[13px] leading-relaxed text-ink">{t("engineSetup.grok.notInstalled")}</p>
-      </div>
-      {!remote && <KeyRow id="xai" bare via="model_picker" className="mt-2 px-0 pb-0" />}
-    </div>
-  );
-}
-
 function ApiKeyEngineSetup({ instance, className, unframed, configured = false }: { instance: InstanceInfo; className?: string; unframed: boolean; configured?: boolean }) {
   const { dispatch } = useStore();
   const remote = window.ogb?.remoteClient?.active === true;
@@ -297,16 +278,18 @@ export function ApiKeyEngineManage({ instance, className }: { instance: Instance
   return <ApiKeyEngineSetup instance={instance} className={className} unframed={false} configured />;
 }
 
+/** What an engine that is not ready yet needs: its API key (any native provider), or, for an engine with its own
+ * program, the install command; then a check again. No subscription sign-in. */
 export function EngineSetup({
   instance,
   className,
-  intent = "cloud",
   unframed = false,
   description: descriptionOverride,
   quiet = false,
 }: {
   instance: InstanceInfo;
   className?: string;
+  /** Kept for callers; every engine now sets up the same way. */
   intent?: "cloud" | "inject";
   unframed?: boolean;
   description?: string;
@@ -315,94 +298,47 @@ export function EngineSetup({
   const { state } = useStore();
   const cloudHome = state.config?.cloudHome === true;
   const install = instance.install;
-  const installCommand = installCommandFor(install);
-  const signInCommand = install?.signInCommand;
-  const signInOnly = intent === "cloud" && needsSignIn(instance);
-  const command = signInOnly ? signInCommand : installCommand;
-  const title = signInOnly
-    ? t("engineSetup.signInTitle", { name: instance.displayName })
-    : t("engineSetup.setupTitle", { name: instance.displayName });
-  const description = descriptionOverride ?? (signInOnly
-    ? t("engineSetup.terminalSignInCheck")
-    : intent === "inject"
-      ? t("engineSetup.injectDesc")
-      : signInCommand
-        ? t("engineSetup.installDescSignIn")
-        : t("engineSetup.installDesc"));
+  const command = installCommandFor(install);
 
   if (apiKeySetup(instance)) {
     return <ApiKeyEngineSetup instance={instance} className={className} unframed={unframed} />;
   }
 
-  if (intent === "cloud" && grokKeyInstead(instance, cloudHome)) {
-    return <GrokKeyInstead className={className} unframed={unframed} />;
-  }
-
-  if (!install || instance.snapshot.authenticationUnavailableReason) {
-    return (
-      <div className={cn(!unframed && "rounded-xl border border-hairline/40 bg-control/30 p-3", className)}>
-        <div className="text-[13px] font-semibold text-ink">{t("engineSetup.notReady", { name: instance.displayName })}</div>
-        <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">
-          {instance.snapshot.authenticationUnavailableReason ?? instance.snapshot.reason ?? t("engineSetup.noReason")}
-        </p>
-      </div>
-    );
-  }
-
+  const reason = instance.snapshot.authenticationUnavailableReason ?? instance.snapshot.reason;
   return (
-    <div className={cn(!unframed && "rounded-xl border border-hairline/40 bg-control/30 p-3", className)}>
+    <div data-engine-setup className={cn(!unframed && "rounded-xl border border-hairline/40 bg-control/30 p-3", className)}>
       <div className="flex items-start gap-2.5">
         <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg bg-inset text-ink-secondary">
-          {signInOnly ? <LogIn size={14} /> : <Download size={14} />}
+          <Download size={14} />
         </span>
         <div className="min-w-0">
-          <div className="text-[13px] font-semibold text-ink">{title}</div>
-          <p className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">{description}</p>
+          <div className="text-[13px] font-semibold text-ink">
+            {command ? t("engineSetup.setupTitle", { name: instance.displayName }) : t("engineSetup.notReady", { name: instance.displayName })}
+          </div>
+          <p className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">
+            {descriptionOverride ?? (command ? t("engineSetup.installDesc") : reason ?? t("engineSetup.noReason"))}
+          </p>
         </div>
       </div>
 
-      {instance.snapshot.state === "unavailable" && instance.snapshot.reason && (quiet ? (
+      {command && reason && (quiet ? (
         <details data-engine-setup-reason className="mt-2 text-[12px] leading-4 text-ink-tertiary">
           <summary className="cursor-pointer select-none hover:text-ink-secondary">{t("engineSetup.details")}</summary>
-          <p className="mt-1 whitespace-pre-wrap">{instance.snapshot.reason}</p>
+          <p className="mt-1 whitespace-pre-wrap">{reason}</p>
         </details>
       ) : (
-        <p role="alert" className="mt-2 text-[12px] leading-relaxed text-danger">
-          {instance.snapshot.reason}
-        </p>
+        <p role="alert" className="mt-2 text-[12px] leading-relaxed text-danger">{reason}</p>
       ))}
 
-      {command ? (
-        <CommandRow
-          command={command}
-          actionLabel={signInOnly ? t("engineSetup.openSignIn") : t("engineSetup.openInstall")}
-          allowTerminal={!cloudHome}
-        />
-      ) : (
-        <p className="mt-3 rounded-lg bg-inset px-2.5 py-2 text-[12px] leading-relaxed text-ink-secondary">
-          {t("engineSetup.noInstaller")}
-        </p>
-      )}
+      {command && <CommandRow command={command} actionLabel={t("engineSetup.openInstall")} allowTerminal={!cloudHome} />}
 
-      {!signInOnly && install.needsNode && (
-        <p className="mt-2 text-[11px] leading-relaxed text-ink-tertiary">
-          {t("engineSetup.needsNode").split("{npm}").flatMap((part, index) =>
-            index === 0
-              ? [part]
-              : [<code key="npm" className="font-mono">npm</code>, part],
-          )}
-        </p>
-      )}
+      <div className="mt-3 border-t border-hairline/40 pt-2">
+        {command && <p className="mb-1 text-[12px] leading-relaxed text-ink-secondary">{t("engineSetup.sameMachine")}</p>}
+        {needsCli(instance) && command && <p className="mb-1 text-[12px] leading-relaxed text-ink-secondary">{t("engineSetup.pathHint")}</p>}
+        <RefreshEngines key={instance.instanceId} />
+      </div>
 
-      {(install.command || signInCommand) && (
-        <div className="mt-3 border-t border-hairline/40 pt-2">
-          <p className="mb-1 text-[12px] leading-relaxed text-ink-secondary">{t("engineSetup.sameMachine")}</p>
-          {needsCli(instance) && <p className="mb-1 text-[12px] leading-relaxed text-ink-secondary">{t("engineSetup.pathHint")}</p>}
-          <RefreshEngines key={instance.instanceId} />
-        </div>
-      )}
-
-      {install.docsUrl && (
+      {install?.docsUrl && (
         <a
           href={install.docsUrl}
           target="_blank"

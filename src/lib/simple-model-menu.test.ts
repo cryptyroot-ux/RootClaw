@@ -76,7 +76,7 @@ describe("the Simple model menu", () => {
 
   it("lists every ready provider at once: the current one first, then sign-ins, API keys and local engines", () => {
     const built = menu([codex, openaiKey, pi, claude(), claudeKey]);
-    expect(built.groups.map((group) => group.label)).toEqual(["Claude", "OpenAI", "OpenAI · API key", "Claude · API key", "pi"]);
+    expect(built.groups.map((group) => group.label)).toEqual(["Claude", "Codex", "OpenAI · API key", "Claude · API key", "pi"]);
     expect(rows(built, 1)).toEqual(["GPT-5.6", "GPT-5.6 mini", "GPT-5.5"]);
     expect(rows(built, 3)).toEqual(["Sonnet 5", "Fable 5.1"]);
   });
@@ -91,16 +91,10 @@ describe("the Simple model menu", () => {
     expect(menu([cursor], { selection: { instanceId: "cursor", model: "auto" } }).groups).toEqual([]);
   });
 
-  it("names each signed-in account of one family, and keeps a signed-out sibling one click from signing in", () => {
+  it("names each engine by its own display name: no account families any more", () => {
     const work = engine("claude-work", "claudeAgent", "Work", "subscription", claudeModels.slice(0, 2));
-    const home = { ...engine("claude-home", "claudeAgent", "Home", "subscription", claudeModels.slice(0, 2)),
-      snapshot: { state: "available" as const, authenticated: false } };
-    const built = menu([claude(), work, home]);
-    expect(built.groups.map((group) => [group.label, group.body.kind])).toEqual([
-      ["Claude", "models"], ["Claude · Work", "models"], ["Claude · Home", "signIn"],
-    ]);
-    expect(built.groups[1]).toMatchObject({ provider: "Claude", account: "Work" });
-    expect(built.current!.meta).toBe("Claude");
+    const built = menu([claude(), work]);
+    expect(built.groups.map((group) => group.label)).toEqual(["Claude", "Work"]);
   });
 
   it("says why a provider cannot run: set up, sign in, managed, or nothing listed yet", () => {

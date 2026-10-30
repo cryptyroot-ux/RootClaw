@@ -78,7 +78,7 @@ const provider = (driverKind: string, preset?: ProviderIconPreset): KeyMark => (
 export const KEY_CATALOG: readonly KeyEntry[] = [
   { id: "openai", section: "ai", labelKey: "keys.openai.label", purposeKey: "keys.purpose.openai", name: "OpenAI", env: ["ROOTCLAW_OPENAI_API_KEY"],
     words: ["openai", "chatgpt", "gpt", "live calls"], mark: provider("openai-compat", "openai"), kind: "key",
-    target: providerKey("openai", { placeholder: "sk-…", href: "https://platform.openai.com/api-keys", test: "openai", analytics: "openai", shape: OPENAI_SHAPE, noteKey: "keys.openai.note" }) },
+    target: providerKey("openai", { placeholder: "sk-…", href: "https://platform.openai.com/api-keys", test: "openai", analytics: "openai", shape: OPENAI_SHAPE }) },
   { id: "anthropic", section: "ai", labelKey: "keys.anthropic.label", purposeKey: "keys.purpose.anthropic", name: "Anthropic", env: ["ROOTCLAW_ANTHROPIC_API_KEY"],
     words: ["anthropic", "claude"], mark: provider("claudeAgent", "anthropic"), kind: "key",
     target: { patch: (value, firstKey) => ({ anthropic: { key: value, ...(firstKey && value ? { everyClaudeBot: false } : {}) } }), saved: (config) => flag(config.anthropic),

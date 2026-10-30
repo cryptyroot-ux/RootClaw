@@ -85,9 +85,9 @@ describe("the plan line and the credit", () => {
   });
 
   it("says what is left, or that it is used up and what to do", () => {
-    expect(cloudCreditLine(credit)).toBe("Trial Claude credit: $3.20 of $5 left. Cloud bots use it until you sign in there with your own Claude or ChatGPT account, or add an API key.");
+    expect(cloudCreditLine(credit)).toBe("Trial Claude credit: $3.20 of $5 left. Cloud bots use it until you add an API key there, or sign in with OpenRouter or Google.");
     expect(cloudCreditLine({ grantedUsd: 5, remainingUsd: 0, state: "used_up" }))
-      .toBe("Your $5 trial Claude credit is used up. To keep your bots working, sign in with your own Claude or ChatGPT account in the Cloud, or add an API key there.");
+      .toBe("Your $5 trial Claude credit is used up. To keep your bots working, add an API key in the Cloud, or sign in there with OpenRouter or Google.");
     expect([usd(5), usd(3.2), usd(0.004), usd(49), usd(58.31)]).toEqual(["$5", "$3.20", "$0", "$49", "$58.31"]);
   });
 

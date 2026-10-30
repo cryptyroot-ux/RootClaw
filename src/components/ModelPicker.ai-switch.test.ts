@@ -78,8 +78,7 @@ describe("the header model chip and Switch AI", () => {
 
   it("stops that turn, not the store's model, when another AI is picked", () => {
     act(() => requestAiSwitch({ botId: "rootclaw", threadId: "thread-1", turnId: "turn-1", place: "header" }));
-    // Codex sits on the rail as its sign-in family, OpenAI.
-    act(() => buttonNamed("OpenAI")!.click());
+    act(() => buttonNamed("Codex")!.click());
     act(() => buttonNamed("GPT-5.6")!.click());
     expect(api).toHaveBeenCalledWith("/api/bots/rootclaw/interrupt", { method: "POST", body: JSON.stringify({ threadId: "thread-1", turnId: "turn-1" }) });
     expect(vi.mocked(fixture.dispatch).mock.calls.filter(([action]) => (action as { type: string }).type === "setModel")).toEqual([]);
@@ -162,7 +161,7 @@ describe("a picker that opens before its engine has listed its models", () => {
     fixture.instances = [claude([sonnet]), codex];
     act(() => root.render(createElement(ModelPicker, { bot: { ...onClaude, busy: false }, threadId: "thread-1" })));
     act(() => trigger().click());
-    act(() => buttonNamed("OpenAI")!.click());
+    act(() => buttonNamed("Codex")!.click());
     act(() => { window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })); });
     expect(trigger().getAttribute("aria-expanded")).toBe("false");
     act(() => root.render(createElement(ModelPicker, { bot: onClaude, threadId: "thread-1" })));

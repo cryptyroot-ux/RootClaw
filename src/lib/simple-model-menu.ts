@@ -2,7 +2,7 @@ import type { InstanceInfo, ModelSelection } from "@/state/store";
 import { needsCli, needsSignIn } from "@/components/EngineSetup";
 import { t } from "./i18n";
 import { filterCustomModels, partitionCustomModels, suggestedModels } from "./custom-models";
-import { isCustomOnly, SIGN_IN_FAMILY_LABEL, signInFamily, splitEngineRail } from "./engine-rail";
+import { isCustomOnly, splitEngineRail } from "./engine-rail";
 import { displayModelLabel, shortModelLabel } from "./model-friendly";
 import { choiceIsSelected, modelChoices, type ModelChoice } from "./model-choices";
 
@@ -77,8 +77,6 @@ export interface SimpleMenuInput {
 }
 
 export function providerName(instance: InstanceInfo): string {
-  const family = signInFamily(instance);
-  if (family) return SIGN_IN_FAMILY_LABEL[family];
   if (instance.access !== "api") return instance.displayName;
   return instance.displayName.replace(/\s*\((?:API key|API)\)$/i, "") || instance.displayName;
 }
@@ -109,13 +107,10 @@ function localFrom(rows: readonly MenuModelRow[], mixed: boolean): number | null
   return first >= 0 && rows.slice(first).every((row) => row.option.custom) ? first : null;
 }
 
-function heading(instance: InstanceInfo, listed: readonly InstanceInfo[]): Pick<MenuGroup, "label" | "provider" | "account"> {
+function heading(instance: InstanceInfo): Pick<MenuGroup, "label" | "provider" | "account"> {
   const provider = providerName(instance);
-  const family = signInFamily(instance);
   if (instance.access === "api") return { label: `${provider} · ${t("model.simple.apiKey")}`, provider };
-  const several = family !== undefined && listed.filter((other) => signInFamily(other) === family).length > 1;
-  const account = several && instance.displayName !== provider ? instance.displayName : undefined;
-  return { label: account ? `${provider} · ${account}` : provider, provider, account };
+  return { label: provider, provider };
 }
 
 function currentRow(input: SimpleMenuInput): MenuCurrent {
@@ -130,9 +125,6 @@ function currentRow(input: SimpleMenuInput): MenuCurrent {
   if (needsCli(active)) return { ...row, meta: t("model.setupRequired"), warning: true };
   if (needsSignIn(active) && !isCustomOnly(active) && !option?.custom) return { ...row, meta: t("model.signInRequired"), warning: true };
   if (bot.follows === true) return { ...row, meta: t("model.simple.botsModel", { name: bot.name }) };
-  const family = signInFamily(active);
-  const accounts = family ? instances.filter((instance) => signInFamily(instance) === family).length : 0;
-  if (accounts > 1 || active.snapshot.chatgptPlan) return { ...row, meta: active.displayName };
   return option?.provider ? { ...row, meta: option.provider } : row;
 }
 
@@ -143,8 +135,8 @@ export function simpleModelMenu(input: SimpleMenuInput): SimpleMenu {
     .reduce((sum, instance) => sum + models.get(instance.instanceId)!.all.length, 0);
   const search = total > SIMPLE_SEARCH_AFTER;
   const query = search ? input.query.trim() : "";
-  const { subscription, api, custom } = splitEngineRail(listed);
-  const ordered = [...subscription, ...api, ...custom];
+  const { native, api, custom } = splitEngineRail(listed);
+  const ordered = [...native, ...api, ...custom];
   const current = ordered.find((instance) => instance.instanceId === selection.instanceId);
 
   function groupBody(instance: InstanceInfo, provider: string): MenuGroupBody | null {
@@ -186,7 +178,7 @@ export function simpleModelMenu(input: SimpleMenuInput): SimpleMenu {
   }
 
   const groups = (current ? [current, ...ordered.filter((instance) => instance !== current)] : ordered).flatMap((instance): MenuGroup[] => {
-    const named = heading(instance, listed);
+    const named = heading(instance);
     const body = groupBody(instance, named.provider);
     return body ? [{ instance, ...named, body }] : [];
   });

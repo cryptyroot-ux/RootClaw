@@ -65,7 +65,7 @@ const OWNER_ACTION: Record<Exclude<RoutineOwnerCause, "setup">, string> = {
   credits: "This bot's AI account is out of credit. Add credit with the provider, or choose another AI for this bot.",
   usage_limit: "This bot's AI reached its usage limit. Its routines work again once it resets, or choose another AI for this bot now.",
 };
-const TRIAL_ACTION = "The trial Claude credit can't run this. Sign in with your own Claude or ChatGPT account, or add an API key.";
+const TRIAL_ACTION = "The trial Claude credit can't run this. Add an API key, or sign in with OpenRouter or Google.";
 const RETRY_WHY: Record<Exclude<RoutineRetryCause, "usage_limit">, string> = {
   stalled: "the AI stalled", restarted: "RootClaw restarted while it ran", rate_limited: "a rate limit", provider: "a temporary error",
   failed: "a failure",
