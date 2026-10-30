@@ -380,8 +380,13 @@ describe("createOpenAIChatRuntime tool approvals", () => {
         .toEqual({ requests: 5, corrective: 1, ok: false, stopReason: "tool_error" });
     }, 20_000);
 
-    it("without rounds, a later call that succeeds does not clear the failure", async () => {
+    it("without rounds, a later tool round that succeeds supersedes the failure and the answer stands", async () => {
       expect(await run([toolCall("c1", "nope"), toolCall("c2", "fx_write"), answer], undefined, { custom: { fx: toolServer() } }))
+        .toEqual({ requests: 3, corrective: 0, ok: true, stopReason: "end_turn" });
+    }, 20_000);
+
+    it("without rounds, a failure in the last tool round still marks the turn", async () => {
+      expect(await run([toolCall("c1", "fx_write"), toolCall("c2", "nope"), answer], undefined, { custom: { fx: toolServer() } }))
         .toEqual({ requests: 3, corrective: 0, ok: false, stopReason: "tool_error" });
     }, 20_000);
   });

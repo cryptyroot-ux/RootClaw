@@ -95,10 +95,9 @@ it("a bridged turn on the chat-completions runtime carries on after use_tool nam
   expect(tools).toEqual([false, true]);
   expect(recorder.events.some((event) => event.type === "item.completed" && event.itemType === "assistant_text" && event.text === "The tool for that is create_trigger.")).toBe(true);
 
-  // It ends the way any turn with a failed tool call ends on this runtime,
-  // not as a transport that broke under it.
+  // The successful search superseded the wrong guess, so the answer stands; nothing broke as a transport.
   const errors = recorder.events.flatMap((event) => event.type === "runtime.error" ? [event.message] : []);
   expect(errors.join("\n")).not.toMatch(/MCP request failed|MCP session closed|execution outcome may be uncertain/);
-  expect(completed).toMatchObject({ ok: false });
-  expect(errors).toEqual([expect.stringContaining("One or more tool operations failed or were denied")]);
+  expect(completed).toMatchObject({ ok: true, stopReason: "end_turn" });
+  expect(errors).toEqual([]);
 }, 30_000);

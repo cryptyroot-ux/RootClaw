@@ -1038,8 +1038,10 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           }
           if (seenCalls.size > MAX_TURN_TOOL_CALLS) throw new ChatProtocolError(stoppedAfter(`${MAX_TURN_TOOL_CALLS} tool calls`));
           messages.push({ ...assistantReply(model, completion, completion.text || null), tool_calls: completion.toolCalls });
-          // After a corrective round, the failure stays pending only until the bot runs tools again.
-          if (correctiveRounds && !denials.length) toolFailed = false;
+          // A failure is judged by the round that follows it: a new round of real tools supersedes earlier failures, and
+          // only failures in the last tool round before the final answer mark the turn. A plan-only update is not
+          // progress, and a person's denial always stands.
+          if (!planOnly && !denials.length) toolFailed = false;
           const screenshotParts: ChatContentPart[] = [];
           const session = tools;
           const runCall = async (call: ChatToolCall) => {
