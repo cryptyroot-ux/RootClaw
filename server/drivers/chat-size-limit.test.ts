@@ -4,6 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+// Transport retries wait for real; shrink them so the 5xx/429 cases settle fast.
+process.env.ROOTCLAW_RETRY_SCALE ??= "0.001";
+
 import type { SendTurnInput } from "../contracts.ts";
 import { recordEvents } from "../testing/events.ts";
 import { removeTempDir } from "../testing/cleanup.ts";
@@ -102,6 +105,7 @@ describe("an OpenAI-compatible provider that refuses large requests", () => {
 
   async function provider(refuse: (bytes: number) => { status: number; body: string } | null) {
     const requests: Array<{ bytes: number; messages: Array<{ role: string; content: unknown }> }> = [];
+    const summaries: unknown[] = [];
     const server = createServer(async (req, res) => {
       if (req.url === "/v1/models") {
         res.setHeader("content-type", "application/json");
@@ -111,7 +115,15 @@ describe("an OpenAI-compatible provider that refuses large requests", () => {
       const chunks: Buffer[] = [];
       for await (const chunk of req) chunks.push(chunk as Buffer);
       const raw = Buffer.concat(chunks);
-      requests.push({ bytes: raw.length, messages: JSON.parse(raw.toString("utf8")).messages });
+      const parsed = JSON.parse(raw.toString("utf8"));
+      // A one-shot (non-stream) call is the engine's compaction summary, not a turn request.
+      if (!parsed.stream) {
+        summaries.push(parsed.messages);
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify({ choices: [{ message: { content: "## Goal\n- summarize the conversation" }, finish_reason: "stop" }] }));
+        return;
+      }
+      requests.push({ bytes: raw.length, messages: parsed.messages });
       const refusal = refuse(raw.length);
       if (refusal) {
         res.writeHead(refusal.status, { "content-type": "text/html" });
@@ -142,7 +154,7 @@ describe("an OpenAI-compatible provider that refuses large requests", () => {
     const attachment = join(directory, "attached.png");
     writeFileSync(attachment, Buffer.from(PNG, "base64"));
     return {
-      requests, recorder,
+      requests, summaries, recorder,
       run: async (input: Partial<SendTurnInput>) => {
         await instance.adapter.sendTurn({
           threadId: "size-limit", text: "Summarize our conversation.",
@@ -159,37 +171,53 @@ describe("an OpenAI-compatible provider that refuses large requests", () => {
     ({ role: index % 2 ? "assistant" as const : "user" as const, text: `earlier ${index} ${"x".repeat(bytes)}` }));
   const above = (limit: number) => (bytes: number) => bytes > limit ? { status: 413, body: NGINX_413 } : null;
 
-  it("resends once with the oldest history dropped and finishes the turn", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  it("answers a size refusal by compacting the history once and resending", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => {});
     const limit = 40_000;
     const f = await provider(above(limit));
     const done = await f.run({ system: "Fixture system prompt.", transcript: transcript(20, 3_000) });
     expect(done).toMatchObject({ ok: true });
+    expect(f.summaries).toHaveLength(1);
     expect(f.requests).toHaveLength(2);
     const [refused, resent] = f.requests;
     expect(refused!.bytes).toBeGreaterThan(limit);
     expect(resent!.bytes).toBeLessThanOrEqual(limit);
     expect(resent!.messages[0]).toEqual(refused!.messages[0]);
     expect(resent!.messages.at(-1)).toEqual(refused!.messages.at(-1));
-    expect(resent!.messages.at(-1)).toMatchObject({ role: "user", content: [{ type: "text" }, { type: "image_url" }] });
-    const kept = resent!.messages.slice(2, -1);
-    expect(kept.length).toBeGreaterThan(0);
-    expect(kept).toEqual(refused!.messages.slice(-1 - kept.length, -1));
-    expect(resent!.messages[1]).toMatchObject({ role: "assistant", content: expect.stringContaining("omitted to fit the provider's size limit") });
+    expect(resent!.messages[1]).toMatchObject({ role: "user", content: expect.stringContaining("Context summary") });
     expect(f.retries()).toEqual([expect.objectContaining({ attempt: 1, delayMs: 0, reason: "request_too_large" })]);
     expect(f.errors()).toEqual([]);
+  });
+
+  it("falls back to dropping the oldest history when the compacted resend is still refused", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    const limit = 40_000;
+    // The first resend (after compaction) is refused too, so the byte-based shrink runs on the original history.
+    let refusals = 0;
+    const f = await provider((bytes) => refusals++ === 1 || bytes > limit ? { status: 413, body: NGINX_413 } : null);
+    const done = await f.run({ system: "Fixture system prompt.", transcript: transcript(20, 3_000) });
+    expect(done).toMatchObject({ ok: true });
+    expect(f.requests).toHaveLength(3);
+    const [, compacted, shrunk] = f.requests;
+    expect(shrunk!.bytes).toBeLessThan(compacted!.bytes);
+    expect(shrunk!.messages[0]).toEqual(compacted!.messages[0]);
+    expect(shrunk!.messages.at(-1)).toEqual(compacted!.messages.at(-1));
+    expect(f.retries().map((retry) => retry.reason)).toEqual(["request_too_large", "request_too_large"]);
+    expect(f.errors()).toEqual([]);
     const logged = warn.mock.calls.map((call) => String(call[0])).filter((line) => line.includes("too large"));
-    expect(logged).toEqual([expect.stringContaining(`refused a ${refused!.bytes}-byte request`)]);
-    expect(logged[0]).toContain(`→ ${resent!.bytes} bytes, 22 → `);
+    expect(logged).toEqual([expect.stringContaining(`refused a ${compacted!.bytes}-byte request`)]);
     expect(logged[0]).not.toMatch(/earlier \d|Summarize|Fixture system/);
   });
 
   it("fails with one plain message when the smaller resend is still too large", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "info").mockImplementation(() => {});
     const f = await provider(above(10_000));
     const done = await f.run({ system: `Fixture system prompt. ${"s".repeat(12_000)}`, transcript: transcript(6, 2_000) });
     expect(done).toMatchObject({ ok: false });
-    expect(f.requests).toHaveLength(2);
+    // Refused, then the compacted resend, then the byte-based shrink: each smaller, all refused.
+    expect(f.requests).toHaveLength(3);
     expect(f.requests[1]!.bytes).toBeLessThan(f.requests[0]!.bytes);
     expect(f.errors()).toEqual([requestTooLargeMessage("Fixture Flash")]);
   });
@@ -212,8 +240,11 @@ describe("an OpenAI-compatible provider that refuses large requests", () => {
     const f = await provider(() => ({ status, body }));
     const done = await f.run({ transcript: transcript(20, 3_000) });
     expect(done).toMatchObject({ ok: false });
-    expect(f.requests).toHaveLength(1);
-    expect(f.retries()).toEqual([]);
+    // 500 and 429 are transient: the shared retry helper tries them RETRY_MAX_ATTEMPTS times, a 400 once.
+    const attempts = status === 400 ? 1 : 4;
+    expect(f.requests).toHaveLength(attempts);
+    expect(f.retries().filter((retry) => retry.reason === "request_too_large")).toEqual([]);
+    expect(f.retries()).toHaveLength(attempts - 1);
     expect(f.errors()).toEqual([message]);
   });
 });

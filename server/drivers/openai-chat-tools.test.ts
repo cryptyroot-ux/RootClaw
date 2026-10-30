@@ -98,6 +98,7 @@ afterEach(async () => {
 async function fixture(script: Script, provider: Provider = "openai-compat", apiKey = API_KEY_CANARY) {
   const directory = mkdtempSync(join(tmpdir(), "rootclaw-chat-tools-"));
   const requests: ChatRequest[] = [];
+  let compactions = 0;
   const rpcStarted = deferred<{ name: string; args: Record<string, unknown> }>();
   const server = createServer(async (request, response) => {
     if (request.url === "/v1/models") {
@@ -113,6 +114,14 @@ async function fixture(script: Script, provider: Provider = "openai-compat", api
       return;
     }
     const body = JSON.parse(data) as ChatRequest;
+    // The engine's mid-turn compaction summary is a one-shot side call, not a scripted round.
+    const raw = body as unknown as { stream?: boolean; messages: Array<{ content?: unknown }> };
+    if (raw.stream === false && raw.messages.length === 1 && String(raw.messages[0]?.content).startsWith("You compact")) {
+      compactions++;
+      response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify({ choices: [{ message: { content: "## Goal\n- fixture summary" }, finish_reason: "stop" }] }));
+      return;
+    }
     requests.push(body);
     script(body, response, requests.length);
   });
@@ -148,6 +157,7 @@ async function fixture(script: Script, provider: Provider = "openai-compat", api
     ? readFileSync(join(directory, "effects.ndjson"), "utf8").trim().split("\n").map((line) => JSON.parse(line))
     : [];
   return {
+    compactions: () => compactions,
     instance, recorder, requests, threadId, directory, integrations, effects, rpcStarted,
     start: (input: Partial<SendTurnInput> = {}) => instance.adapter.sendTurn({
       threadId, text: "Store the synthetic receipt.", model: "fixture-model", integrations, ...input,
@@ -1277,10 +1287,12 @@ describe("structured tool execution boundaries", () => {
     await f.start({ approvalMode: "full" });
     expect(await f.completed()).toMatchObject({ ok: true });
     expect(f.effects()).toHaveLength(20);
+    // ~400 KB of tool arguments passes 75% of the fallback window, so the turn compacts instead of failing.
+    expect(f.compactions()).toBeGreaterThan(0);
     const log = readFileSync(join(NATIVE_DIR, `${f.threadId}.ndjson`), "utf8");
     expect(log.length).toBeLessThan(large.length);
-    const outgoing = log.trim().split("\n").map((line) => JSON.parse(line) as { dir: string; msg: unknown })
-      .filter((entry) => entry.dir === "out").map((entry) => entry.msg);
+    const outgoing = log.trim().split("\n").map((line) => JSON.parse(line) as { dir: string; msg: Record<string, unknown> })
+      .filter((entry) => entry.dir === "out" && !("compacted" in entry.msg)).map((entry) => entry.msg);
     expect(outgoing).toEqual(f.requests.map((request) => ({ model: "fixture-model", messageCount: request.messages.length })));
   });
 

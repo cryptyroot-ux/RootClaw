@@ -428,6 +428,12 @@ const appConfigSchema = z.object({
   context: z.object({
     compactAt: z.number().positive().max(10_000_000).optional(),
     autoCompact: z.boolean().optional(),
+    /** Native engine: compact inside a turn at this fraction (<1) of the window or this many tokens (default 0.75). */
+    turnCompactAt: z.number().positive().max(10_000_000).optional(),
+    /** Native engine: tool outputs above this many bytes are saved to disk and paged (default 16000). */
+    toolOffloadBytes: z.number().int().min(1_000).max(10_000_000).optional(),
+    /** Native engine: a cheaper model id for mid-turn summaries; absent uses the turn's model. */
+    turnSummaryModel: z.string().trim().min(1).max(200).optional(),
   }).extend(roomContextSettings).extend(replaySettings).optional(),
   /** Memory upkeep timing, for bots with Memory upkeep switched on. */
   memory: z.object({
@@ -513,7 +519,7 @@ export interface AppConfig extends HelperConfig {
   rooms?: { turnTimeoutMinutes: number };
   mcp?: { callTimeoutMinutes?: number };
   threads?: { maxConcurrentPerBot: number; eventLogMaxBytes?: number; eventLogRetentionDays?: number };
-  context?: { rebuildBytes?: number; compactAt?: number; autoCompact?: boolean; roomCompactAt?: number; roomSessions?: boolean; replayToolHistory?: boolean };
+  context?: { rebuildBytes?: number; compactAt?: number; autoCompact?: boolean; turnCompactAt?: number; toolOffloadBytes?: number; turnSummaryModel?: string; roomCompactAt?: number; roomSessions?: boolean; replayToolHistory?: boolean };
   memory?: { captureQuietMs?: number; tidyHour?: number };
   localVm?: { mode?: "shared" | "per-bot" | "pool"; maxInstances?: number; idleTimeoutMinutes?: number; preserveInstalledApps?: boolean };
   features?: { skillAuthoring?: boolean; skillReview?: boolean; skillReviewSteps?: number; showToolCalls?: boolean; browser?: boolean; sharedComputers?: boolean; claudeUserMcp?: boolean; claudeUserSkills?: boolean; llmThreadTitles?: boolean; smartSetupChoices?: boolean; autoRecall?: boolean; skillsLibrary?: boolean; shareLearnedSkills?: "off" | "ask" | "auto"; roomMemoryCapture?: boolean; parallelRoomJobs?: boolean; chiefEscalations?: boolean; acpPlanLines?: boolean; agentsToolBridge?: boolean; savedSteps?: boolean };

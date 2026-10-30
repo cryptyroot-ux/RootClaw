@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { claudeUserMcpEnabled, mcpCallTimeoutMinutes, type AppConfig } from "./config.ts";
 import { correctiveRounds } from "./host/loop-guard.ts";
+import type { SendTurnInput } from "./contracts.ts";
 
 export function claudeUserSkillsEnabled(cfg: AppConfig): boolean {
   return cfg.features?.claudeUserSkills === true;
@@ -61,6 +62,7 @@ export function settingsTurnFields(cfg: AppConfig, dataDir: string, restrictsMcp
   userSkillsDir?: string;
   mcpCallTimeoutMs: number;
   toolErrorCorrectiveRounds: number;
+  turnContext: NonNullable<SendTurnInput["turnContext"]>;
 } {
   const userSkillsDir = claudeUserSkillsEnabled(cfg) ? claudeUserSkillsDir(dataDir, home) : null;
   if (!claudeUserSkillsEnabled(cfg)) forgetClaudeUserSkillsDir(dataDir);
@@ -69,5 +71,11 @@ export function settingsTurnFields(cfg: AppConfig, dataDir: string, restrictsMcp
     ...(userSkillsDir ? { userSkillsDir } : {}),
     mcpCallTimeoutMs: mcpCallTimeoutMinutes(cfg) * 60_000,
     toolErrorCorrectiveRounds: correctiveRounds(cfg),
+    turnContext: {
+      offloadDir: join(dataDir, "tool-outputs"),
+      ...(cfg.context?.turnCompactAt ? { compactAt: cfg.context.turnCompactAt } : {}),
+      ...(cfg.context?.toolOffloadBytes ? { offloadBytes: cfg.context.toolOffloadBytes } : {}),
+      ...(cfg.context?.turnSummaryModel ? { summaryModel: cfg.context.turnSummaryModel } : {}),
+    },
   };
 }

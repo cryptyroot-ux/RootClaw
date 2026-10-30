@@ -22,6 +22,9 @@ import { appendNative } from "./native.ts";
 import { classifyError, HttpStatusError, interruptibleDelay, nextRetryDelay, parseRetryAfter, RETRY_MAX_ATTEMPTS } from "./retry.ts";
 import { plainFailureMessage } from "./engine-errors.ts";
 import { refusesRequestSize, RequestTooLargeError, sizeChange, smallerResend } from "./chat-size-limit.ts";
+import { compactTurnMessages, DEFAULT_KEEP_EXCHANGES, estimateRequestTokens, offloadToolOutput, READ_TOOL_OUTPUT_DEFINITION,
+  READ_TOOL_OUTPUT_TOOL, readToolOutput, refusesContextLength, TokenCalibration, turnCompactBudget, type TurnContextSettings } from "./turn-context.ts";
+import { contextWindowFor } from "../context-budget.ts";
 import { requestTooLargeMessage } from "../../shared/request-too-large.ts";
 import { toolSchemaProfileFor } from "../tool-schema-profile.ts";
 import { classifyContinuable, writeTurnHandoff } from "../turn-continuation.ts";
@@ -291,6 +294,21 @@ function refusedToolCallFailure(error: RejectedToolCallError, earlierSteps: bool
   return `The model ${what}. ${next} Provider: ${words.slice(0, 200)}`;
 }
 
+const envNumber = (name: string) => {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value > 0 ? value : undefined;
+};
+
+/** Settings first, then ROOTCLAW_TURN_COMPACT_AT / ROOTCLAW_TOOL_OFFLOAD_BYTES / ROOTCLAW_TOOL_OFFLOAD_DIR. */
+export function turnContextSettings(fromTurn: TurnContextSettings | undefined): TurnContextSettings {
+  return {
+    ...fromTurn,
+    compactAt: fromTurn?.compactAt ?? envNumber("ROOTCLAW_TURN_COMPACT_AT"),
+    offloadBytes: fromTurn?.offloadBytes ?? envNumber("ROOTCLAW_TOOL_OFFLOAD_BYTES"),
+    offloadDir: fromTurn?.offloadDir ?? (process.env.ROOTCLAW_TOOL_OFFLOAD_DIR || undefined),
+  };
+}
+
 export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>): ProviderInstance {
   const { input } = options;
   const listeners = new Set<RuntimeEventListener>();
@@ -378,7 +396,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         const body = await response.text().catch(() => "");
         if (rejectsKey(response.status, body)) noteKeyRejected(options.apiUrl, options.apiKey);
         const message = `${options.httpErrorLabel} HTTP ${response.status}${body ? `: ${httpErrorDetail(body)}` : ""}`;
-        if (refusesRequestSize(response.status, body)) throw new RequestTooLargeError(message, Buffer.byteLength(payload));
+        if (refusesRequestSize(response.status, body) || refusesContextLength(response.status, body)) throw new RequestTooLargeError(message, Buffer.byteLength(payload));
         if (rejectsToolsParameter(response.status, body)) throw new UnsupportedChatToolsError(message);
         const refusal = refusedToolCall(response.status, body);
         if (refusal) throw new RejectedToolCallError(message, refusal);
@@ -570,6 +588,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     const retainImages = chatImageBudget();
     for (const message of messages) retainImages(message.content);
     const model = turn.model || options.models().default;
+    const ctx = turnContextSettings(turn.turnContext);
     const secrets = [options.apiKey].filter((value): value is string => Boolean(value));
     for (const integration of Object.values(turn.integrations ?? {})) {
       const entries = object(integration);
@@ -658,14 +677,49 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         if (questionAllowed && !tools.definitions.some((definition) => definition.function.name === ASK_USER_TOOL)) {
           tools.definitions.push(ASK_USER_TOOL_DEFINITION);
         }
+        const offloadOn = options.tools !== false && Boolean(ctx.offloadDir) && tools.definitions.length > 0;
+        if (offloadOn && !tools.definitions.some((definition) => definition.function.name === READ_TOOL_OUTPUT_TOOL)) {
+          tools.definitions.push(READ_TOOL_OUTPUT_DEFINITION);
+        }
+        const window = contextWindowFor(model, options.models());
+        const budget = turnCompactBudget(window, ctx.compactAt);
+        const calibration = new TokenCalibration();
+        let compactions = 0;
+        const compact = async (reason: "budget" | "overflow", keepExchanges: number) => {
+          const summaryModel = ctx.summaryModel || model;
+          const result = await compactTurnMessages(messages, request, {
+            tools: tools!.definitions, keepExchanges,
+            summaryBudgetBytes: Math.max(4_000, Math.floor(window * 0.4 * 3.5)),
+            summarize: async (prompt) => {
+              const { text, reasoning } = await complete([{ role: "user", content: prompt }], summaryModel, false, abort.signal);
+              return text.trim() ? text : reasoning;
+            },
+          });
+          if (!result) return false;
+          messages.splice(0, messages.length, ...result.messages);
+          compactions++;
+          const line = { compacted: reason, n: compactions, folded: result.folded, beforeTokens: result.beforeTokens, afterTokens: result.afterTokens, window, budget, summarizer: result.summarizer };
+          native("out", line);
+          console.info(`${options.driverKind}: [context] compaction #${compactions} (${reason}) folded ${result.folded} messages, ~${result.beforeTokens} → ~${result.afterTokens} tokens (window ${window}, budget ${budget}, ${result.summarizer})`);
+          return true;
+        };
         for (let round = 0; round < MAX_CHAT_ROUNDS; round++) {
           abort.signal.throwIfAborted();
             // Between rounds, never inside a tool batch.
           unread = turnEntry.asides.splice(0);
           if (unread.length) messages.push({ role: "user", content: unread.join("\n\n") });
           turnEntry.ending = round === MAX_CHAT_ROUNDS - 1;
+          // Request-size accounting before every model call; fold older steps when the turn nears its budget.
+          // Once over budget, fold down to ~60% of it so the next rounds do not compact again at once.
+          let target = budget;
+          for (let keep = ctx.keepExchanges ?? DEFAULT_KEEP_EXCHANGES; keep >= 1; keep = keep > 1 ? Math.floor(keep / 2) : 0) {
+            if (calibration.apply(estimateRequestTokens(messages, tools.definitions)) < target) break;
+            if (await compact("budget", keep)) target = Math.floor(budget * 0.6);
+          }
+          const sentEstimate = estimateRequestTokens(messages, tools.definitions);
           native("out", options.nativeLog.outgoing(turn, messages, model, tools.definitions));
           let attempt = 0;
+          let forced = false;
           let retryWaitedMs = 0;
           let resized = false;
           let completion: Completion;
@@ -708,6 +762,14 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
               }
               // A provider refuses an oversized request before running anything, so one smaller copy may go again.
               if (error instanceof RequestTooLargeError && !abort.signal.aborted) {
+                // First answer to an overflow: force one compaction and resend once.
+                if (!forced && !streamed) {
+                  forced = true;
+                  if (await compact("overflow", 1)) {
+                    emit({ ...base(turn.threadId, turnId), type: "turn.retrying", attempt: 1, delayMs: 0, reason: "request_too_large" });
+                    continue;
+                  }
+                }
                 const resend = resized ? null : smallerResend(messages, request, error.bytes);
                 native("out", { refused: "request_too_large", bytes: error.bytes, ...(resend ? { before: resend.before, after: resend.after } : {}) });
                 console.warn(`${options.driverKind}: ${model} refused a ${error.bytes}-byte request as too large; ${resend ? `resending smaller (${sizeChange(resend.before, resend.after)})` : "not resending"}`);
@@ -753,6 +815,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             usage.input += completion.usage.input;
             usage.output += completion.usage.output;
             hasUsage = true;
+            calibration.observe(sentEstimate, completion.usage.input);
             const contextWindow = options.models().options.find((entry) => entry.id === model)?.contextWindow;
             // Accounting sums the turn; context occupancy is the latest round only.
             emit({ ...base(turn.threadId, turnId), type: "thread.token-usage.updated", ...usage,
@@ -841,6 +904,12 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
                     result = { ok: true, text: answer };
                   }
                 }
+              } else if (offloadOn && call.function.name === READ_TOOL_OUTPUT_TOOL) {
+                emit({ ...base(turn.threadId, turnId), type: "item.started", itemType: "tool", itemId: call.id,
+                  title: call.function.name, ...(inputPreview ? { input: inputPreview } : {}),
+                });
+                started = true;
+                result = readToolOutput(args as Record<string, unknown>, { dir: ctx.offloadDir, threadId: turn.threadId });
               } else {
                 tools.validate(call.function.name, args);
                 const shown = tools.view(call.function.name, args as Record<string, unknown>);
@@ -881,11 +950,18 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
                 : safeText(asError(error).message).slice(0, 2_000) };
             }
             if (!started) emit({ ...base(turn.threadId, turnId), type: "item.started", itemType: "tool", itemId: call.id, title: call.function.name });
-            const text = safeText(result.text);
+            let text = safeText(result.text);
+            const offloaded = offloadOn && call.function.name !== READ_TOOL_OUTPUT_TOOL
+              ? offloadToolOutput(text, { dir: ctx.offloadDir, threadId: turn.threadId, callId: call.id, thresholdBytes: ctx.offloadBytes })
+              : null;
+            if (offloaded) {
+              native("in", { offloaded: call.function.name, handle: offloaded.handle, bytes: offloaded.bytes });
+              console.info(`${options.driverKind}: [context] offloaded ${offloaded.bytes}-byte ${call.function.name} output as ${offloaded.handle}`);
+            }
             const output = preview({ ok: result.ok, result: text });
             emit({ ...base(turn.threadId, turnId), type: "item.completed", itemType: "tool", itemId: call.id, ok: result.ok, output });
             if (!result.ok) toolFailed = true;
-            messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify({ ok: result.ok, result: text }) });
+            messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify({ ok: result.ok, result: offloaded ? offloaded.text : text }) });
             screenshotParts.push(...chatToolImages(call.id, result.images));
             abort.signal.throwIfAborted();
             if (fatal) throw fatal;
