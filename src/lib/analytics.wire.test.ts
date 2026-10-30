@@ -4,7 +4,8 @@
 import { gunzipSync } from "node:zlib";
 import { expect, it, vi } from "vitest";
 
-const TOKEN = "phc_m2hP39w8y2gLPvHgDvSXAu6xcZ3agjf4ruL56rGcMZEe";
+const TOKEN = "phc_test_token";
+vi.hoisted(() => { vi.stubEnv("VITE_POSTHOG_TOKEN", "phc_test_token"); });
 const STORED = `ph_${TOKEN}_posthog`;
 const FIRST_PAGE = "https://first-tenant.rootclaw.cloud/rooms/FIRST-ROOM?share-computer=FIRST-COMPUTER&utm_source=first-campaign";
 const REFERRER = "https://referrer.example/search?q=SECRET-REFERRER";

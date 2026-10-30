@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+// Analytics is off without a build-time PostHog key; these tests run with one.
+vi.hoisted(() => { vi.stubEnv("VITE_POSTHOG_TOKEN", "phc_test_token"); });
 
 import { analyticsEnabled, initAnalytics, optAction, setAnalyticsEnabled } from "./analytics";
 import { appVersion } from "./app-links";

@@ -6,7 +6,7 @@ import { appVersion } from "@/lib/app-links";
 import { readAdvancedMode } from "@/lib/interface-mode";
 
 // Analytics is off unless a PostHog project key is supplied at build time.
-const TOKEN: string = (import.meta as { env?: Record<string, string | undefined> }).env?.VITE_POSTHOG_TOKEN ?? "";
+const posthogToken = (): string => (import.meta.env?.VITE_POSTHOG_TOKEN as string | undefined) ?? "";
 
 // Read before init(): an opted-out install must never call posthog.init(), so no request leaves the machine.
 const OPT_OUT_KEY = "rootclaw-analytics-opt-out";
@@ -28,7 +28,7 @@ let pending: Array<(ph: PostHog) => void> = [];
 let choice: boolean | undefined;
 
 export function analyticsEnabled(): boolean {
-  if (!TOKEN) return false;
+  if (!posthogToken()) return false;
   if (choice !== undefined) return choice;
   const desktop = desktopSwitch()?.enabled();
   if (typeof desktop === "boolean") return desktop;
@@ -98,7 +98,7 @@ function start(posthog: PostHog) {
     pending = [];
     return;
   }
-  posthog.init(TOKEN, {
+  posthog.init(posthogToken(), {
     api_host: "https://us.i.posthog.com",
     autocapture: false, // never capture clicked-element text (conversation leak)
     capture_pageview: false,
