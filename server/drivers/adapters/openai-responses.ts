@@ -47,6 +47,7 @@ export function createOpenAIResponsesAdapter(options: { url: string; apiKey: str
       const tools = request.tools.map((tool) => ({ type: "function", name: tool.function.name, description: tool.function.description, parameters: tool.function.parameters }));
       const response = await postJson(label, `${options.url}/responses`, { authorization: `Bearer ${options.apiKey}` }, {
         model: request.model, ...responsesInput(request.messages), stream: request.stream, store: false,
+        ...(request.maxTokens ? { max_output_tokens: Math.max(16, request.maxTokens) } : {}),
         ...(tools.length ? { tools } : {}), ...(options.reasoningSummary ? { reasoning: { summary: "auto" } } : {}),
       }, request.signal);
       let text = "", reasoning = "", usage: Usage | null = null, status: string | null = null;

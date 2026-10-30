@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyPlanUpdate, carryPlan, parseVerdict, pinPlan, PLAN_TAG, planVerifySettings, shouldPlan, takeCarriedPlan } from "./plan-verify.ts";
+import { applyPlanUpdate, carryPlan, parseVerdict, pinPlan, PLAN_TAG, planVerifySettings, shouldPlan, shouldVerify, takeCarriedPlan, unpinPlan, verifierPrompt } from "./plan-verify.ts";
 import { compactTurnMessages } from "./turn-context.ts";
 import type { OpenAIChatMessage } from "./openai-chat.ts";
 
@@ -36,21 +36,35 @@ describe("plan-verify", () => {
     expect(second.ok && second.plan.steps).toHaveLength(8);
   });
 
-  it("pins the plan in the system message, replaces it in place, and survives compaction", async () => {
+  it("keeps the plan in one trailing message, replaced in place, outside compaction", async () => {
     const request: OpenAIChatMessage = { role: "user", content: "do the work" };
     const messages: OpenAIChatMessage[] = [{ role: "system", content: "sys" }, request];
     for (let i = 0; i < 6; i++) messages.push({ role: "assistant", content: `step ${i} ${"x".repeat(200)}` }, { role: "user", content: "go on" });
     const made = applyPlanUpdate(null, { steps: [{ title: "one", status: "doing" }] });
     if (!made.ok) throw new Error("expected a plan");
-    pinPlan(messages, made.plan, "\n\nHINT");
-    pinPlan(messages, { ...made.plan, steps: [{ id: "1", title: "one", status: "done" }] });
-    const system = String(messages[0]!.content);
-    expect(system.startsWith("sys\n\nHINT\n\n" + PLAN_TAG)).toBe(true);
-    expect(system.split(PLAN_TAG)).toHaveLength(2);
-    expect(system).toContain("1. [x] one");
+    pinPlan(messages, made.plan, "HINT");
+    messages.push({ role: "assistant", content: "more" });
+    pinPlan(messages, { ...made.plan, steps: [{ id: "1", title: "one", status: "done" }] }, "HINT");
+    expect(messages[0]!.content).toBe("sys");
+    expect(messages.filter((message) => String(message.content).startsWith(PLAN_TAG))).toHaveLength(1);
+    expect(messages.at(-1)!.content).toBe(`${PLAN_TAG}\nHINT\n1. [x] one`);
+    expect(messages.at(-2)!.content).toBe("more");
+    unpinPlan(messages);
     const compacted = await compactTurnMessages(messages, request, { keepExchanges: 1, summarize: async () => "summary", summaryBudgetBytes: 4_000 });
     expect(compacted?.folded).toBeGreaterThan(0);
-    expect(compacted!.messages[0]!.content).toBe(system);
+    pinPlan(compacted!.messages, made.plan, "HINT");
+    expect(String(compacted!.messages.at(-1)!.content)).toContain("1. [~] one");
+  });
+
+  it("verifies only when it is worth it, with a tight prompt", () => {
+    const two = { steps: [{ id: "1", title: "a", status: "done" as const }, { id: "2", title: "b", status: "done" as const }], revisions: 1 };
+    const three = { ...two, steps: [...two.steps, { id: "3", title: "c", status: "done" as const }] };
+    expect(shouldVerify({ answer: "short", realToolCalls: 0, plan: two })).toBe(false);
+    expect(shouldVerify({ answer: "short", realToolCalls: 1, plan: two })).toBe(true);
+    expect(shouldVerify({ answer: "x".repeat(900), realToolCalls: 0, plan: two })).toBe(true);
+    expect(shouldVerify({ answer: "short", realToolCalls: 0, plan: three })).toBe(true);
+    const prompt = verifierPrompt({ request: "t".repeat(5_000), plan: two, answer: "a".repeat(5_000) });
+    expect(prompt.length).toBeLessThan(4_400);
   });
 
   it("carries a plan to the next model for a short while only", () => {

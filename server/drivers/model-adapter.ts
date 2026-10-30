@@ -52,6 +52,8 @@ export interface ModelRequest {
   onDelta?: (delta: string, kind: DeltaKind) => void;
   /** Helper calls report the provider's own accounting (model, tokens, cost) here. */
   onUsage?: TextGenerationOptions["onUsage"];
+  /** Output-token ceiling for small helper calls (the verifier); absent leaves the provider default. */
+  maxTokens?: number;
 }
 
 export interface ModelAdapter {

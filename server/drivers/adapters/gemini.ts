@@ -80,7 +80,7 @@ export function createGeminiAdapter(options: { url: string; apiKey?: string; acc
       const model = request.model.replace(/^models\//, "");
       const method = request.stream ? "streamGenerateContent?alt=sse" : "generateContent";
       const response = await postJson(label, `${options.url}/models/${encodeURIComponent(model)}:${method}`, auth,
-        { ...geminiRequest(request.messages), ...(tools ? { tools } : {}) }, request.signal);
+        { ...geminiRequest(request.messages), ...(tools ? { tools } : {}), ...(request.maxTokens ? { generationConfig: { maxOutputTokens: request.maxTokens } } : {}) }, request.signal);
       const state = { text: "", reasoning: "", usage: null as Usage | null, calls: [] as ChatToolCall[], finish: null as string | null };
       const take = (chunk: Record<string, unknown>) => {
         if (chunk.error) throw new ChatProtocolError(`Gemini error: ${JSON.stringify(chunk.error).slice(0, 300)}`);

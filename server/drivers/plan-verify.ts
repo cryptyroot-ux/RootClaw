@@ -72,10 +72,10 @@ export const UPDATE_PLAN_DEFINITION: ChatToolDefinition = {
   },
 };
 
-export const PLAN_HINT = "\n\n[Planning] This request looks like multi-step work. Before acting, call update_plan with a short plan " +
-  `(at most ${MAX_PLAN_STEPS} steps). Keep it current: mark steps doing/done/blocked with update_plan as you go, and finish only when every step is done or blocked with a reason.`;
-export const REPLAN_HINT = "\n\n[Planning] This turn has taken many steps. Call update_plan now with the remaining steps and their status, then continue.";
-
+export const PLAN_HINT = `This request looks like multi-step work. Call update_plan once with a short plan (at most ${MAX_PLAN_STEPS} steps), then work. ` +
+  "After that never call update_plan on its own: put status changes in the same batch as your next real tool call, and skip it before the final answer (the final answer completes the plan).";
+export const PLAN_KEEP_HINT = "Update statuses only together with a real tool call; the final answer completes the plan.";
+export const REPLAN_HINT = "This turn has taken many steps. With your next real tool call, also call update_plan with the remaining steps and their status.";
 /** Validates update_plan arguments into a plan; an error text for the model when they are unusable. */
 export function applyPlanUpdate(previous: TurnPlan | null, args: Record<string, unknown>): { ok: true; plan: TurnPlan } | { ok: false; text: string } {
   const raw = Array.isArray(args.steps) ? args.steps : null;
@@ -92,24 +92,31 @@ export function applyPlanUpdate(previous: TurnPlan | null, args: Record<string, 
 }
 
 const MARK: Record<PlanStatus, string> = { pending: "[ ]", doing: "[~]", done: "[x]", blocked: "[!]" };
-export const PLAN_TAG = "[Current plan for this turn — kept up to date with update_plan]";
-const PLAN_END = "[End of plan]";
+export const PLAN_TAG = "[Plan context, pinned by the engine; not a message from the person]";
 
 export function renderPlan(plan: TurnPlan): string {
-  return `${PLAN_TAG}\n${plan.steps.map((step) => `${step.id}. ${MARK[step.status]} ${step.title}`).join("\n")}\n${PLAN_END}`;
+  return plan.steps.map((step) => `${step.id}. ${MARK[step.status]} ${step.title}`).join("\n");
 }
 
-/** Writes (or replaces) the plan section at the end of the system message, so it is pinned through compaction. */
-export function pinPlan(messages: OpenAIChatMessage[], plan: TurnPlan | null, extraHint = ""): void {
-  const section = plan ? `\n\n${renderPlan(plan)}` : "";
-  const head = messages[0];
-  if (head?.role === "system" && typeof head.content === "string") {
-    const start = head.content.indexOf(`\n\n${PLAN_TAG}`);
-    const base = start >= 0 ? head.content.slice(0, start) : head.content;
-    head.content = `${base}${extraHint}${section}`;
-  } else if (section || extraHint) {
-    messages.unshift({ role: "system", content: `${extraHint}${section}`.trimStart() });
-  }
+const isPlanMessage = (message: OpenAIChatMessage) => message.role === "user" && typeof message.content === "string" && message.content.startsWith(PLAN_TAG);
+
+/** Removes the trailing plan message, so compaction and the next round never see a stale copy. */
+export function unpinPlan(messages: OpenAIChatMessage[]): void {
+  for (let index = messages.length - 1; index >= 0; index--) if (isPlanMessage(messages[index]!)) messages.splice(index, 1);
+}
+
+/** Puts the plan (and its hint) in one compact message at the end, replacing any earlier copy. The system
+ * message and the history before it stay byte-identical, so the provider's prefix cache survives updates. */
+export function pinPlan(messages: OpenAIChatMessage[], plan: TurnPlan | null, hint: string): void {
+  unpinPlan(messages);
+  if (!plan && !hint) return;
+  messages.push({ role: "user", content: [PLAN_TAG, hint, plan ? renderPlan(plan) : ""].filter(Boolean).join("\n") });
+}
+
+/** Whether a final answer is worth a self-check: always with 3+ steps, never for a short answer with no tools run. */
+export function shouldVerify(input: { answer: string; realToolCalls: number; plan: TurnPlan }): boolean {
+  if (input.plan.steps.length >= 3) return true;
+  return input.realToolCalls > 0 || input.answer.length >= 800;
 }
 
 export const unfinishedSteps = (plan: TurnPlan | null) => plan?.steps.filter((step) => step.status === "pending" || step.status === "doing") ?? [];
@@ -131,24 +138,18 @@ export function takeCarriedPlan(threadId: string, now = Date.now()): TurnPlan | 
 
 export interface Verdict { verdict: "pass" | "fail"; missing: string[] }
 
-const TOOL_RESULT_CHARS = 6_000;
+export const VERIFY_MAX_TOKENS = 200;
 
-/** The self-check prompt: the request, the plan, the draft answer and the most recent tool results (bounded). */
-export function verifierPrompt(input: { request: string; plan: TurnPlan | null; answer: string; messages: readonly OpenAIChatMessage[] }): string {
-  let results = "";
-  for (let index = input.messages.length - 1; index >= 0 && results.length < TOOL_RESULT_CHARS; index--) {
-    const message = input.messages[index]!;
-    if (message.role !== "tool" || typeof message.content !== "string") continue;
-    results = `- ${message.content.slice(0, 1_500)}\n${results}`;
-  }
+/** The self-check prompt: task, plan and final answer only, truncated; no history, so it stays a few hundred tokens. */
+export function verifierPrompt(input: { request: string; plan: TurnPlan | null; answer: string }): string {
+  const cut = (text: string, max: number) => text.length > max ? `${text.slice(0, max)}…` : text;
   return [
-    "You are checking whether an assistant finished a task. Judge only from what is shown.",
-    `Task:\n${input.request.slice(0, 4_000)}`,
+    "Check whether the answer completes the task. Plan statuses may lag; judge the answer.",
+    `Task: ${cut(input.request, 1_500)}`,
     input.plan ? `Plan:\n${renderPlan(input.plan)}` : "",
-    results ? `Latest tool results (truncated):\n${results.slice(-TOOL_RESULT_CHARS)}` : "",
-    `Final answer:\n${input.answer.slice(0, 4_000)}`,
-    'Reply with JSON only: {"verdict":"pass"|"fail","missing":["short gap", ...]}. Use "fail" only for a concrete unmet part of the task.',
-  ].filter(Boolean).join("\n\n");
+    `Answer: ${cut(input.answer, 2_500)}`,
+    'Reply only JSON: {"verdict":"pass"|"fail","missing":["gap"]}. fail only for a concrete unmet part.',
+  ].filter(Boolean).join("\n");
 }
 
 /** Parses the checker's reply; anything unreadable counts as a pass so a confused checker never blocks an answer. */

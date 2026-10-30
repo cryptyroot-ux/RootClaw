@@ -18,13 +18,14 @@ function sse(response: ServerResponse, chunks: unknown[]) {
   response.end("data: [DONE]\n\n");
 }
 const planCall = (status: string) => ({ index: 0, id: `plan_${randomUUID().slice(0, 6)}`, type: "function",
-  function: { name: "update_plan", arguments: JSON.stringify({ steps: [{ title: "Find the bug", status }, { title: "Fix and test it", status: "pending" }] }) } });
+  function: { name: "update_plan", arguments: JSON.stringify({ steps: [{ title: "Find the bug", status }, { title: "Fix it", status: "pending" }, { title: "Run the tests", status: "pending" }] }) } });
 
 const MULTI = "First investigate why the build fails, then fix the config and run the tests, and finally summarize what changed.";
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
 
-async function fixture(rounds: Array<"plan" | "answer">, verdicts: string[] = []) {
+async function fixture(rounds: Array<"plan" | "answer">, verdicts: string[] = [], failRound = -1) {
+  let failed = false;
   const streamed: Body[] = [];
   const checks: Body[] = [];
   const server = createServer(async (request, response) => {
@@ -38,6 +39,7 @@ async function fixture(rounds: Array<"plan" | "answer">, verdicts: string[] = []
       response.end(JSON.stringify({ choices: [{ message: { content: verdicts[checks.length - 1] ?? '{"verdict":"pass","missing":[]}' }, finish_reason: "stop" }], usage: { prompt_tokens: 50, completion_tokens: 10 } }));
       return;
     }
+    if (streamed.length === failRound && !failed) { failed = true; response.statusCode = 503; response.end("{}"); return; }
     streamed.push(body);
     const step = rounds[streamed.length - 1] ?? "answer";
     if (step === "plan") sse(response, [chunk({ content: null, tool_calls: [planCall("doing")] }, "tool_calls")]);
@@ -90,13 +92,22 @@ describe("planner/verifier in a native turn", () => {
     const done = await f.run({ planVerify: ON });
     expect(done).toMatchObject({ ok: true, stopReason: "end_turn" });
     expect(toolNames(f.streamed[0]!)).toContain("update_plan");
-    expect(String(f.streamed[0]!.messages[0]!.content)).toContain("[Planning]");
-    const pinned = String(f.streamed[1]!.messages[0]!.content);
-    expect(pinned).toContain(PLAN_TAG);
-    expect(pinned).toContain("1. [~] Find the bug");
+    // The system message never changes (prefix cache); the plan rides in one trailing message, replaced in place.
+    for (const body of f.streamed) expect(body.messages[0]!.content).toBe("You are a bot.");
+    expect(String(f.streamed[0]!.messages.at(-1)!.content)).toMatch(new RegExp(`^${PLAN_TAG.replace(/[[\]().,;]/g, "\\$&")}`));
+    const last = f.streamed[1]!.messages;
+    expect(last.filter((message) => String(message.content).startsWith(PLAN_TAG))).toHaveLength(1);
+    expect(String(last.at(-1)!.content)).toContain("1. [~] Find the bug");
+    // No real tools to batch status updates with: after the initial plan round the tool is withdrawn.
+    expect(toolNames(f.streamed[1]!)).not.toContain("update_plan");
     expect(f.recorder.events.find((event) => event.type === "plan.updated")).toMatchObject({ revision: 1, reason: "initial" });
     expect(f.checks).toHaveLength(1);
     expect(f.recorder.events.find((event) => event.type === "verify.completed")).toMatchObject({ verdict: "pass", attempt: 1 });
+    // The check is tight: task + plan + answer, a small output ceiling, no history.
+    const check = f.checks[0] as Body & { max_tokens?: number };
+    expect(check.max_tokens).toBe(200);
+    expect(check.messages).toHaveLength(1);
+    expect(String(check.messages[0]!.content)).not.toContain("You are a bot.");
   });
 
   it("sends a failed check back once, then ends unverified with a note", async () => {
@@ -106,8 +117,15 @@ describe("planner/verifier in a native turn", () => {
     expect(done).toMatchObject({ ok: true, stopReason: "unverified" });
     expect(f.checks).toHaveLength(2);
     expect(f.streamed).toHaveLength(3);
-    expect(String(f.streamed[2]!.messages.at(-1)!.content)).toContain("tests were not run");
+    expect(f.streamed[2]!.messages.some((message) => String(message.content).includes("tests were not run"))).toBe(true);
     expect(f.recorder.events.some((event) => event.type === "runtime.notice" && /Unverified/.test(String((event as { message?: string }).message)))).toBe(true);
+  });
+
+  it("still retries a transient failure after a plan-only round", async () => {
+    const f = await fixture(["plan", "answer"], [], 1);
+    const done = await f.run({ planVerify: ON });
+    expect(done).toMatchObject({ ok: true, stopReason: "end_turn" });
+    expect(f.streamed).toHaveLength(2);
   });
 
   it("plans without checking in plan-only mode", async () => {

@@ -23,8 +23,9 @@ import { appendNative } from "./native.ts";
 import type { Completion, ModelAdapter, OpenAIChatMessage, Usage } from "./model-adapter.ts";
 import { BudgetMeter } from "../budget-guard.ts";
 import { countTokens, prepareTokenizer } from "./tokenizer.ts";
-import { applyPlanUpdate, carryPlan, parseVerdict, pinPlan, PLAN_HINT, REPLAN_AFTER_ROUNDS, REPLAN_HINT, shouldPlan, takeCarriedPlan,
-  unverifiedNote, UPDATE_PLAN_DEFINITION, UPDATE_PLAN_TOOL, verifierPrompt, verifyRetryMessage, type TurnPlan } from "./plan-verify.ts";
+import { applyPlanUpdate, carryPlan, parseVerdict, pinPlan, PLAN_HINT, PLAN_KEEP_HINT, REPLAN_AFTER_ROUNDS, REPLAN_HINT, shouldPlan, shouldVerify,
+  takeCarriedPlan, unpinPlan, unverifiedNote, UPDATE_PLAN_DEFINITION, UPDATE_PLAN_TOOL, verifierPrompt, VERIFY_MAX_TOKENS, verifyRetryMessage,
+  type TurnPlan } from "./plan-verify.ts";
 import { failoverHold, failoverKind } from "./failover.ts";
 import { classifyError, HttpStatusError, interruptibleDelay, nextRetryDelay, parseRetryAfter, RETRY_MAX_ATTEMPTS } from "./retry.ts";
 import { plainFailureMessage } from "./engine-errors.ts";
@@ -355,6 +356,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     onDelta?: (delta: string, kind: "assistant_text" | "reasoning_text") => void,
     tools: ChatToolDefinition[] = [],
     onUsage?: TextGenerationOptions["onUsage"],
+    maxTokens?: number,
   ): Promise<Completion> => {
     const timeoutController = new AbortController();
     let idleTimer: NodeJS.Timeout | null = null;
@@ -376,6 +378,8 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
       const payload = JSON.stringify({
         ...options.requestBody(model, messages, stream),
         ...(tools.length ? { tools } : {}),
+        // OpenAI's reasoning families only take max_completion_tokens; everything else the classic field.
+        ...(maxTokens ? (/^(o\d|gpt-5|gpt-6)/i.test(model.split("/").pop() ?? "") ? { max_completion_tokens: maxTokens } : { max_tokens: maxTokens }) : {}),
       });
       const send = options.timeoutMs > FETCH_LIMIT_MS ? fetchPastLimit : fetch;
       const response = await send(`${options.apiUrl}/chat/completions`, {
@@ -537,7 +541,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
 
   const adapter: ModelAdapter = options.adapter ?? {
     protocol: "openai-chat",
-    complete: (request) => complete(request.messages, request.model, request.stream, request.signal, request.onDelta, request.tools, request.onUsage),
+    complete: (request) => complete(request.messages, request.model, request.stream, request.signal, request.onDelta, request.tools, request.onUsage, request.maxTokens),
   };
 
   const seesImages = (turn: SendTurnInput) =>
@@ -721,18 +725,25 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         plan = planVerifyOn ? takeCarriedPlan(turn.threadId) : null;
         let planning = false;
         let replanned = false;
+        let planHint = "";
+        // Rounds whose only calls were update_plan: one (the initial plan) is allowed, then the tool is withdrawn.
+        let planOnlyRounds = 0;
+        const dropPlanTool = () => {
+          const at = tools!.definitions.findIndex((definition) => definition.function.name === UPDATE_PLAN_TOOL);
+          if (at >= 0) tools!.definitions.splice(at, 1);
+        };
         let verifyAttempts = 0;
         let verifyFails = 0;
         const emitPlan = (reason: "initial" | "replan" | "carried") => {
           if (plan) emit({ ...base(turn.threadId, turnId), type: "plan.updated", steps: plan.steps.map((step) => ({ ...step })), revision: plan.revisions, reason });
         };
         const startPlanning = (hint: string) => {
-          if (!planning && !tools!.definitions.some((definition) => definition.function.name === UPDATE_PLAN_TOOL)) tools!.definitions.push(UPDATE_PLAN_DEFINITION);
+          if (!tools!.definitions.some((definition) => definition.function.name === UPDATE_PLAN_TOOL)) tools!.definitions.push(UPDATE_PLAN_DEFINITION);
           planning = true;
-          pinPlan(messages, plan, hint);
+          planHint = hint;
         };
         if (planVerifyOn) {
-          if (plan) { startPlanning(""); emitPlan("carried"); }
+          if (plan) { startPlanning(PLAN_KEEP_HINT); emitPlan("carried"); }
           else if (shouldPlan(turn.text ?? "", { toolsEnabled: true, workspaceTools: workspaceNames.size > 0 })) startPlanning(PLAN_HINT);
         }
         const readOnlyTool = (name: string) => name === UPDATE_PLAN_TOOL ? planning : name === READ_TOOL_OUTPUT_TOOL ? offloadOn : workspaceNames.has(name) && workspaceToolReadOnly(name);
@@ -773,11 +784,14 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           }
           // Request-size accounting before every model call; fold older steps when the turn nears its budget.
           // Once over budget, fold down to ~60% of it so the next rounds do not compact again at once.
+          // The plan rides in one trailing message: taken out before compaction, put back at the end after it.
+          if (planning) unpinPlan(messages);
           let target = budget;
           for (let keep = ctx.keepExchanges ?? DEFAULT_KEEP_EXCHANGES; keep >= 1; keep = keep > 1 ? Math.floor(keep / 2) : 0) {
             if (calibration.apply(estimateRequestTokens(messages, tools.definitions, model)) < target) break;
             if (await compact("budget", keep)) target = Math.floor(budget * 0.6);
           }
+          if (planning) pinPlan(messages, plan, planHint);
           const sentEstimate = estimateRequestTokens(messages, tools.definitions, model);
           // Budget pre-check: after the first round, a call whose prompt alone would overrun the cap is not made.
           if (round > 0 && meter?.wouldExceed(calibration.apply(sentEstimate))) {
@@ -868,7 +882,8 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
               }
               // Once a call has been handled, never replay it through a turn retry.
               // Retry only before any token reached the user: a mid-stream failure surfaces as is.
-              if (abort.signal.aborted || streamed || seenCalls.size ||
+              // update_plan calls change nothing outside the turn, so they never block a transport retry.
+              if (abort.signal.aborted || streamed || seenCalls.size > planCallIds.size ||
                   error instanceof ChatProtocolError || !verdict.transient) throw error;
               const delayMs = nextRetryDelay(attempt, retryWaitedMs, error instanceof HttpStatusError ? error.retryAfterMs : undefined);
               if (delayMs === null) throw error;
@@ -940,15 +955,15 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
               continue;
             }
             // Verifier: a planned turn's final answer gets a cheap self-check; a fail goes back to the model, capped.
-            if (planVerify.mode === "plan+verify" && planning && plan) {
-              const prompt = verifierPrompt({ request: turn.text ?? "", plan, answer: reply, messages });
+            if (planVerify.mode === "plan+verify" && planning && plan && shouldVerify({ answer: reply, realToolCalls: seenCalls.size - planCallIds.size, plan })) {
+              const prompt = verifierPrompt({ request: turn.text ?? "", plan, answer: reply });
               const attempt = verifyAttempts + 1;
               let verdict: ReturnType<typeof parseVerdict> | null = null;
               if (meter?.wouldExceed(calibration.apply(countTokens(prompt, model)) + 200)) {
                 emit({ ...base(turn.threadId, turnId), type: "verify.completed", verdict: "skipped", attempt, why: "budget" });
               } else {
                 try {
-                  const checked = await adapter.complete({ messages: [{ role: "user", content: prompt }], model: ctx.summaryModel || model, stream: false, signal: abort.signal, tools: [] });
+                  const checked = await adapter.complete({ messages: [{ role: "user", content: prompt }], model: ctx.summaryModel || model, stream: false, signal: abort.signal, tools: [], maxTokens: VERIFY_MAX_TOKENS });
                   if (checked.usage) {
                     usage.input += checked.usage.input;
                     usage.output += checked.usage.output;
@@ -980,7 +995,14 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             stopReason = "end_turn";
             break;
           }
-          if (!tools.definitions.length) throw new ChatProtocolError("provider returned tool calls, but no tools are available for this turn");
+          const planOnly = planning && completion.toolCalls.every((call) => call.function.name === UPDATE_PLAN_TOOL);
+          if (!tools.definitions.length && !planOnly) throw new ChatProtocolError("provider returned tool calls, but no tools are available for this turn");
+          if (planOnly) {
+            planOnlyRounds++;
+            // With nothing real to batch a status update with, or after a second status-only round, withdraw the tool.
+            const realTools = tools.definitions.some((definition) => ![UPDATE_PLAN_TOOL, ASK_USER_TOOL, READ_TOOL_OUTPUT_TOOL].includes(definition.function.name));
+            if (!realTools || planOnlyRounds >= 2) dropPlanTool();
+          }
           // Validate IDs for the entire batch before executing any of its calls.
           for (const call of completion.toolCalls) {
             if (seenCalls.has(call.id)) throw new ChatProtocolError("provider reused a tool-call ID; refusing to repeat an operation");
@@ -1049,7 +1071,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
                 if (updated.ok) {
                   const first = !plan;
                   plan = updated.plan;
-                  pinPlan(messages, plan);
+                  planHint = PLAN_KEEP_HINT;
                   emitPlan(first ? "initial" : "replan");
                   result = { ok: true, text: `Plan saved (${plan.steps.length} steps, revision ${plan.revisions}).` };
                 } else result = { ok: false, text: updated.text };

@@ -66,7 +66,7 @@ export function createAnthropicAdapter(options: { url: string; apiKey: string; m
         ...(index === all.length - 1 ? { cache_control: { type: "ephemeral" } } : {}),
       }));
       const response = await postJson(label, `${options.url}/messages`, { "x-api-key": options.apiKey, "anthropic-version": ANTHROPIC_VERSION }, {
-        model: request.model, max_tokens: options.maxTokens ?? DEFAULT_MAX_TOKENS, messages, stream: request.stream,
+        model: request.model, max_tokens: request.maxTokens ?? options.maxTokens ?? DEFAULT_MAX_TOKENS, messages, stream: request.stream,
         ...(system.length ? { system } : {}), ...(tools.length ? { tools } : {}),
       }, request.signal);
       if (!request.stream) return fromMessage(parseJson(await response.text()), request);

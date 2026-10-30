@@ -1,6 +1,6 @@
 # Planner / verifier for the native engine (design, not implemented)
 
-Status: draft for review. No code yet. Flag: `engine.planVerify` (off by default).
+Status: phases 0–2 implemented (`server/drivers/plan-verify.ts`). Flag: `engine.planVerify` (off by default).
 
 ## 1. How the loop works today (grounding)
 
@@ -90,3 +90,28 @@ Rollback = flag off; no data migration needed.
 - Do non-OpenAI adapters (Anthropic, Gemini) follow the `update_plan` tool reliably, or need a text-format fallback?
 - How should the plan survive a run retry (`POST /api/runs/:id/retry`): restore or re-plan?
 - Should the existing announcement nudges merge into the verifier to avoid two overlapping checks?
+
+## 10. Measured (9router, model MyCombo, Oct 31 2026)
+
+Prompt: "First list the three smallest prime numbers greater than 100, then compute their sum, and finally check
+the sum is correct and explain briefly." No real tools mounted (pure reasoning).
+
+| Run | Rounds | Input / output tokens | Wall time |
+|---|---|---|---|
+| Flag off (baseline) | 1 | 227 / 143 | 3.4 s |
+| v1: plan in system message, status-only rounds, verifier with history | 4 + 1 check | 9,069 / 980 (≈ 40× / 7×) | 73 s |
+| v2 round 1 (initial plan) only; round 2 hit a 9router `fetch failed` | 1 | 4,610 / 266 | 22 s |
+
+What v1 taught, and the v2 changes:
+- The model spent 3 rounds only updating step statuses. v2 allows one update_plan-only round (the initial plan);
+  with no real tool to batch with, or after a second status-only round, the tool is withdrawn and the final answer
+  completes the plan. The hint tells the model to batch status changes with its next real tool call.
+- The plan sat in the system message, so every update broke the provider prefix cache. v2 keeps it in one trailing
+  context message, replaced in place and taken out before compaction; the system message never changes.
+- The verifier sent the recent tool results (~2.4k tokens). v2 sends task + plan + answer only, truncated, with a
+  200-token output cap, and skips short answers with no tools run unless the plan has 3+ steps.
+- v1 also lost transport retries after a plan call (update_plan counted as a handled call); fixed in v2.
+
+MyCombo's input counts vary a lot between identical requests (the same initial-plan round took 376 input tokens
+in v1 and 4,610 in v2), so this router is too noisy to measure overhead precisely; use a fixed model for the eval set
+in §7 before turning the flag on by default.
