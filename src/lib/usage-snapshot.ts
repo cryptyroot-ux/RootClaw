@@ -56,7 +56,6 @@ function keyProviders(config: ConfigStatus): KeyProvider[] {
     [config.meta?.configured, "meta"],
     [config.box?.configured && config.box.included !== true, "boat"],
     [config.composio?.configured && config.composio.mode === "self-hosted", "composio"],
-    [config.opencodeGo?.configured, "opencode_go"],
     [ownVoice && config.tts?.provider === "elevenlabs", "elevenlabs"],
     [ownVoice && config.tts?.provider === "fish", "fish_audio"],
     [ownDecider && config.decider?.provider === "jev", "jev"],

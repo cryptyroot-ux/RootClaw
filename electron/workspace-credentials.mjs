@@ -11,7 +11,6 @@ export const WORKSPACE_CREDENTIALS = [
   { section: "live", field: "key", name: "openaiLiveKey", env: "ROOTCLAW_OPENAI_LIVE_KEY" },
   { section: "treg", field: "key", name: "tregApiKey", env: "ROOTCLAW_TREG_KEY" },
   { section: "postiz", field: "key", name: "postizApiKey", env: "ROOTCLAW_POSTIZ_API_KEY" },
-  { section: "opencodeGo", field: "apiKey", name: "opencodeGoApiKey", env: "OPENCODE_API_KEY" },
 ];
 
 /** Moves plaintext secrets into the store and deletes the field. "" never drops a stored secret: every packaged

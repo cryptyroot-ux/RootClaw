@@ -377,8 +377,6 @@ const appConfigSchema = z.object({
   composio: z.object({ apiKey: optionalText, userId: optionalText, sessionId: optionalText }).optional(),
   box: z.object({ token: optionalText }).optional(),
   vps: vpsConfigSchema.optional(),
-  /** OpenCode key, plus `providerKeys` for its other providers by the env name OpenCode reads; both write-only and only for its child. */
-  opencodeGo: z.object({ apiKey: optionalText, providerKeys: z.record(z.string(), z.string()).optional() }).optional(),
   /** `provider`: "elevenlabs" (default, `key`), "fish" (`fishKey`, `fishModel`), "system", "xai" (`xai.key`) or "chatterbox" (local; `baseUrl`, `model`). */
   tts: z.object({
     key: optionalText,
@@ -458,13 +456,6 @@ const appConfigSchema = z.object({
 });
 const storedAppConfigSchema = appConfigSchema.extend(helperStoredShape).extend({
   browserProfiles: storedBrowserProfilesSchema.optional(),
-  /** Loose like mcpServers: a bad provider key is dropped later, never the whole file. */
-  opencodeGo: z.object({
-    apiKey: optionalText,
-    providerKeys: z.record(z.string(), z.unknown()).catch({})
-      .transform((keys) => Object.fromEntries(Object.entries(keys).filter((entry): entry is [string, string] => typeof entry[1] === "string")))
-      .optional(),
-  }).optional(),
 });
 const appConfigPatchSchema = appConfigSchema.omit({ instances: true, mcpServers: true, cliStartup: true, customDomain: true })
   .extend({ threads: threadsPatchSchema.optional(), newBots: newBotsPatchSchema.optional() });
@@ -510,7 +501,6 @@ export interface AppConfig extends HelperConfig {
   box?: { token?: string };
   /** A named host from the user's SSH config. Authentication stays with SSH. */
   vps?: { sshAlias?: string };
-  opencodeGo?: { apiKey?: string; providerKeys?: Record<string, string> };
   tts?: { key?: string; fishKey?: string; voice?: string; provider?: "elevenlabs" | "fish" | "system" | "chatterbox" | "xai"; baseUrl?: string; model?: string; fishModel?: FishTtsModel };
   decider?: DeciderConfig;
   imageGen?: ImageGenerationConfig;
@@ -802,8 +792,6 @@ export function loadConfig(): AppConfig {
   if (process.env.COMPOSIO_API_KEY !== undefined) cfg.composio.apiKey = process.env.COMPOSIO_API_KEY;
   cfg.box = { ...cfg.box };
   if (process.env.BOX_TOKEN !== undefined) cfg.box.token = process.env.BOX_TOKEN;
-  cfg.opencodeGo = { ...cfg.opencodeGo };
-  if (process.env.OPENCODE_API_KEY !== undefined) cfg.opencodeGo.apiKey = process.env.OPENCODE_API_KEY;
   cfg.tts = { ...cfg.tts };
   if (process.env.ROOTCLAW_TTS_KEY !== undefined) cfg.tts.key = process.env.ROOTCLAW_TTS_KEY;
   const presetVoice = process.env.ROOTCLAW_TTS_DEFAULT_VOICE?.trim();
@@ -858,7 +846,6 @@ export function syncCredentialEnv(patch: Partial<Omit<AppConfig, "threads" | "ne
     [patch.openrouter?.key, "ROOTCLAW_OPENROUTER_API_KEY"],
     [patch.composio?.apiKey, "COMPOSIO_API_KEY"],
     [patch.box?.token, "BOX_TOKEN"],
-    [patch.opencodeGo?.apiKey, "OPENCODE_API_KEY"],
     [patch.tts?.key, "ROOTCLAW_TTS_KEY"],
     [patch.tts?.fishKey, "ROOTCLAW_FISH_AUDIO_API_KEY"],
     [patch.decider?.key, "ROOTCLAW_JEV_API_KEY"],
@@ -885,54 +872,8 @@ export function syncCredentialEnv(patch: Partial<Omit<AppConfig, "threads" | "ne
   }
 }
 
-import { WORKSPACE_CREDENTIAL_ENV, CONTROL_PLANE_ENV, CONTROL_PLANE_ENV_PREFIX, stripControlPlaneEnv, stripWorkspaceCredentialEnv, PROVIDER_CREDENTIAL_ENV, OPENCODE_PROVIDER_ENV } from "./credential-env.ts";
-export { WORKSPACE_CREDENTIAL_ENV, CONTROL_PLANE_ENV, CONTROL_PLANE_ENV_PREFIX, stripControlPlaneEnv, stripWorkspaceCredentialEnv, PROVIDER_CREDENTIAL_ENV, OPENCODE_PROVIDER_ENV };
-
-export const OPENCODE_PROVIDER_KEY_LIMIT = 20;
-const OPENCODE_PROVIDER_KEY_NAME = /^[A-Z][A-Z0-9_]{0,59}_(?:API_KEY|KEY|TOKEN)$/;
-const OPENCODE_PROVIDER_KEY_VALUE = /^[\x21-\x7e]{1,4096}$/;
-
-function openCodeProviderKeyNameRefusal(name: string): string | undefined {
-  if (!OPENCODE_PROVIDER_KEY_NAME.test(name)) {
-    return "Use the name the provider reads its key from: capitals, ending in _API_KEY, _KEY or _TOKEN, such as VENICE_API_KEY.";
-  }
-  if (name === "OPENCODE_API_KEY") return "Save the OpenCode key in the OpenCode API key box instead.";
-  const reserved = name.startsWith("OPENCODE_") || name.startsWith("ROOTCLAW_")
-    || (WORKSPACE_CREDENTIAL_ENV as readonly string[]).includes(name)
-    || ((PROVIDER_CREDENTIAL_ENV as readonly string[]).includes(name) && !(OPENCODE_PROVIDER_ENV as readonly string[]).includes(name));
-  return reserved ? `RootClaw keeps ${name} for itself, so OpenCode can't be given it here. Put this key in opencode.json instead.` : undefined;
-}
-
-export function openCodeProviderKeys(cfg: Pick<AppConfig, "opencodeGo">): Record<string, string> {
-  const saved = cfg.opencodeGo?.providerKeys ?? {};
-  const usable = Object.keys(saved).sort()
-    .filter((name) => !openCodeProviderKeyNameRefusal(name) && OPENCODE_PROVIDER_KEY_VALUE.test(saved[name] ?? ""))
-    .slice(0, OPENCODE_PROVIDER_KEY_LIMIT);
-  return Object.fromEntries(usable.map((name) => [name, saved[name]!]));
-}
-
-/** "" removes a key; every other saved key stays. */
-export function mergeOpenCodeProviderKeys(
-  cfg: Pick<AppConfig, "opencodeGo">,
-  change: Record<string, string>,
-): { ok: true; keys: Record<string, string> } | { ok: false; error: string } {
-  const keys = new Map(Object.entries(openCodeProviderKeys(cfg)));
-  for (const [name, raw] of Object.entries(change)) {
-    const value = raw.trim();
-    if (!value) {
-      keys.delete(name);
-      continue;
-    }
-    const refusal = openCodeProviderKeyNameRefusal(name);
-    if (refusal) return { ok: false, error: refusal };
-    if (!OPENCODE_PROVIDER_KEY_VALUE.test(value)) return { ok: false, error: "That doesn't look like a key. Paste only the key, with no spaces." };
-    keys.set(name, value);
-  }
-  if (keys.size > OPENCODE_PROVIDER_KEY_LIMIT) {
-    return { ok: false, error: `OpenCode can hold up to ${OPENCODE_PROVIDER_KEY_LIMIT} provider keys. Remove one you no longer use, then add this one.` };
-  }
-  return { ok: true, keys: Object.fromEntries([...keys].sort(([a], [b]) => (a < b ? -1 : 1))) };
-}
+import { WORKSPACE_CREDENTIAL_ENV, CONTROL_PLANE_ENV, CONTROL_PLANE_ENV_PREFIX, stripControlPlaneEnv, stripWorkspaceCredentialEnv, PROVIDER_CREDENTIAL_ENV } from "./credential-env.ts";
+export { WORKSPACE_CREDENTIAL_ENV, CONTROL_PLANE_ENV, CONTROL_PLANE_ENV_PREFIX, stripControlPlaneEnv, stripWorkspaceCredentialEnv, PROVIDER_CREDENTIAL_ENV };
 
 const configSaveListeners = new Set<(before: JsonObject, after: JsonObject) => void>();
 
@@ -961,7 +902,7 @@ export function saveConfig(
   const before = configSaveListeners.size ? structuredClone(disk) : disk;
   const storedProfiles = storedBrowserProfilesSchema.safeParse(disk.browserProfiles);
   if (storedProfiles.success) disk.browserProfiles = storedProfiles.data;
-  for (const key of ["xai", "anthropic", "mistral", "cerebras", "treg", "postiz", "groq", "meta", "deepseek", "openai", "openrouter", "openaiCompat", "composio", "box", "opencodeGo", "tts", "decider", "imageGen", "live", "profile", "rooms", "mcp", "threads", "context", "memory", "localVm", "features", "budgets", "billing", "decisions", "loopGuard", "onboarding", "browserEngine", "newBots", "safetyFloor"] as const) {
+  for (const key of ["xai", "anthropic", "mistral", "cerebras", "treg", "postiz", "groq", "meta", "deepseek", "openai", "openrouter", "openaiCompat", "composio", "box", "tts", "decider", "imageGen", "live", "profile", "rooms", "mcp", "threads", "context", "memory", "localVm", "features", "budgets", "billing", "decisions", "loopGuard", "onboarding", "browserEngine", "newBots", "safetyFloor"] as const) {
     const section = checkedPatch[key];
     if (!section) continue;
     const current = jsonObjectSchema.safeParse(disk[key]);
@@ -1066,32 +1007,6 @@ export function saveConfig(
   }
 }
 
-/** The returned map must stay persistable: never one from instanceConfigs(), which carries injected secrets. */
-export function withInstanceCli(
-  cfg: AppConfig,
-  instanceId: string,
-  cli: string,
-): InstanceCliUpdate {
-  const next: AppConfig = structuredClone(cfg);
-  const map = persistableInstanceConfigs(next);
-  // hasOwn, not truthiness: instanceId comes off the URL, and "__proto__" would poison Object.prototype.
-  if (!Object.hasOwn(map, instanceId)) return { ok: false, config: cfg };
-  const entry = map[instanceId];
-  const cliKey = cli.trim();
-  const currentConfig = jsonObjectSchema.safeParse(entry.config);
-  if (cliKey) {
-    const nextConfig: JsonObject = currentConfig.success ? { ...currentConfig.data } : {};
-    nextConfig.cli = cliKey;
-    entry.config = nextConfig;
-  } else if (currentConfig.success && Object.hasOwn(currentConfig.data, "cli")) {
-    const rest = { ...currentConfig.data };
-    delete rest.cli;
-    entry.config = Object.keys(rest).length ? rest : undefined;
-  }
-  next.instances = map;
-  return { ok: true, config: next };
-}
-
 /** Materialize defaults without freezing injected workspace settings or secrets. */
 export function persistableInstanceConfigs(cfg: AppConfig): InstanceConfigMap {
   const map = instanceConfigs(cfg);
@@ -1104,11 +1019,6 @@ export function persistableInstanceConfigs(cfg: AppConfig): InstanceConfigMap {
     else delete entry.config;
   }
   return map;
-}
-
-interface InstanceCliUpdate {
-  ok: boolean;
-  config: AppConfig;
 }
 
 /** Claude Code env that picks its endpoint and sign-in; an instance setting any owns its routing. */

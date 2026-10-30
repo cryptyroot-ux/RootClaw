@@ -1,16 +1,8 @@
 import type { InstanceConfigMap } from "./contracts.ts";
-import { REMOVED_DRIVER_KINDS } from "./instance-fleets.ts";
+import { REMOVED_DEFAULT_INSTANCES, REMOVED_DRIVER_KINDS } from "./legacy-engines.ts";
 
 export const REMOVED_COMPUTER_DRIVER = "boxAgent";
 const REMOVED_COMPUTER_INSTANCE = "computer";
-
-/** The instance ids of the old default fleet whose engines (agent CLIs and ACP agents) RootClaw removed. */
-const REMOVED_DEFAULT_INSTANCES: Readonly<Record<string, string>> = {
-  grok: "grokAgent", kimi: "kimiAgent", droid: "droidAgent", cursor: "cursorAgent", githubCopilot: "copilotAgent",
-  claude: "claudeAgent", claudeApi: "claudeAgent", codex: "codex", chatgpt: "codex", antigravity: "antigravityAgent",
-  opencodeGo: "opencodeGo", deepseek: "deepseekAgent", museCode: "museCode", qwen: "qwenAgent", hermes: "hermesAgent",
-  cline: "clineAgent", pi: "piAgent", gemini: "geminiAgent",
-};
 
 const removedDriver = (driver: string) => driver === REMOVED_COMPUTER_DRIVER || REMOVED_DRIVER_KINDS.has(driver);
 

@@ -18,7 +18,6 @@ import {
 const MAPPINGS: Array<[ConfigCredentialTargetId, CredentialConfig]> = [
   ["xaiApiKey", { xai: { key: "secret" } }],
   ["boxToken", { box: { token: "secret" } }],
-  ["opencodeGoApiKey", { opencodeGo: { apiKey: "secret" } }],
   ["ttsKey", { tts: { key: "secret" } }],
   ["fishAudioKey", { tts: { fishKey: "secret" } }],
   ["openaiImageApiKey", { imageGen: { key: "secret" } }],
@@ -65,13 +64,13 @@ describe("credential request allowlist", () => {
     expect(credentialIsConfigured({ tts: { key: "" } }, "ttsKey")).toBe(false);
     expect(credentialIsConfigured({ tts: { fishKey: "secret" } }, "fishAudioKey")).toBe(true);
     expect(credentialIsConfigured({ tts: { fishKey: "" } }, "fishAudioKey")).toBe(false);
-    expect(Object.keys(CREDENTIAL_TARGETS)).toHaveLength(16);
+    expect(Object.keys(CREDENTIAL_TARGETS)).toHaveLength(15);
   });
 
   // The desktop's encrypted store has a slot only for these; a provider key goes to the server's config, as Settings does.
   it("names the desktop slot a key is saved in, and none for a provider key or the 1Password token", () => {
     expect(Object.keys(CREDENTIAL_TARGETS).filter((id) => desktopCredentialSlot(id as never)).sort()).toEqual(
-      ["boxToken", "composioApiKey", "fishAudioKey", "openaiImageApiKey", "opencodeGoApiKey", "ttsKey", "xaiApiKey"],
+      ["boxToken", "composioApiKey", "fishAudioKey", "openaiImageApiKey", "ttsKey", "xaiApiKey"],
     );
     expect(desktopCredentialSlot("anthropicApiKey")).toBeNull();
     expect(desktopCredentialSlot("onePasswordToken")).toBeNull();
@@ -86,11 +85,6 @@ describe("credential request allowlist", () => {
     expect(isPendingCustomSecretRequest({ ...card, secret: { ...card.secret, target: "xaiApiKey" } }, "Stripe secret key", "atlas", true)).toBe(false);
   });
 
-  // The key becomes OPENCODE_API_KEY, which only OpenCode Zen and Go read: the
-  // card must not promise other providers a key it never reaches.
-  it("says the OpenCode key is for Zen and Go only", () => {
-    expect(CREDENTIAL_TARGETS.opencodeGoApiKey.description).toBe("Used for OpenCode Zen and Go.");
-  });
 
   it("supersedes open room cards only for the bot that requested them", () => {
     const card = {

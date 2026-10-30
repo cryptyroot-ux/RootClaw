@@ -18,7 +18,6 @@ export const WORKSPACE_CREDENTIAL_ENV = [
   "ROOTCLAW_OPENAI_API_KEY",
   "ROOTCLAW_OPENROUTER_API_KEY",
   "BOX_TOKEN",
-  "OPENCODE_API_KEY",
   "ROOTCLAW_TTS_KEY",
   "ROOTCLAW_FISH_AUDIO_API_KEY",
   "ROOTCLAW_JEV_API_KEY",
@@ -65,7 +64,6 @@ export const PROVIDER_CREDENTIAL_ENV = [
   "MOONSHOT_API_KEY",
   "MINIMAX_API_KEY",
   "OPENAI_API_KEY",
-  "OPENCODE_API_KEY",
   "XAI_API_KEY",
   "MISTRAL_API_KEY",
   "CEREBRAS_API_KEY",
@@ -76,16 +74,3 @@ export const PROVIDER_CREDENTIAL_ENV = [
   "CURSOR_AUTH_TOKEN",
 ] as const;
 
-/** Provider keys OpenCode reads from its environment (with ANTHROPIC_API_KEY set it lists Anthropic's models). */
-export const OPENCODE_PROVIDER_ENV = [
-  "CLINE_API_KEY",
-  "ANTHROPIC_API_KEY",
-  "OPENAI_API_KEY",
-  "GEMINI_API_KEY",
-  "GOOGLE_API_KEY",
-  "KIMI_API_KEY",
-  "MOONSHOT_API_KEY",
-  "MINIMAX_API_KEY",
-  "GROQ_API_KEY",
-  "DEEPSEEK_API_KEY",
-] as const;

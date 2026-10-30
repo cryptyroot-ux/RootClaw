@@ -39,8 +39,4 @@ export const PRODUCT_FLEET_ADDITIONS = {
   ...API_KEY_FLEET,
 } as const;
 
-/** Engine kinds RootClaw no longer ships: external agent CLIs and ACP agents. */
-export const REMOVED_DRIVER_KINDS: ReadonlySet<string> = new Set([
-  "claudeAgent", "codex", "antigravityAgent", "grokAgent", "geminiAgent", "kimiAgent", "droidAgent", "cursorAgent",
-  "opencodeGo", "qwenAgent", "hermesAgent", "deepseekAgent", "clineAgent", "copilotAgent", "customAcp", "piAgent", "museCode",
-]);
+export { REMOVED_DRIVER_KINDS } from "./legacy-engines.ts";
