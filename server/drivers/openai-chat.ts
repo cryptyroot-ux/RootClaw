@@ -25,6 +25,8 @@ import { refusesRequestSize, RequestTooLargeError, sizeChange, smallerResend } f
 import { compactTurnMessages, DEFAULT_KEEP_EXCHANGES, estimateRequestTokens, offloadToolOutput, READ_TOOL_OUTPUT_DEFINITION,
   READ_TOOL_OUTPUT_TOOL, readToolOutput, refusesContextLength, TokenCalibration, turnCompactBudget, type TurnContextSettings } from "./turn-context.ts";
 import { contextWindowFor } from "../context-budget.ts";
+import { executeWorkspaceTool, validateWorkspaceArgs, WORKSPACE_TOOL_DEFINITIONS, workspaceToolReadOnly, workspaceToolView, type WorkspaceToolsConfig } from "./workspace-tools.ts";
+import { runToolBatch } from "./tool-batch.ts";
 import { requestTooLargeMessage } from "../../shared/request-too-large.ts";
 import { toolSchemaProfileFor } from "../tool-schema-profile.ts";
 import { classifyContinuable, writeTurnHandoff } from "../turn-continuation.ts";
@@ -681,6 +683,24 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         if (offloadOn && !tools.definitions.some((definition) => definition.function.name === READ_TOOL_OUTPUT_TOOL)) {
           tools.definitions.push(READ_TOOL_OUTPUT_DEFINITION);
         }
+        // Native workspace tools: in-process, rooted at the turn's folder, confined unless the turn allows more.
+        const workspace: WorkspaceToolsConfig | undefined = options.tools !== false && turn.cwd && !turn.guestConfined ? {
+          root: turn.cwd,
+          readRoots: turn.workspaceTools?.readRoots,
+          writeRoots: turn.workspaceTools?.writeRoots,
+          unrestricted: turn.workspaceTools?.unrestricted === true || process.env.ROOTCLAW_WORKSPACE_UNRESTRICTED === "1",
+        } : undefined;
+        const workspaceNames = new Set<string>();
+        if (workspace) {
+          const taken = new Set(tools.definitions.map((definition) => definition.function.name));
+          for (const definition of WORKSPACE_TOOL_DEFINITIONS) {
+            const name = definition.function.name;
+            if (taken.has(name) || !allowsTool(scope, { kind: "native", name })) continue;
+            tools.definitions.push(definition);
+            workspaceNames.add(name);
+          }
+        }
+        const readOnlyTool = (name: string) => name === READ_TOOL_OUTPUT_TOOL ? offloadOn : workspaceNames.has(name) && workspaceToolReadOnly(name);
         const window = contextWindowFor(model, options.models());
         const budget = turnCompactBudget(window, ctx.compactAt);
         const calibration = new TokenCalibration();
@@ -872,8 +892,8 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           // After a corrective round, the failure stays pending only until the bot runs tools again.
           if (correctiveRounds && !denials.length) toolFailed = false;
           const screenshotParts: ChatContentPart[] = [];
-          for (const call of completion.toolCalls) {
-            abort.signal.throwIfAborted();
+          const session = tools;
+          const runCall = async (call: ChatToolCall) => {
             let result: ChatToolResult;
             let started = false;
             let fatal: Error | undefined;
@@ -904,6 +924,23 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
                     result = { ok: true, text: answer };
                   }
                 }
+              } else if (workspace && workspaceNames.has(call.function.name)) {
+                validateWorkspaceArgs(call.function.name, args as Record<string, unknown>);
+                const shown = workspaceToolView(call.function.name, args as Record<string, unknown>);
+                const full = (turn.approvalModeNow?.() ?? turn.approvalMode) === "full";
+                const floored = approval.floored({ full, threadId: turn.threadId, botId: turn.botId, shown, summary: inputPreview });
+                const allowed = !floored && (full || !shown.ask
+                  || await approval.ask(shown.title, inputPreview ?? "This tool has no arguments.", shown.grant));
+                abort.signal.throwIfAborted();
+                emit({ ...base(turn.threadId, turnId), type: "item.started", itemType: "tool", itemId: call.id,
+                  title: shown.title, ...(inputPreview ? { input: inputPreview } : {}),
+                });
+                started = true;
+                if (allowed) result = await executeWorkspaceTool(call.function.name, args as Record<string, unknown>, workspace, abort.signal);
+                else {
+                  denials.push(shown.title);
+                  result = { ok: false, text: refusal(floored, (message) => emit({ ...base(turn.threadId, turnId), type: "runtime.notice", message })) };
+                }
               } else if (offloadOn && call.function.name === READ_TOOL_OUTPUT_TOOL) {
                 emit({ ...base(turn.threadId, turnId), type: "item.started", itemType: "tool", itemId: call.id,
                   title: call.function.name, ...(inputPreview ? { input: inputPreview } : {}),
@@ -911,8 +948,8 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
                 started = true;
                 result = readToolOutput(args as Record<string, unknown>, { dir: ctx.offloadDir, threadId: turn.threadId });
               } else {
-                tools.validate(call.function.name, args);
-                const shown = tools.view(call.function.name, args as Record<string, unknown>);
+                session.validate(call.function.name, args);
+                const shown = session.view(call.function.name, args as Record<string, unknown>);
                 const shownPreview = shown.input === args ? inputPreview : preview(shown.input);
                 // This runtime has no provider reviewer, so Full access is honoured here.
                 const full = (turn.approvalModeNow?.() ?? turn.approvalMode) === "full";
@@ -925,7 +962,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
                 });
                 started = true;
                 if (allowed) {
-                  result = await tools.execute(call.function.name, args as Record<string, unknown>, abort.signal);
+                  result = await session.execute(call.function.name, args as Record<string, unknown>, abort.signal);
                   if (result.images?.length && !seesImages(turn)) {
                     const { images: _dropped, ...rest } = result;
                     result = { ...rest, text: `${rest.text}\n${TEXT_ONLY_SCREENSHOT_NOTE}` };
@@ -960,12 +997,21 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             }
             const output = preview({ ok: result.ok, result: text });
             emit({ ...base(turn.threadId, turnId), type: "item.completed", itemType: "tool", itemId: call.id, ok: result.ok, output });
-            if (!result.ok) toolFailed = true;
-            messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify({ ok: result.ok, result: offloaded ? offloaded.text : text }) });
-            screenshotParts.push(...chatToolImages(call.id, result.images));
-            abort.signal.throwIfAborted();
-            if (fatal) throw fatal;
-          }
+            return { call, result, content: JSON.stringify({ ok: result.ok, result: offloaded ? offloaded.text : text }), fatal };
+          };
+          // Read-only calls run concurrently (bounded); mutating ones one at a time, in order. Results reach the model in call order.
+          await runToolBatch(completion.toolCalls, {
+            readOnly: (call) => readOnlyTool(call.function.name),
+            run: runCall,
+            signal: abort.signal,
+            commit: ({ call, result, content, fatal }) => {
+              if (!result.ok) toolFailed = true;
+              messages.push({ role: "tool", tool_call_id: call.id, content });
+              screenshotParts.push(...chatToolImages(call.id, result.images));
+              abort.signal.throwIfAborted();
+              if (fatal) throw fatal;
+            },
+          });
           if (screenshotParts.length) messages.push({ role: "user", content: screenshotParts });
         }
         if (!ok) throw new ChatProtocolError(stoppedAfter(`${MAX_CHAT_ROUNDS} steps`));
