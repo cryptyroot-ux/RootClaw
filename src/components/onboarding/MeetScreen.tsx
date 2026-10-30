@@ -108,7 +108,7 @@ export function MeetScreen({ hosted, onNext }: { hosted: boolean; onNext: () => 
             </button>
           ) : (
             <button type="button" data-primary="" data-sign-in="dialog" className={PILL} onClick={() => setDialog(true)}>
-              {recommended ? t("onboarding.meet.connectNamed", { name: recommended.displayName }) : t("onboarding.meet.connectAi")}
+              {hosted && recommended ? t("onboarding.meet.connectNamed", { name: recommended.displayName }) : t("onboarding.meet.connectAi")}
             </button>
           )
         ) : (

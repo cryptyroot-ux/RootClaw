@@ -13,7 +13,7 @@ import { t } from "@/lib/i18n";
 import { productName } from "../lib/brand";
 
 export function NoEngines() {
-  const { state, refreshInstances } = useStore();
+  const { refreshInstances } = useStore();
   const remoteClient = window.ogb?.remoteClient?.active === true;
   const [rechecking, setRechecking] = useState(false);
   const recheck = async () => {
@@ -42,9 +42,6 @@ export function NoEngines() {
     );
   }
 
-  // Local servers (Ollama, LM Studio) the app probes on this computer.
-  const local = splitEngineRail(state.instances.filter((i) => i.install)).custom;
-
   return (
     <main className="relative flex h-full min-w-0 flex-1 flex-col overflow-y-auto bg-app">
       <WindowDragStrip />
@@ -54,26 +51,37 @@ export function NoEngines() {
           {t("noEngines.intro", { app: productName() })}
         </p>
 
-        <ProviderConnect className="mt-6" />
-
-        <section data-custom-provider aria-label={t("noEngines.customTitle")} className="mt-6 flex flex-col gap-2.5">
-          <EngineGroupLabel className="px-1">{t("noEngines.customTitle")}</EngineGroupLabel>
-          <p className="px-1 text-[12px] leading-relaxed text-ink-secondary">{t("noEngines.customHint")}</p>
-          <div className="flex flex-col">
-            <div data-provider-key="openaiCompat"><KeyRow id="openaiCompat" via="model_picker"><OpenAiCompatUrl /><OtherOpenAiCompatServers /></KeyRow></div>
-            <div data-provider-key="lmStudio" className="px-1 py-2"><LmStudioServer /></div>
-          </div>
-          {local.map((instance) => (
-            <div key={instance.instanceId} className="rounded-xl border border-hairline/40 bg-card p-3.5">
-              <div className="flex items-center gap-2 text-[14px] font-medium text-ink">
-                <InstanceProviderMark instance={instance} size={16} />
-                {instance.displayName}
-              </div>
-              <EngineSetup instance={instance} intent="inject" className="mt-0.5" />
-            </div>
-          ))}
-        </section>
+        <SelfHostedConnect className="mt-6" />
       </div>
     </main>
+  );
+}
+
+/** Connecting an AI on a self-hosted RootClaw: a provider sign-in or API key, then your own OpenAI-compatible server
+ * (base URL and key) or a model server on this computer (Ollama, LM Studio) that the app probes. */
+export function SelfHostedConnect({ className }: { className?: string }) {
+  const { state } = useStore();
+  const local = splitEngineRail(state.instances.filter((i) => i.install)).custom;
+  return (
+    <div className={className}>
+      <ProviderConnect />
+      <section data-custom-provider aria-label={t("noEngines.customTitle")} className="mt-6 flex flex-col gap-2.5">
+        <EngineGroupLabel className="px-1">{t("noEngines.customTitle")}</EngineGroupLabel>
+        <p className="px-1 text-[12px] leading-relaxed text-ink-secondary">{t("noEngines.customHint")}</p>
+        <div className="flex flex-col">
+          <div data-provider-key="openaiCompat"><KeyRow id="openaiCompat" via="model_picker"><OpenAiCompatUrl /><OtherOpenAiCompatServers /></KeyRow></div>
+          <div data-provider-key="lmStudio" className="px-1 py-2"><LmStudioServer /></div>
+        </div>
+        {local.map((instance) => (
+          <div key={instance.instanceId} className="rounded-xl border border-hairline/40 bg-card p-3.5">
+            <div className="flex items-center gap-2 text-[14px] font-medium text-ink">
+              <InstanceProviderMark instance={instance} size={16} />
+              {instance.displayName}
+            </div>
+            <EngineSetup instance={instance} intent="inject" className="mt-0.5" />
+          </div>
+        ))}
+      </section>
+    </div>
   );
 }

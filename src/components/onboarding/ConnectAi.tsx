@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, ChevronDown, LoaderCircle, RefreshCw, X } from "lucide-react";
 import { EngineSetup } from "@/components/EngineSetup";
+import { SelfHostedConnect } from "@/components/NoEngines";
 import { engineReady } from "@/components/EngineLibrary";
 import { InstanceProviderMark } from "@/components/ProviderIcons";
 import { cn } from "@/lib/cn";
@@ -142,6 +143,28 @@ export function ConnectAi({ tested }: { hosted?: boolean; tested: WelcomeAiNow |
   );
 }
 
+/** Whether the AI just connected answered its test message, above the self-hosted ways to connect one. */
+function ConnectAiStatus({ tested }: { tested: WelcomeAiNow | null }) {
+  if (!tested) return null;
+  if (aiWorks(tested)) return (
+    <p role="status" data-ai-connected className="mb-3 flex items-center gap-2 text-[14px] text-success">
+      <Check size={15} strokeWidth={2.5} aria-hidden="true" />
+      {t(tested.state === "passed" ? "onboarding.engines.answered" : "onboarding.engines.connected", { name: tested.instance.displayName })}
+    </p>
+  );
+  if (tested.state === "testing") return (
+    <p role="status" data-ai-checking className="mb-3 flex items-center gap-2 text-[14px] text-ink-secondary">
+      <LoaderCircle size={15} aria-hidden="true" className="shrink-0 animate-spin" />
+      {t("onboarding.engines.checkingAnswer", { name: tested.instance.displayName })}
+    </p>
+  );
+  return (
+    <p role="alert" data-ai-silent className="mb-3 rounded-2xl bg-warning/10 px-4 py-3 text-[13px] leading-relaxed text-ink">
+      {tested.error ?? t("onboarding.engines.noAnswer", { name: tested.instance.displayName })}
+    </p>
+  );
+}
+
 /** "Connect an AI": every way to connect one, over the first screen or the chat, until it is closed. */
 export function ConnectAiDialog({ hosted = false, tested, onClose }: { hosted?: boolean; tested: WelcomeAiNow | null; onClose: () => void }) {
   return (
@@ -171,7 +194,8 @@ export function ConnectAiDialog({ hosted = false, tested, onClose }: { hosted?: 
         </div>
         <div className="ui-modal-divider shrink-0" />
         <div className="min-h-0 overflow-y-auto p-4 [scrollbar-width:thin]">
-          <ConnectAi hosted={hosted} tested={tested} />
+          {/* Self-hosted: the provider sign-ins and keys, and your own server; the hosted Cloud keeps its own list. */}
+          {hosted ? <ConnectAi hosted={hosted} tested={tested} /> : <><ConnectAiStatus tested={tested} /><SelfHostedConnect /></>}
         </div>
       </div>
     </div>

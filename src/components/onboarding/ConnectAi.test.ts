@@ -18,6 +18,10 @@ vi.mock("@/state/store", () => ({
   },
   useStore: () => ({ state: { instances: f.instances }, dispatch: f.dispatch }),
 }));
+vi.mock("@/components/NoEngines", async () => {
+  const { createElement: h } = await import("react");
+  return { SelfHostedConnect: () => h("div", { "data-self-hosted-connect": "" }) };
+});
 vi.mock("@/components/EngineSetup", async () => {
   const { createElement: h } = await import("react");
   return { EngineSetup: ({ instance, intent, description }: { instance: InstanceInfo; intent: string; description?: string }) =>
@@ -208,7 +212,7 @@ describe("connecting an AI on the first screen", () => {
 
   it("opens as the Connect an AI dialog, which Escape and a click outside close", async () => {
     const onClose = vi.fn();
-    await act(async () => { root.render(createElement(ConnectAiDialog, { tested: null, onClose })); });
+    await act(async () => { root.render(createElement(ConnectAiDialog, { hosted: true, tested: null, onClose })); });
     const dialog = host.querySelector<HTMLElement>("[data-connect-ai]")!;
     expect(dialog.getAttribute("role")).toBe("dialog");
     expect(dialog.querySelector("h2")?.textContent).toBe("Connect an AI");
@@ -219,5 +223,13 @@ describe("connecting an AI on the first screen", () => {
     expect(onClose).toHaveBeenCalledTimes(2);
     await act(async () => { dialog.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); });
     expect(onClose, "a click inside stays").toHaveBeenCalledTimes(2);
+  });
+
+  it("on a self-hosted RootClaw, offers the provider sign-ins, keys and your own server instead of the engine list", async () => {
+    f.instances = [engine("claude", "claudeAgent", "Claude", false)];
+    await act(async () => { root.render(createElement(ConnectAiDialog, { tested: null, onClose: vi.fn() })); });
+    const dialog = host.querySelector<HTMLElement>("[data-connect-ai]")!;
+    expect(dialog.querySelector("[data-self-hosted-connect]")).not.toBeNull();
+    expect(dialog.querySelector("[data-ai-recommended]")).toBeNull();
   });
 });

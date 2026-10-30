@@ -13,6 +13,10 @@ import type { InstanceInfo } from "@/state/store";
 
 const f = vi.hoisted(() => ({ state: {} as Record<string, unknown>, dispatch: vi.fn(), api: vi.fn(), landed: vi.fn(), onDone: vi.fn(),
   checks: [] as string[] }));
+vi.mock("@/components/NoEngines", async () => {
+  const { createElement: h } = await import("react");
+  return { SelfHostedConnect: () => h("div", { "data-self-hosted-connect": "" }) };
+});
 vi.mock("@/state/store", () => ({ useStore: () => ({ state: f.state, dispatch: f.dispatch }), api: f.api }));
 vi.mock("@/lib/analytics", () => ({ track: vi.fn(), setEmailGateDone: vi.fn() }));
 vi.mock("@/components/Avatar", () => ({ BotAvatar: () => null, RootClawAvatar: () => null }));
@@ -201,23 +205,23 @@ describe("with no AI working yet", () => {
     await show();
     expect(host.querySelector("h1")?.textContent).toBe("Meet RootClaw");
     expect(button("Next")).toBeUndefined();
-    expect(button("Connect Claude")).toBeDefined();
+    // Self-hosted: the pill opens the provider sign-ins and keys, not one CLI engine.
+    expect(button("Connect an AI")).toBeDefined();
     expect(button("Other ways to connect")).toBeDefined();
     expect(host.querySelector("[data-engine-setup]"), "no setup card on the screen itself").toBeNull();
     await toChief("Set up later");
     expect(text()).toContain("Introducing your Chief of Staff");
   });
 
-  it("opens every other way in the Connect an AI dialog, where OpenCode's free model is only a backup", async () => {
+  it("opens the self-hosted ways to connect in the Connect an AI dialog", async () => {
     f.state = { ...f.state, instances: [freeOpenCode, claude(false)] };
     await show();
-    expect(button("Connect Claude"), "an AI set up in Terminal opens the dialog").toBeDefined();
+    expect(button("Connect an AI"), "the pill opens the dialog").toBeDefined();
     expect(f.checks).toEqual([]);
     await press("Other ways to connect");
     const dialog = host.querySelector("[data-connect-ai]")!;
     expect(dialog.textContent).toContain("Connect an AI");
-    expect(dialog.textContent).toContain("OpenCode's free model is ready as a backup");
-    expect(dialog.querySelector('[data-engine-setup="claude"]')).not.toBeNull();
+    expect(dialog.querySelector("[data-self-hosted-connect]")).not.toBeNull();
     await act(async () => { dialog.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
     expect(host.querySelector("[data-connect-ai]")).toBeNull();
     expect(text(), "Escape closed the dialog only").toContain("Meet RootClaw");
