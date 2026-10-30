@@ -4,6 +4,7 @@ import { narrowsNativeTools, parseToolScope, type ToolScope } from "./tool-scope
 export const TOOL_SCOPE_SUPPORT = {
   grok: "native-and-mcp", "openai-compat": "native-and-mcp", mistral: "native-and-mcp", minimax: "native-and-mcp",
   cerebras: "native-and-mcp", groq: "native-and-mcp", meta: "native-and-mcp",
+  anthropic: "native-and-mcp", gemini: "native-and-mcp", "openai-responses": "native-and-mcp", ollama: "native-and-mcp",
 } as const;
 
 export function assertToolScopeSupported(engine: string, value: unknown): ToolScope | undefined {

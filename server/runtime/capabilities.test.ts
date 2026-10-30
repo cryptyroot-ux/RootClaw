@@ -17,6 +17,10 @@ const EXPECTED: Record<string, EngineCapabilities> = {
   cerebras: chat,
   groq: chat,
   meta: chat,
+  anthropic: chat,
+  gemini: chat,
+  "openai-responses": chat,
+  ollama: chat,
 };
 
 describe("engineCapabilities", () => {
@@ -70,9 +74,11 @@ describe("replaysTranscriptNatively", () => {
   const chatKinds = sources(root).flatMap((file) => {
     const text = readFileSync(file, "utf8");
     if (!text.includes("createOpenAIChatRuntime(")) return [];
-    const kind = /driverKind: "([^"]+)"/.exec(text)?.[1] ?? /DRIVER_KIND = "([^"]+)"/.exec(text)?.[1];
+    // One file may declare several drivers on the runtime (api-providers.ts): every literal driverKind counts.
+    const kinds = [...new Set([...text.matchAll(/driverKind: "([^"]+)"/g)].map((match) => match[1]!))];
+    const kind = kinds[0] ?? /DRIVER_KIND = "([^"]+)"/.exec(text)?.[1];
     expect(kind, `${file} calls createOpenAIChatRuntime but declares no readable driverKind`).toBeDefined();
-    return [kind!];
+    return kinds.length ? kinds : [kind!];
   });
 
   it("finds the chat-completions family", () => {
