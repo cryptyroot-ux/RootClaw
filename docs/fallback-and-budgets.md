@@ -39,7 +39,8 @@ before the next turn once the hold has passed. Any other engine instance may be 
 - USD uses the provider-reported usage priced by `billing.prices` or the built-in list price table; a model with no
   price is held to its token caps only.
 - `warnAtPercent` (default 80): one notice in the conversation when a turn crosses it.
-- At 100% a turn that wants another round stops cleanly (`stopReason: "budget"`) with the cap named; a final answer
+- At 100% a turn that wants another round stops cleanly (`stopReason: "budget"`, ok). The conversation shows a
+  neutral notice naming the cap, not an error, and the fallback chain does not take over. A final answer
   that already arrived still lands. A turn whose daily allowance is already used up is refused at start (HTTP 409,
   `budget_cap`).
 - `monthlyUsd` is the older workspace cap, enforced only with the `budgets` entitlement.

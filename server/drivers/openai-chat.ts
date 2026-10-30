@@ -850,8 +850,11 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           abort.signal.throwIfAborted();
           // At the cap a final answer still lands; a round that wants more tools ends here, before spending more.
           if (spend === "stop" && completion.toolCalls.length) {
+            // The person's own cap did its job: say so plainly, not as a failure the chain should fail over from.
             stopReason = "budget";
-            throw new ChatProtocolError(meter!.stopMessage());
+            emit({ ...base(turn.threadId, turnId), type: "runtime.notice", message: meter!.stopMessage() });
+            ok = true;
+            break;
           }
           if (!completion.toolCalls.length) {
             if (!reply.trim()) throw new ChatProtocolError("provider returned an empty response");

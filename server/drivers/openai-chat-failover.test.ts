@@ -58,11 +58,13 @@ describe("native fallback chain signals", () => {
 
 describe("native budget guard", () => {
   const toolRound = 'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","type":"function","function":{"name":"nope","arguments":"{}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":900,"completion_tokens":200}}\n\ndata: [DONE]\n\n';
-  it("stops before another round once the turn reaches its cap, with a clear message", async () => {
-    const { error, done } = await runTurn(() => sse(toolRound), { budget: { tokens: 1_000, warnAtPercent: 80, why: "per-turn token cap of 1,000 tokens" } });
+  it("stops before another round once the turn reaches its cap, with a neutral notice", async () => {
+    const { error, events, done } = await runTurn(() => sse(toolRound), { budget: { tokens: 1_000, warnAtPercent: 80, why: "per-turn token cap of 1,000 tokens" } });
+    // A budget stop is the person's own limit doing its job: a neutral notice, not an error, and nothing for failover.
     expect(done.stopReason).toBe("budget");
-    expect(error?.message).toMatch(/reached its budget \(per-turn token cap of 1,000 tokens\)/);
-    expect(error?.limit).toBeUndefined();
+    expect(done.ok).toBe(true);
+    expect(error).toBeUndefined();
+    expect(events.filter((event) => event.type === "runtime.notice" && /reached its budget \(per-turn token cap of 1,000 tokens\)/.test(event.message))).toHaveLength(1);
   });
 
   it("warns once at the warn line", async () => {

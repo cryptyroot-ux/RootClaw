@@ -87,9 +87,9 @@ b.mode.value = "tools";
 const before = b.hits.n;
 const capped = await turn(engines.backup, "t2", { budget: { tokens: 1_000, warnAtPercent: 80, why: "per-turn token cap of 1,000 tokens" } });
 const done = capped.find((e) => e.type === "turn.completed");
-const said = capped.find((e) => e.type === "runtime.error");
-check("budget stop ends the turn with stopReason budget and a clear message", done?.type === "turn.completed" && done.stopReason === "budget"
-  && said?.type === "runtime.error" && /reached its budget/.test(said.message) && b.hits.n - before === 1);
+const said = capped.find((e) => e.type === "runtime.notice" && /reached its budget/.test(e.message));
+check("budget stop ends the turn with stopReason budget and a neutral notice, not an error", done?.type === "turn.completed" && done.stopReason === "budget"
+  && done.ok && Boolean(said) && !capped.some((e) => e.type === "runtime.error") && b.hits.n - before === 1);
 
 await Promise.all([engines.primary.dispose(), engines.backup.dispose()]);
 p.server.close(); b.server.close();
