@@ -2,10 +2,12 @@
 // list_dir. Paths are confined to the turn's workspace root (plus named extra roots) unless the turn allows more.
 // Engine-level and provider-agnostic: a driver only hands over the turn's folder.
 import { spawn, spawnSync } from "node:child_process";
-import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { randomBytes } from "node:crypto";
 import type { ChatToolCallView, ChatToolDefinition, ChatToolResult } from "./chat-mcp-tools.ts";
+import { executeGitTool, GIT_COMMIT_TOOL, GIT_READ_TOOLS, GIT_TOOL_DEFINITIONS } from "./workspace-git.ts";
+import { executeWebTool, WEB_TOOL_DEFINITIONS, type WebOptions } from "./web-tools.ts";
 
 export interface WorkspaceToolsConfig {
   /** The folder relative paths resolve against and the shell starts in. */
@@ -16,11 +18,17 @@ export interface WorkspaceToolsConfig {
   writeRoots?: readonly string[];
   /** Lift path confinement entirely (bot config or ROOTCLAW_WORKSPACE_UNRESTRICTED=1). */
   unrestricted?: boolean;
+  /** Mount web_fetch/web_search (default true). */
+  web?: boolean;
+  /** Tests only. */
+  webOptions?: WebOptions;
 }
 
 export const SHELL_TOOL = "shell";
-const READ_ONLY = new Set(["read_file", "grep", "glob", "list_dir"]);
-const MUTATING = new Set([SHELL_TOOL, "write_file", "edit_file", "apply_patch"]);
+const WEB_TOOLS = new Set(["web_fetch", "web_search"]);
+const GIT_TOOLS = new Set<string>([...GIT_READ_TOOLS, GIT_COMMIT_TOOL]);
+const READ_ONLY = new Set<string>(["read_file", "grep", "glob", "list_dir", ...GIT_READ_TOOLS, ...WEB_TOOLS]);
+const MUTATING = new Set([SHELL_TOOL, "write_file", "edit_file", "apply_patch", GIT_COMMIT_TOOL]);
 export const WORKSPACE_TOOL_NAMES: readonly string[] = [...READ_ONLY, ...MUTATING];
 export const isWorkspaceTool = (name: string) => READ_ONLY.has(name) || MUTATING.has(name);
 /** Read-only tools may run concurrently with each other; everything else is mutating by default. */
@@ -91,6 +99,8 @@ export const WORKSPACE_TOOL_DEFINITIONS: readonly ChatToolDefinition[] = [
     path: str("Folder to list (default: the workspace root)."),
     depth: int("How many levels to descend (default 1, max 4).", { minimum: 1, maximum: 4 }),
   }, []),
+  ...GIT_TOOL_DEFINITIONS,
+  ...WEB_TOOL_DEFINITIONS,
 ];
 
 export class WorkspacePathError extends Error {}
@@ -101,21 +111,23 @@ function realOrSelf(path: string): string {
   try { return realpathSync(path); } catch { return resolve(path); }
 }
 
-/** The real path of `path`, resolving symlinks on its nearest existing ancestor (a file to be created has none). */
-function realTarget(path: string): string {
-  let probe = path;
-  const tail: string[] = [];
-  for (;;) {
-    try {
-      const real = realpathSync(probe);
-      return tail.length ? join(real, ...tail.reverse()) : real;
-    } catch {
-      const parent = dirname(probe);
-      if (parent === probe) return path;
-      tail.push(probe.slice(parent.length + (parent.endsWith(sep) ? 0 : 1)));
-      probe = parent;
-    }
+/** The real path of `path`, following every symlink component, including dangling ones (a link to a file that does
+ * not exist yet still points somewhere, and writing through it would create that target). Missing tails are kept. */
+export function realTarget(path: string): string {
+  let pending = resolve(path).split(sep).filter(Boolean);
+  let current: string = sep;
+  for (let hops = 0; pending.length;) {
+    const next = join(current, pending.shift()!);
+    let stat;
+    try { stat = lstatSync(next); } catch { return join(next, ...pending); }
+    if (!stat.isSymbolicLink()) { current = next; continue; }
+    if (++hops > 40) throw new WorkspacePathError(`${path} has too many symbolic links`);
+    const link = readlinkSync(next);
+    const target = isAbsolute(link) ? link : join(current, link);
+    pending = [...resolve(target).split(sep).filter(Boolean), ...pending];
+    current = sep;
   }
+  return current;
 }
 
 export function createWorkspacePaths(config: WorkspaceToolsConfig) {
@@ -171,6 +183,10 @@ export function validateWorkspaceArgs(name: string, args: Record<string, unknown
     const spec = parameters.properties[key];
     if (!spec) throw new Error(`${name} has no parameter "${key}"`);
     if (value === null || value === undefined) continue;
+    if (spec.type === "array") {
+      if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) throw new Error(`${name}: "${key}" must be an array of strings`);
+      continue;
+    }
     const type = spec.type === "integer" ? "number" : spec.type;
     if (typeof value !== type || (spec.type === "integer" && !Number.isInteger(value))) throw new Error(`${name}: "${key}" must be ${spec.type === "integer" ? "an integer" : `a ${spec.type}`}`);
   }
@@ -578,6 +594,7 @@ export async function executeWorkspaceTool(name: string, args: Record<string, un
   const paths = createWorkspacePaths(config);
   try {
     if (!existsSync(paths.root)) mkdirSync(paths.root, { recursive: true });
+    if (GIT_TOOLS.has(name)) return await executeGitTool(name, args, (input, mode) => paths.resolve(input, mode), paths.root, signal);
     switch (name) {
       case SHELL_TOOL: return await runShell(args, paths, signal);
       case "read_file": return readFileTool(args, paths);
@@ -587,6 +604,9 @@ export async function executeWorkspaceTool(name: string, args: Record<string, un
       case "grep": return await grepTool(args, paths, signal);
       case "glob": return globTool(args, paths, signal);
       case "list_dir": return listDirTool(args, paths);
+      case "web_fetch": case "web_search":
+        if (config.web === false) return fail(`${name} is off for this bot.`);
+        return await executeWebTool(name, args, signal, config.webOptions);
       default: return fail(`Unknown workspace tool ${name}.`);
     }
   } catch (error) {
@@ -594,7 +614,24 @@ export async function executeWorkspaceTool(name: string, args: Record<string, un
   }
 }
 
-export const WORKSPACE_TOOLS_PROMPT = "You have workspace tools that run directly on this computer: shell, read_file, write_file, edit_file, apply_patch, grep, glob and list_dir. " +
+/** Skill folders a turn's prompt names (`Read "/abs/…/SKILL.md"`): readable, never writable, so skills work under confinement. */
+export function skillReadRoots(...texts: Array<string | undefined>): string[] {
+  const roots = new Set<string>();
+  for (const text of texts) {
+    if (!text) continue;
+    for (const match of text.matchAll(/Read ("(?:[^"\\]|\\.)*\/SKILL\.md")/g)) {
+      try {
+        const file = JSON.parse(match[1]!) as string;
+        if (isAbsolute(file)) roots.add(dirname(file));
+      } catch {}
+    }
+  }
+  return [...roots];
+}
+
+export const WORKSPACE_TOOLS_PROMPT = "\n\nYou have workspace tools that run directly on this computer: shell, read_file, write_file, edit_file, apply_patch, grep, glob, list_dir, " +
+  "git_status, git_diff, git_log, git_commit (never pushes), web_fetch and web_search. They are confined to your workspace folder (plus the skill folders named here, read-only); " +
+  "this is path confinement, not an OS sandbox: shell commands run as the server's user. " +
   "Relative paths resolve against your workspace folder. Read before you edit, prefer edit_file/apply_patch over rewriting whole files, " +
   "and check your work (run the tests or the command) before you report it done. Independent reads can go in one response as several tool calls; they run in parallel.";
 

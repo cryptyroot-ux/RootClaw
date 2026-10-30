@@ -28,7 +28,7 @@ export async function runToolBatch<Call, Result>(calls: readonly Call[], options
     while (end < calls.length && options.readOnly(calls[end]!)) end++;
     const group = calls.slice(index, end);
     index = end;
-    const results = new Array<Result>(group.length);
+    const results: Result[] = [];
     let next = 0;
     const worker = async () => {
       while (next < group.length && !options.signal.aborted) {
