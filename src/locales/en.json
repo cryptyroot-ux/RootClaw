@@ -531,8 +531,8 @@
   "teamImport.addPresets": "Add presets",
   "teamImport.presetList": "Preset bots (added to New bot)",
   "teamImport.sharedTeamSafety": "Bots, pictures, shared instructions, the Chief of Staff, group chats, playbooks and starter notes are added. Skills arrive switched off and routines paused. Connections arrive without their keys; finish them in Apps → MCP servers. Chat history, keys and passwords, model choices and computers are never included.",
-  "noEngines.title": "Install a model provider to get started",
-  "noEngines.intro": "{app} doesn't ship a model of its own. Your bots run on an AI CLI installed on this computer, using your existing login. Set up any one of these and your bots come alive.",
+  "noEngines.title": "Connect an AI to {app}",
+  "noEngines.intro": "{app} doesn't ship a model of its own. Sign in with a provider or paste an API key, and your bots come alive.",
   "engines.cloud": "Cloud",
   "engines.local": "Local",
   "common.checkAgain": "Check again",
@@ -1028,8 +1028,6 @@
   "memory.lendingReviewStale": "The memory changed again after you looked, so it can't use your computer yet. Check the notes below, then mark them reviewed.",
   "cloudSignIn.title": "Connect an AI to the Cloud",
   "cloudSignIn.intro": "The Cloud runs your bots with your own AI account. Choose one below; the sign-in stays in the Cloud.",
-  "cloudSignIn.apiKey": "Use an API key",
-  "cloudSignIn.apiKeyHint": "Pay as you go with an OpenAI, Anthropic, xAI or OpenRouter key, in Settings → API keys.",
   "cloudSignIn.creditUsedUp": "Your trial Claude credit is used up. Choose your own AI below to keep your bots working.",
   "cloudSignIn.creditEnded": "Trial Claude credit isn't available in the Cloud anymore. Choose your own AI below to keep your bots working.",
   "cloudSignIn.titleForJob": "Connect an AI to do it",
@@ -6816,5 +6814,7 @@
   "providerConnect.googleSignedIn": "Signed in with Google — sign in again",
   "providerConnect.googleNeedsClient": "Google sign-in needs your own OAuth client id in Settings. A Gemini API key works without it.",
   "providerConnect.opened": "Finish signing in on the page that opened, then check again.",
-  "providerConnect.keysTitle": "Or paste an API key"
+  "providerConnect.keysTitle": "Or paste an API key",
+  "noEngines.customTitle": "Your own server",
+  "noEngines.customHint": "Any OpenAI-compatible endpoint (a base URL and key), or a model server on this computer such as Ollama or LM Studio."
 }
