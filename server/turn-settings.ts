@@ -73,7 +73,7 @@ export function settingsTurnFields(cfg: AppConfig, dataDir: string, restrictsMcp
     ...(userSkillsDir ? { userSkillsDir } : {}),
     mcpCallTimeoutMs: mcpCallTimeoutMinutes(cfg) * 60_000,
     toolErrorCorrectiveRounds: correctiveRounds(cfg),
-    planVerify: planVerifySettings(process.env.ROOTCLAW_PLAN_VERIFY ? (process.env.ROOTCLAW_PLAN_VERIFY === "1" ? true : process.env.ROOTCLAW_PLAN_VERIFY) : cfg.engine?.planVerify, cfg.engine?.maxVerifyRetries),
+    planVerify: planVerifySettings(process.env.ROOTCLAW_PLAN_VERIFY ? (process.env.ROOTCLAW_PLAN_VERIFY === "1" ? true : process.env.ROOTCLAW_PLAN_VERIFY) : cfg.engine?.planVerify, cfg.engine?.maxVerifyRetries, cfg.engine?.verifyMinSteps),
     turnContext: {
       offloadDir: join(dataDir, "tool-outputs"),
       ...(cfg.context?.turnCompactAt ? { compactAt: cfg.context.turnCompactAt } : {}),

@@ -6,12 +6,14 @@ import type { ChatToolDefinition } from "./chat-mcp-tools.ts";
 import type { OpenAIChatMessage } from "./openai-chat.ts";
 
 export type PlanVerifyMode = "off" | "plan" | "plan+verify";
-export interface PlanVerifySettings { mode: PlanVerifyMode; maxVerifyRetries: number }
+export interface PlanVerifySettings { mode: PlanVerifyMode; maxVerifyRetries: number; verifyMinSteps: number }
 export type PlanStatus = "pending" | "doing" | "done" | "blocked";
 export interface PlanStep { id: string; title: string; status: PlanStatus }
 export interface TurnPlan { steps: PlanStep[]; revisions: number }
 
 export const DEFAULT_MAX_VERIFY_RETRIES = 1;
+/** Plans this long get a self-check even when no real tool ran. */
+export const DEFAULT_VERIFY_MIN_STEPS = 4;
 export const MAX_VERIFY_RETRIES = 3;
 export const MAX_PLAN_STEPS = 8;
 /** Rounds without a final answer after which an unplanned turn starts planning. */
@@ -19,10 +21,11 @@ export const REPLAN_AFTER_ROUNDS = 8;
 const STEP_CHARS = 120;
 const CARRY_MS = 120_000;
 
-export function planVerifySettings(raw: unknown, retries?: unknown): PlanVerifySettings {
+export function planVerifySettings(raw: unknown, retries?: unknown, minSteps?: unknown): PlanVerifySettings {
   const mode: PlanVerifyMode = raw === true ? "plan+verify" : raw === "plan" || raw === "plan+verify" ? raw : "off";
   const n = typeof retries === "number" && Number.isInteger(retries) ? retries : DEFAULT_MAX_VERIFY_RETRIES;
-  return { mode, maxVerifyRetries: Math.max(0, Math.min(MAX_VERIFY_RETRIES, n)) };
+  const steps = typeof minSteps === "number" && Number.isInteger(minSteps) && minSteps >= 1 ? Math.min(minSteps, MAX_PLAN_STEPS + 1) : DEFAULT_VERIFY_MIN_STEPS;
+  return { mode, maxVerifyRetries: Math.max(0, Math.min(MAX_VERIFY_RETRIES, n)), verifyMinSteps: steps };
 }
 
 const VERBS = /\b(add|build|create|write|fix|debug|refactor|implement|update|change|rename|move|delete|remove|install|deploy|test|run|check|compare|research|analy[sz]e|find|investigate|migrate|convert|generate|summari[sz]e|review|edit|list|compute|calculate|explain|verify|draft|design|configure|measure|count|set up|buat|tambah|perbaiki|ubah|hapus|cek|tes|jalankan|analisa|cari|bandingkan|tulis)\b/gi;
@@ -58,10 +61,11 @@ export const UPDATE_PLAN_DEFINITION: ChatToolDefinition = {
           items: {
             type: "object",
             properties: {
+              id: { type: "string", description: "The step number from the current plan, to change only its status." },
               title: { type: "string", description: "One short step." },
               status: { type: "string", enum: ["pending", "doing", "done", "blocked"] },
             },
-            required: ["title", "status"],
+            required: ["status"],
             additionalProperties: false,
           },
         },
@@ -80,10 +84,22 @@ export const REPLAN_HINT = "This turn has taken many steps. With your next real 
 export function applyPlanUpdate(previous: TurnPlan | null, args: Record<string, unknown>): { ok: true; plan: TurnPlan } | { ok: false; text: string } {
   const raw = Array.isArray(args.steps) ? args.steps : null;
   if (!raw?.length) return { ok: false, text: "update_plan needs a non-empty steps list." };
+  // Status-only updates may name just some steps: merge them into the earlier plan by id.
+  if (previous && raw.every((entry) => entry && typeof entry === "object" && "id" in entry && !(entry as { title?: unknown }).title)) {
+    const byId = new Map(raw.map((entry) => [String((entry as { id: unknown }).id).trim(), entry as Record<string, unknown>]));
+    const steps = previous.steps.map((step) => {
+      const change = byId.get(step.id);
+      const status = change && (change.status === "pending" || change.status === "doing" || change.status === "done" || change.status === "blocked") ? change.status : step.status;
+      return { ...step, status };
+    });
+    return { ok: true, plan: { steps, revisions: previous.revisions + 1 } };
+  }
   const steps: PlanStep[] = [];
   for (const [index, entry] of raw.slice(0, MAX_PLAN_STEPS).entries()) {
     const item = entry && typeof entry === "object" ? entry as Record<string, unknown> : {};
-    const title = typeof item.title === "string" ? item.title.trim().slice(0, STEP_CHARS) : "";
+    // A status-only update names the step by id (or position) and keeps its earlier title.
+    const earlier = previous?.steps.find((step) => step.id === String(item.id ?? "").trim()) ?? (item.id === undefined ? previous?.steps[index] : undefined);
+    const title = typeof item.title === "string" && item.title.trim() ? item.title.trim().slice(0, STEP_CHARS) : earlier?.title ?? "";
     if (!title) return { ok: false, text: `Step ${index + 1} has no title.` };
     const status: PlanStatus = item.status === "doing" || item.status === "done" || item.status === "blocked" ? item.status : "pending";
     steps.push({ id: String(index + 1), title, status });
@@ -113,10 +129,15 @@ export function pinPlan(messages: OpenAIChatMessage[], plan: TurnPlan | null, hi
   messages.push({ role: "user", content: [PLAN_TAG, hint, plan ? renderPlan(plan) : ""].filter(Boolean).join("\n") });
 }
 
-/** Whether a final answer is worth a self-check: always with 3+ steps, never for a short answer with no tools run. */
-export function shouldVerify(input: { answer: string; realToolCalls: number; plan: TurnPlan }): boolean {
-  if (input.plan.steps.length >= 3) return true;
-  return input.realToolCalls > 0 || input.answer.length >= 800;
+/** Whether a final answer is worth a self-check: a real (non-update_plan) tool ran, or the plan is long enough. */
+export function shouldVerify(input: { realToolCalls: number; plan: TurnPlan; minSteps?: number }): boolean {
+  return input.realToolCalls > 0 || input.plan.steps.length >= (input.minSteps ?? DEFAULT_VERIFY_MIN_STEPS);
+}
+
+/** The plan as the turn ended with an accepted final answer: open steps done, as the next revision; null if none open. */
+export function completePlan(plan: TurnPlan): TurnPlan | null {
+  if (!plan.steps.some((step) => step.status === "pending" || step.status === "doing")) return null;
+  return { steps: plan.steps.map((step) => step.status === "pending" || step.status === "doing" ? { ...step, status: "done" } : step), revisions: plan.revisions + 1 };
 }
 
 export const unfinishedSteps = (plan: TurnPlan | null) => plan?.steps.filter((step) => step.status === "pending" || step.status === "doing") ?? [];

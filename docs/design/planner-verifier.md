@@ -115,3 +115,17 @@ What v1 taught, and the v2 changes:
 MyCombo's input counts vary a lot between identical requests (the same initial-plan round took 376 input tokens
 in v1 and 4,610 in v2), so this router is too noisy to measure overhead precisely; use a fixed model for the eval set
 in §7 before turning the flag on by default.
+
+### Ollama Cloud, model `beam` (same prompt, 4 requests per run)
+
+| Run | Rounds (input / output) | Total | Time | Result |
+|---|---|---|---|---|
+| Flag off | 227 / 306 | 227 / 306 | 1.3 s | correct |
+| v2 plan+verify (verify gate: 3+ steps) | plan 401 / 263, answer 588 / 527, check 376 / 156 | 1,365 / 946 (4.3× tokens) | 5.9 s | pass |
+| v3 (verify gate: 4+ steps or a real tool; default `engine.verifyMinSteps` 4) | plan 401 / 108, then 2 rounds of stray `update_plan` calls (433 / 200, 662 / 79) | 1,496 / 387 before the 4-request cap | 3.7 s | no answer |
+
+v3 found a real bug: after the tool was withdrawn the model kept sending status-only `update_plan` calls
+(`{"id":"1","status":"done"}`, no title), which were rejected as invalid, so it retried in a loop. Fixed: status-only
+updates merge into the plan by id, and a call after withdrawal is acknowledged with "give the final answer now"
+instead of failing. A turn whose final answer is accepted now records the plan as completed (open steps done, one
+revision up); a check that still fails after the cap leaves them open. Not yet re-measured live after the fix.

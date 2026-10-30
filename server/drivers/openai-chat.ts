@@ -24,7 +24,7 @@ import type { Completion, ModelAdapter, OpenAIChatMessage, Usage } from "./model
 import { BudgetMeter } from "../budget-guard.ts";
 import { countTokens, prepareTokenizer } from "./tokenizer.ts";
 import { fetchFresh } from "./http-client.ts";
-import { applyPlanUpdate, carryPlan, parseVerdict, pinPlan, PLAN_HINT, PLAN_KEEP_HINT, REPLAN_AFTER_ROUNDS, REPLAN_HINT, shouldPlan, shouldVerify,
+import { applyPlanUpdate, carryPlan, completePlan, parseVerdict, pinPlan, PLAN_HINT, PLAN_KEEP_HINT, REPLAN_AFTER_ROUNDS, REPLAN_HINT, shouldPlan, shouldVerify,
   takeCarriedPlan, unpinPlan, unverifiedNote, UPDATE_PLAN_DEFINITION, UPDATE_PLAN_TOOL, verifierPrompt, VERIFY_MAX_TOKENS, verifyRetryMessage,
   type TurnPlan } from "./plan-verify.ts";
 import { failoverHold, failoverKind } from "./failover.ts";
@@ -739,7 +739,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         };
         let verifyAttempts = 0;
         let verifyFails = 0;
-        const emitPlan = (reason: "initial" | "replan" | "carried") => {
+        const emitPlan = (reason: "initial" | "replan" | "carried" | "completed") => {
           if (plan) emit({ ...base(turn.threadId, turnId), type: "plan.updated", steps: plan.steps.map((step) => ({ ...step })), revision: plan.revisions, reason });
         };
         const startPlanning = (hint: string) => {
@@ -960,7 +960,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
               continue;
             }
             // Verifier: a planned turn's final answer gets a cheap self-check; a fail goes back to the model, capped.
-            if (planVerify.mode === "plan+verify" && planning && plan && shouldVerify({ answer: reply, realToolCalls: seenCalls.size - planCallIds.size, plan })) {
+            if (planVerify.mode === "plan+verify" && planning && plan && shouldVerify({ realToolCalls: seenCalls.size - planCallIds.size, plan, minSteps: planVerify.verifyMinSteps })) {
               const prompt = verifierPrompt({ request: turn.text ?? "", plan, answer: reply });
               const attempt = verifyAttempts + 1;
               let verdict: ReturnType<typeof parseVerdict> | null = null;
@@ -985,6 +985,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
                 }
               }
               if (verdict?.verdict === "fail") {
+                // Past the cap the open steps stay open: the stored plan shows what the check found unfinished.
                 if (verifyFails < planVerify.maxVerifyRetries && !turnEntry.ending) {
                   verifyFails++;
                   messages.push(assistantReply(model, completion, reply), { role: "user", content: verifyRetryMessage(verdict.missing) });
@@ -996,18 +997,17 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
                 break;
               }
             }
+            // An accepted final answer completes the plan: record the open steps as done, one revision up.
+            if (planning && plan) {
+              const completed = completePlan(plan);
+              if (completed) { plan = completed; emitPlan("completed"); }
+            }
             ok = true;
             stopReason = "end_turn";
             break;
           }
           const planOnly = planning && completion.toolCalls.every((call) => call.function.name === UPDATE_PLAN_TOOL);
           if (!tools.definitions.length && !planOnly) throw new ChatProtocolError("provider returned tool calls, but no tools are available for this turn");
-          if (planOnly) {
-            planOnlyRounds++;
-            // With nothing real to batch a status update with, or after a second status-only round, withdraw the tool.
-            const realTools = tools.definitions.some((definition) => ![UPDATE_PLAN_TOOL, ASK_USER_TOOL, READ_TOOL_OUTPUT_TOOL].includes(definition.function.name));
-            if (!realTools || planOnlyRounds >= 2) dropPlanTool();
-          }
           // Validate IDs for the entire batch before executing any of its calls.
           for (const call of completion.toolCalls) {
             if (seenCalls.has(call.id)) throw new ChatProtocolError("provider reused a tool-call ID; refusing to repeat an operation");
@@ -1073,7 +1073,12 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
                 emit({ ...base(turn.threadId, turnId), type: "item.started", itemType: "tool", itemId: call.id, title: UPDATE_PLAN_TOOL });
                 started = true;
                 const updated = applyPlanUpdate(plan, args as Record<string, unknown>);
-                if (updated.ok) {
+                // After the tool is withdrawn, a stray call is never a failure to retry: the answer is what is missing.
+                const withdrawn = !session.definitions.some((definition) => definition.function.name === UPDATE_PLAN_TOOL);
+                if (withdrawn) {
+                  if (updated.ok) { plan = updated.plan; emitPlan("replan"); }
+                  result = { ok: true, text: "Plan noted. Do not call update_plan again; give the final answer now." };
+                } else if (updated.ok) {
                   const first = !plan;
                   plan = updated.plan;
                   planHint = PLAN_KEEP_HINT;
@@ -1152,6 +1157,13 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             },
           });
           if (screenshotParts.length) messages.push({ role: "user", content: screenshotParts });
+          // After the batch ran (so this round's calls saw the tool as offered):
+          if (planOnly) {
+            planOnlyRounds++;
+            // With nothing real to batch a status update with, or after a second status-only round, withdraw the tool.
+            const realTools = tools.definitions.some((definition) => ![UPDATE_PLAN_TOOL, ASK_USER_TOOL, READ_TOOL_OUTPUT_TOOL].includes(definition.function.name));
+            if (!realTools || planOnlyRounds >= 2) dropPlanTool();
+          }
         }
         if (!ok) throw new ChatProtocolError(stoppedAfter(`${MAX_CHAT_ROUNDS} steps`));
       } catch (value) {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyPlanUpdate, carryPlan, parseVerdict, pinPlan, PLAN_TAG, planVerifySettings, shouldPlan, shouldVerify, takeCarriedPlan, unpinPlan, verifierPrompt } from "./plan-verify.ts";
+import { applyPlanUpdate, carryPlan, completePlan, parseVerdict, pinPlan, PLAN_TAG, planVerifySettings, shouldPlan, shouldVerify, takeCarriedPlan, unpinPlan, verifierPrompt } from "./plan-verify.ts";
 import { compactTurnMessages } from "./turn-context.ts";
 import type { OpenAIChatMessage } from "./openai-chat.ts";
 
@@ -7,9 +7,11 @@ const tools = { toolsEnabled: true, workspaceTools: false };
 
 describe("plan-verify", () => {
   it("reads the flag: off by default, true is plan+verify, retries capped at 3", () => {
-    expect(planVerifySettings(undefined)).toEqual({ mode: "off", maxVerifyRetries: 1 });
+    expect(planVerifySettings(undefined)).toEqual({ mode: "off", maxVerifyRetries: 1, verifyMinSteps: 4 });
+    expect(planVerifySettings(true, 1, 2).verifyMinSteps).toBe(2);
+    expect(planVerifySettings(true, 1, 0).verifyMinSteps).toBe(4);
     expect(planVerifySettings(true).mode).toBe("plan+verify");
-    expect(planVerifySettings("plan", 9)).toEqual({ mode: "plan", maxVerifyRetries: 3 });
+    expect(planVerifySettings("plan", 9)).toMatchObject({ mode: "plan", maxVerifyRetries: 3 });
     expect(planVerifySettings("bogus").mode).toBe("off");
   });
 
@@ -59,12 +61,27 @@ describe("plan-verify", () => {
   it("verifies only when it is worth it, with a tight prompt", () => {
     const two = { steps: [{ id: "1", title: "a", status: "done" as const }, { id: "2", title: "b", status: "done" as const }], revisions: 1 };
     const three = { ...two, steps: [...two.steps, { id: "3", title: "c", status: "done" as const }] };
-    expect(shouldVerify({ answer: "short", realToolCalls: 0, plan: two })).toBe(false);
-    expect(shouldVerify({ answer: "short", realToolCalls: 1, plan: two })).toBe(true);
-    expect(shouldVerify({ answer: "x".repeat(900), realToolCalls: 0, plan: two })).toBe(true);
-    expect(shouldVerify({ answer: "short", realToolCalls: 0, plan: three })).toBe(true);
+    const four = { ...three, steps: [...three.steps, { id: "4", title: "d", status: "done" as const }] };
+    expect(shouldVerify({ realToolCalls: 0, plan: three })).toBe(false);
+    expect(shouldVerify({ realToolCalls: 1, plan: two })).toBe(true);
+    expect(shouldVerify({ realToolCalls: 0, plan: four })).toBe(true);
+    expect(shouldVerify({ realToolCalls: 0, plan: three, minSteps: 3 })).toBe(true);
     const prompt = verifierPrompt({ request: "t".repeat(5_000), plan: two, answer: "a".repeat(5_000) });
     expect(prompt.length).toBeLessThan(4_400);
+  });
+
+  it("merges a status-only update by id into the earlier plan", () => {
+    const made = applyPlanUpdate(null, { steps: [{ title: "a", status: "doing" }, { title: "b", status: "pending" }] });
+    if (!made.ok) throw new Error("expected a plan");
+    const next = applyPlanUpdate(made.plan, { steps: [{ id: "1", status: "done" }] });
+    expect(next).toEqual({ ok: true, plan: { steps: [{ id: "1", title: "a", status: "done" }, { id: "2", title: "b", status: "pending" }], revisions: 2 } });
+    expect(applyPlanUpdate(null, { steps: [{ id: "1", status: "done" }] }).ok).toBe(false);
+  });
+
+  it("completes open steps as the next revision, and leaves a finished plan alone", () => {
+    const plan = { steps: [{ id: "1", title: "a", status: "done" as const }, { id: "2", title: "b", status: "doing" as const }, { id: "3", title: "c", status: "blocked" as const }], revisions: 2 };
+    expect(completePlan(plan)).toEqual({ steps: [plan.steps[0], { ...plan.steps[1], status: "done" }, plan.steps[2]], revisions: 3 });
+    expect(completePlan({ ...plan, steps: [plan.steps[0]!] })).toBeNull();
   });
 
   it("carries a plan to the next model for a short while only", () => {

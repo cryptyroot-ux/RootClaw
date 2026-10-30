@@ -209,7 +209,7 @@ export interface SendTurnInput {
   workspaceTools?: { readRoots?: string[]; writeRoots?: string[]; unrestricted?: boolean };
   /** Native-engine context management inside one turn (mid-turn compaction, tool-output offload). */
   /** Native-engine planner/verifier (engine.planVerify); absent or mode "off" disables both. */
-  planVerify?: { mode: "off" | "plan" | "plan+verify"; maxVerifyRetries: number };
+  planVerify?: { mode: "off" | "plan" | "plan+verify"; maxVerifyRetries: number; verifyMinSteps?: number };
   turnContext?: { compactAt?: number; offloadBytes?: number; offloadDir?: string; summaryModel?: string; keepExchanges?: number };
 }
 

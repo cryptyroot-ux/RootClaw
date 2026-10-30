@@ -50,7 +50,7 @@ export type RuntimeEvent = RuntimeEventBase &
     | { type: "session.exited"; reason?: string }
     | { type: "turn.started" }
     /** The native engine's plan for this turn changed (planner, behind engine.planVerify). */
-    | { type: "plan.updated"; steps: { id: string; title: string; status: "pending" | "doing" | "done" | "blocked" }[]; revision: number; reason: "initial" | "replan" | "carried" }
+    | { type: "plan.updated"; steps: { id: string; title: string; status: "pending" | "doing" | "done" | "blocked" }[]; revision: number; reason: "initial" | "replan" | "carried" | "completed" }
     /** The native engine self-checked a final answer (verifier, behind engine.planVerify). */
     | { type: "verify.completed"; verdict: "pass" | "fail" | "skipped"; attempt: number; missing?: string[]; why?: string }
     | {

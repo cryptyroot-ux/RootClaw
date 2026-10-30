@@ -24,7 +24,7 @@ const MULTI = "First investigate why the build fails, then fix the config and ru
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
 
-async function fixture(rounds: Array<"plan" | "answer">, verdicts: string[] = [], failRound = -1) {
+async function fixture(rounds: Array<"plan" | "status" | "answer">, verdicts: string[] = [], failRound = -1) {
   let failed = false;
   const streamed: Body[] = [];
   const checks: Body[] = [];
@@ -43,6 +43,8 @@ async function fixture(rounds: Array<"plan" | "answer">, verdicts: string[] = []
     streamed.push(body);
     const step = rounds[streamed.length - 1] ?? "answer";
     if (step === "plan") sse(response, [chunk({ content: null, tool_calls: [planCall("doing")] }, "tool_calls")]);
+    else if (step === "status") sse(response, [chunk({ content: null, tool_calls: [{ index: 0, id: `st_${streamed.length}`, type: "function",
+      function: { name: "update_plan", arguments: JSON.stringify({ steps: [{ id: "1", status: "done" }] }) } }] }, "tool_calls")]);
     else sse(response, [chunk({ content: `Answer ${streamed.length}.` }, "stop")]);
   });
   await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
@@ -67,7 +69,9 @@ async function fixture(rounds: Array<"plan" | "answer">, verdicts: string[] = []
 }
 
 const toolNames = (body: Body) => (body.tools ?? []).map((tool) => tool.function.name);
-const ON = { mode: "plan+verify" as const, maxVerifyRetries: 1 };
+const ON = { mode: "plan+verify" as const, maxVerifyRetries: 1, verifyMinSteps: 3 };
+const DEFAULT_ON = { mode: "plan+verify" as const, maxVerifyRetries: 1 };
+const plans = (events: Array<{ type: string }>) => events.filter((event) => event.type === "plan.updated") as unknown as Array<{ revision: number; reason: string; steps: Array<{ status: string }> }>;
 
 describe("planner/verifier in a native turn", () => {
   it("stays off by default: no update_plan tool, no hint, no check", async () => {
@@ -126,6 +130,37 @@ describe("planner/verifier in a native turn", () => {
     const done = await f.run({ planVerify: ON });
     expect(done).toMatchObject({ ok: true, stopReason: "end_turn" });
     expect(f.streamed).toHaveLength(2);
+  });
+
+  it("skips the check for a short tool-free plan by default, and records the plan completed", async () => {
+    const f = await fixture(["plan", "answer"]);
+    const done = await f.run({ planVerify: DEFAULT_ON });
+    expect(done).toMatchObject({ ok: true, stopReason: "end_turn" });
+    expect(f.checks).toHaveLength(0);
+    const recorded = plans(f.recorder.events);
+    expect(recorded.map((event) => [event.revision, event.reason])).toEqual([[1, "initial"], [2, "completed"]]);
+    expect(recorded[1]!.steps.map((step) => step.status)).toEqual(["done", "done", "done"]);
+  });
+
+  it("leaves open steps open when the check still fails after the cap", async () => {
+    const fail = '{"verdict":"fail","missing":["tests were not run"]}';
+    const f = await fixture(["plan", "answer", "answer"], [fail, fail]);
+    await f.run({ planVerify: ON });
+    const recorded = plans(f.recorder.events);
+    expect(recorded.map((event) => event.reason)).toEqual(["initial"]);
+    expect(recorded[0]!.steps.map((step) => step.status)).toEqual(["doing", "pending", "pending"]);
+  });
+
+  it("answers a stray status-only update_plan after the tool is withdrawn, instead of failing it in a loop", async () => {
+    const f = await fixture(["plan", "status", "answer"]);
+    const done = await f.run({ planVerify: DEFAULT_ON });
+    expect(done).toMatchObject({ ok: true, stopReason: "end_turn" });
+    expect(f.streamed).toHaveLength(3);
+    const toolResult = f.streamed[2]!.messages.filter((message) => message.role === "tool").at(-1)!;
+    expect(JSON.parse(String(toolResult.content))).toMatchObject({ ok: true });
+    const recorded = plans(f.recorder.events);
+    expect(recorded.map((event) => [event.revision, event.reason])).toEqual([[1, "initial"], [2, "replan"], [3, "completed"]]);
+    expect(recorded[1]!.steps.map((step) => step.status)).toEqual(["done", "pending", "pending"]);
   });
 
   it("plans without checking in plan-only mode", async () => {
