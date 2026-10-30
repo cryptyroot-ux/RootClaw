@@ -41,7 +41,6 @@ function world(handoffs: () => readonly HandoffView[] = () => []) {
     runs: [] as Array<{ id: string; botId: string; groupId?: string; status: string }>,
     roomWorking: new Set<string>(),
     goneThreads: new Set<string>(),
-    signingIn: false,
   };
   const busy = createMoveWaits({
     bots: () => state.bots,
@@ -52,7 +51,6 @@ function world(handoffs: () => readonly HandoffView[] = () => []) {
     roomWorking: (id) => state.roomWorking.has(id),
     handoffs,
     exists: (node) => state.bots.some((bot) => bot.id === node.botId) && !state.goneThreads.has(node.threadId),
-    signingIn: () => state.signingIn,
     now: () => state.now,
   });
   return { state, busy };
@@ -133,13 +131,10 @@ describe("what the move waits for: real work under way, always by name", () => {
     expect(busy()).toBeNull();
   });
 
-  it("a room running a turn holds it by the room's name, a sign-in by what it is", () => {
+  it("a room running a turn holds it by the room's name", () => {
     const { state, busy } = world();
     state.roomWorking.add("launch");
     expect(busy()).toEqual({ name: "Launch room", what: "room" });
-    state.roomWorking.clear();
-    state.signingIn = true;
-    expect(busy()).toEqual({ name: "", what: "sign-in" });
   });
 
   it("names the bot answering now before anything else under way", () => {
@@ -194,13 +189,6 @@ describe("what the move waits for: a ceiling on everything but a turn answering 
     expect(busy()).toBeNull();
   });
 
-  it("a sign-in counts for at most the ceiling too", () => {
-    const { state, busy } = world();
-    state.signingIn = true;
-    expect(busy()).toEqual({ name: "", what: "sign-in" });
-    state.now += WAIT_CEILING_MS;
-    expect(busy()).toBeNull();
-  });
 });
 
 describe("POST /api/move/freeze with the move's own rule", () => {
@@ -218,14 +206,11 @@ describe("POST /api/move/freeze with the move's own rule", () => {
       const coordinator = parkedOnCards(join(dir, "runtime"), Date.now);
       const queued = [handoff({ id: "child", botId: "jev", status: "queued" })];
       let extra: HandoffView[] = queued;
-      const { state, busy } = world(() => [...coordinator.active(), ...extra]);
+      const { busy } = world(() => [...coordinator.active(), ...extra]);
       const freeze = createMoveFreeze({ dataDir: dir });
       const route = createMoveFreezeRoutes({ freeze, busy, restart() {} });
       expect(await post(route)).toEqual({ status: 409, body: { error: "A bot is still working.", busy: "Jev", what: "bot" } });
       extra = [];
-      state.signingIn = true;
-      expect(await post(route)).toEqual({ status: 409, body: { error: "A bot is still working.", busy: "", what: "sign-in" } });
-      state.signingIn = false;
       expect(await post(route)).toEqual({ status: 200, body: { frozen: true } });
       expect(freeze.frozen()).toBe(true);
       coordinator.close();

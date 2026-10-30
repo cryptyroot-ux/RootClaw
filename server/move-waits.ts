@@ -39,7 +39,6 @@ export interface MoveWaitsDeps {
   handoffs(): readonly HandoffView[];
   /** The hand-off's bot and conversation still exist here, as the coordinator checks them before each turn. */
   exists(node: HandoffView): boolean;
-  signingIn(): boolean;
   now?(): number;
 }
 
@@ -70,7 +69,6 @@ export function createMoveWaits(deps: MoveWaitsDeps): () => MoveWait | null {
       const bot = bots.get(node.botId);
       if (bot && UNDER_WAY.has(node.status) && deps.exists(node)) found.push({ key: `handoff:${node.id}`, wait: { name: bot.name, what: "bot" } });
     }
-    if (deps.signingIn()) found.push({ key: "sign-in", wait: { name: "", what: "sign-in" } });
 
     const keys = new Set(found.map((held) => held.key));
     for (const key of seen.keys()) if (!keys.has(key)) seen.delete(key);

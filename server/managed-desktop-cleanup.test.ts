@@ -67,7 +67,7 @@ function fixture(kind: "direct" | "group", threadIds = ["first"]) {
   }
   const context = vm.createContext({
     companyShutdown: false, providerInstancesChanging: new Set(),
-    providerAuthSessions: { clearInstance() {} }, bus: { detach: (id: string) => detached.push(id) },
+    bus: { detach: (id: string) => detached.push(id) },
     liveTurnByThread: new Map(), stoppedTurnText: (_threadId: string, _turnId: string | undefined, cause: string) => cause,
     turnStops: { stopping: (threadId: string, _turnId: string | undefined, cause: string) => causes.push({ threadId, cause, interrupted: interruptCalls.includes(threadId) }) },
     stoppedTurnOutcome: ({ reason }: { reason: string }) => reason,
@@ -316,7 +316,6 @@ function reloadFixture() {
     activeGroupSpeaker: () => undefined,
     threadBusy: (_botId: string, threadId: string) => threads.find(thread => thread.threadId === threadId)!.busy,
     groupSpeakers: new Map([...rooms].map(([threadId, room]) => [threadId, { botId: room.botId }])), turnResourceOwners: new Map(threads.map(thread => [thread.threadId, { threadId: thread.threadId, generation: `gen-${thread.threadId}` }])),
-    providerAuthSessions: { clearInstance: (id: string) => log.push(`auth:${id}`) },
     bus: { detach: (id: string) => log.push(`detach:${id}`), attach: (instances: Array<{ instanceId: string }>) => log.push(`attach:${instances.map(instance => instance.instanceId)}`) },
     registry: {
       dispose: async (id: string) => { log.push(`dispose:${id}`); },
@@ -367,7 +366,7 @@ it("a changed key replaces only its engine and tells only that engine's requeste
     "eli-work": [], "eli-idle": [], "mira-work": ["mira agents"], "mira-idle": ["mira agents"],
     "room-compat": ["mira agents"], "room-claude": ["mira agents"],
   });
-  expect(f.log).toEqual(expect.arrayContaining(["auth:compat", "detach:compat", "cancel:eli-work", "load:compat", "attach:compat",
+  expect(f.log).toEqual(expect.arrayContaining(["detach:compat", "cancel:eli-work", "load:compat", "attach:compat",
     "message:eli-work:turn interrupted — provider settings changed",
     "room-stop:room-compat:stopped:turn interrupted — provider settings changed:true"]));
   expect(f.settled).toEqual([{ generation: "gen-eli-work", text: "turn interrupted — provider settings changed (eli-work)" }]);
