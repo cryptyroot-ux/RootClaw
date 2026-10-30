@@ -22,6 +22,7 @@ import { ChatProtocolError, ChatReasoningDetails, ChatToolCalls, object, type Ch
 import { appendNative } from "./native.ts";
 import type { Completion, ModelAdapter, OpenAIChatMessage, Usage } from "./model-adapter.ts";
 import { BudgetMeter } from "../budget-guard.ts";
+import { prepareTokenizer } from "./tokenizer.ts";
 import { failoverHold, failoverKind } from "./failover.ts";
 import { classifyError, HttpStatusError, interruptibleDelay, nextRetryDelay, parseRetryAfter, RETRY_MAX_ATTEMPTS } from "./retry.ts";
 import { plainFailureMessage } from "./engine-errors.ts";
@@ -713,11 +714,13 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         const window = contextWindowFor(model, options.models());
         const budget = turnCompactBudget(window, ctx.compactAt);
         const calibration = new TokenCalibration();
+        // Exact counts for known encodings; loads lazily (once per process) and falls back to the estimate.
+        await prepareTokenizer(model);
         let compactions = 0;
         const compact = async (reason: "budget" | "overflow", keepExchanges: number) => {
           const summaryModel = ctx.summaryModel || model;
           const result = await compactTurnMessages(messages, request, {
-            tools: tools!.definitions, keepExchanges,
+            tools: tools!.definitions, model, keepExchanges,
             summaryBudgetBytes: Math.max(4_000, Math.floor(window * 0.4 * 3.5)),
             summarize: async (prompt) => {
               const { text, reasoning } = await adapter.complete({ messages: [{ role: "user", content: prompt }], model: summaryModel, stream: false, signal: abort.signal, tools: [] });
@@ -742,10 +745,17 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           // Once over budget, fold down to ~60% of it so the next rounds do not compact again at once.
           let target = budget;
           for (let keep = ctx.keepExchanges ?? DEFAULT_KEEP_EXCHANGES; keep >= 1; keep = keep > 1 ? Math.floor(keep / 2) : 0) {
-            if (calibration.apply(estimateRequestTokens(messages, tools.definitions)) < target) break;
+            if (calibration.apply(estimateRequestTokens(messages, tools.definitions, model)) < target) break;
             if (await compact("budget", keep)) target = Math.floor(budget * 0.6);
           }
-          const sentEstimate = estimateRequestTokens(messages, tools.definitions);
+          const sentEstimate = estimateRequestTokens(messages, tools.definitions, model);
+          // Budget pre-check: after the first round, a call whose prompt alone would overrun the cap is not made.
+          if (round > 0 && meter?.wouldExceed(calibration.apply(sentEstimate))) {
+            stopReason = "budget";
+            emit({ ...base(turn.threadId, turnId), type: "runtime.notice", message: meter.stopMessage() });
+            ok = true;
+            break;
+          }
           native("out", options.nativeLog.outgoing(turn, messages, model, tools.definitions));
           let attempt = 0;
           let forced = false;

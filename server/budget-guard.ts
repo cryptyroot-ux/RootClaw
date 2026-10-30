@@ -79,6 +79,14 @@ export class BudgetMeter {
     return "ok";
   }
 
+  /** True when sending `inputTokens` more prompt tokens would by itself pass the turn's token or USD cap. */
+  wouldExceed(inputTokens: number): boolean {
+    if (!(inputTokens > 0)) return false;
+    if (this.budget.tokens !== undefined && this.spent.tokens + inputTokens > this.budget.tokens) return true;
+    if (this.budget.usd !== undefined && this.price && this.spent.usd + (inputTokens * this.price.inputPerMillion) / 1_000_000 > this.budget.usd) return true;
+    return false;
+  }
+
   warnMessage(): string {
     return `This turn has used ${this.budget.warnAtPercent}% of its budget (${this.budget.why}).`;
   }

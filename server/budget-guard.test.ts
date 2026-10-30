@@ -44,3 +44,16 @@ describe("BudgetMeter: provider-reported usage against the turn's allowance", ()
     expect(unpriced.add({ input: 1e9, output: 1e9 })).toBe("ok");
   });
 });
+
+describe("BudgetMeter.wouldExceed: pre-call check of the next prompt", () => {
+  it("flags a prompt that alone would pass the token or USD cap", () => {
+    const meter = new BudgetMeter({ tokens: 1_000, warnAtPercent: 80, why: "cap" }, null);
+    meter.add({ input: 600, output: 100 });
+    expect(meter.wouldExceed(200)).toBe(false);
+    expect(meter.wouldExceed(301)).toBe(true);
+    expect(meter.wouldExceed(0)).toBe(false);
+    const priced = new BudgetMeter({ usd: 0.01, warnAtPercent: 80, why: "usd" }, { inputPerMillion: 10, outputPerMillion: 30 } as never);
+    expect(priced.wouldExceed(900)).toBe(false);
+    expect(priced.wouldExceed(1_100)).toBe(true);
+  });
+});

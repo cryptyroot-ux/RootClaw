@@ -6,6 +6,7 @@ import { join, resolve, sep } from "node:path";
 import { prefixBytes } from "../context-rebuild.ts";
 import type { ChatToolDefinition } from "./chat-mcp-tools.ts";
 import type { OpenAIChatMessage } from "./openai-chat.ts";
+import { countTokens } from "./tokenizer.ts";
 
 export interface TurnContextSettings {
   /** Fraction (<1) of the window, or absolute tokens, at which a turn compacts before the next model call. */
@@ -25,8 +26,6 @@ export const DEFAULT_OFFLOAD_BYTES = 16_000;
 export const DEFAULT_KEEP_EXCHANGES = 4;
 const HEAD_BYTES = 2_000;
 const TAIL_BYTES = 1_000;
-/** Characters per token for the cheap estimate; deliberately below the ~4 of English text so it over-counts. */
-const CHARS_PER_TOKEN = 3.5;
 const IMAGE_TOKENS = 1_100;
 const MESSAGE_OVERHEAD_TOKENS = 4;
 
@@ -44,22 +43,23 @@ function textOf(content: OpenAIChatMessage["content"]): { text: string; images: 
   return { text, images };
 }
 
-const tokensOfText = (text: string) => Math.ceil(text.length / CHARS_PER_TOKEN);
+const tokensOfText = (text: string, model?: string) => countTokens(text, model);
 
-export function estimateMessageTokens(message: OpenAIChatMessage): number {
+/** Exact for models with a known (and loaded) encoding, see tokenizer.ts; a chars/3.5 over-count otherwise. */
+export function estimateMessageTokens(message: OpenAIChatMessage, model?: string): number {
   const { text, images } = textOf(message.content);
-  let tokens = MESSAGE_OVERHEAD_TOKENS + tokensOfText(text) + images * IMAGE_TOKENS;
-  if (message.tool_calls?.length) tokens += tokensOfText(JSON.stringify(message.tool_calls));
-  for (const key of ["reasoning_content", "reasoning"] as const) if (message[key]) tokens += tokensOfText(message[key]!);
-  if (message.reasoning_details?.length) tokens += tokensOfText(JSON.stringify(message.reasoning_details));
+  let tokens = MESSAGE_OVERHEAD_TOKENS + tokensOfText(text, model) + images * IMAGE_TOKENS;
+  if (message.tool_calls?.length) tokens += tokensOfText(JSON.stringify(message.tool_calls), model);
+  for (const key of ["reasoning_content", "reasoning"] as const) if (message[key]) tokens += tokensOfText(message[key]!, model);
+  if (message.reasoning_details?.length) tokens += tokensOfText(JSON.stringify(message.reasoning_details), model);
   return tokens;
 }
 
 /** Tokens a request will take: system + history + tool schemas + images, before calibration. */
-export function estimateRequestTokens(messages: readonly OpenAIChatMessage[], tools: readonly ChatToolDefinition[] = []): number {
+export function estimateRequestTokens(messages: readonly OpenAIChatMessage[], tools: readonly ChatToolDefinition[] = [], model?: string): number {
   let total = 3;
-  for (const message of messages) total += estimateMessageTokens(message);
-  if (tools.length) total += tokensOfText(JSON.stringify(tools));
+  for (const message of messages) total += estimateMessageTokens(message, model);
+  if (tools.length) total += tokensOfText(JSON.stringify(tools), model);
   return total;
 }
 
@@ -237,11 +237,11 @@ export interface CompactResult { messages: OpenAIChatMessage[]; folded: number; 
 export async function compactTurnMessages(
   messages: readonly OpenAIChatMessage[],
   request: OpenAIChatMessage,
-  input: { tools?: readonly ChatToolDefinition[]; keepExchanges?: number; summarize: (prompt: string) => Promise<string>; summaryBudgetBytes: number },
+  input: { tools?: readonly ChatToolDefinition[]; model?: string; keepExchanges?: number; summarize: (prompt: string) => Promise<string>; summaryBudgetBytes: number },
 ): Promise<CompactResult | null> {
   const plan = planCompaction(messages, request, input.keepExchanges);
   if (!plan) return null;
-  const beforeTokens = estimateRequestTokens(messages, input.tools);
+  const beforeTokens = estimateRequestTokens(messages, input.tools, input.model);
   let summary: string;
   let summarizer: CompactResult["summarizer"] = "model";
   try {
@@ -252,7 +252,7 @@ export async function compactTurnMessages(
     summarizer = "fallback";
   }
   const next = plan.build(summary);
-  return { messages: next, folded: plan.folded.length, beforeTokens, afterTokens: estimateRequestTokens(next, input.tools), summarizer };
+  return { messages: next, folded: plan.folded.length, beforeTokens, afterTokens: estimateRequestTokens(next, input.tools, input.model), summarizer };
 }
 
 /** A provider's refusal of a prompt over its context window (OpenAI, Groq, Mistral, OpenRouter, vLLM, llama.cpp, LM Studio …). */
