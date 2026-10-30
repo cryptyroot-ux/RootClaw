@@ -263,15 +263,41 @@ describe("API onboarding", () => {
     ui.assertConsumed();
   });
 
+  it.each([
+    [5, "anthropic", "Anthropic"],
+    [6, "gemini", "Google Gemini"],
+    [7, "openai-responses", "OpenAI (Responses)"],
+  ])("sets up a native API provider (menu %i → %s) with its default model, checking the key on the first message", async (index, driver, label) => {
+    const deps = dependencies();
+    const ui = prompts({ choices: [0, index], secrets: ["fixture-native-key"], answers: [""], confirms: [true] });
+    expect(await runSetup(options, ui.io, deps)).toBe(true);
+    expect(deps.models).not.toHaveBeenCalled();
+    expect(deps.verify).not.toHaveBeenCalled();
+    const cfg = loadConfig();
+    const saved = cfg.instances?.[cfg.defaultModelSelection!.instanceId];
+    expect(saved).toMatchObject({ driver, displayName: label, access: "api", config: { key: "fixture-native-key" } });
+    expect(cfg.defaultModelSelection!.model).toBe((saved!.config as { model: string }).model);
+    expect(cfg.defaultModelSelection!.model).toMatch(/\S/);
+    ui.assertConsumed();
+  });
+
+  it("lets a native API provider take an exact model id", async () => {
+    const ui = prompts({ choices: [0, 5], secrets: ["k"], answers: [" claude-opus-4-1 "], confirms: [true] });
+    expect(await runSetup(options, ui.io, dependencies())).toBe(true);
+    expect(loadConfig().defaultModelSelection!.model).toBe("claude-opus-4-1");
+    ui.assertConsumed();
+  });
+
   it("keeps custom API setup after the built-in endpoints", async () => {
     const deps = dependencies();
     const ui = prompts({
-      choices: [0, 5, 0], answers: ["https://custom.example.test/v1"],
+      choices: [0, 8, 0], answers: ["https://custom.example.test/v1"],
       secrets: ["fixture-custom-key"], confirms: [true, true],
     });
     expect(await runSetup(options, ui.io, deps)).toBe(true);
     expect(ui.io.choose.mock.calls[1]?.[1]).toEqual([
-      "OpenAI API", "OpenRouter", "Groq", "Meta Model API", "Ollama Cloud", "Other OpenAI-compatible endpoint",
+      "OpenAI API", "OpenRouter", "Groq", "Meta Model API", "Ollama Cloud",
+      "Anthropic (native API)", "Google Gemini (native API)", "OpenAI Responses API", "Other OpenAI-compatible endpoint",
     ]);
     expect(deps.verify).toHaveBeenCalledWith("https://custom.example.test/v1", "fixture-custom-key", "fixture-default");
     const cfg = loadConfig();

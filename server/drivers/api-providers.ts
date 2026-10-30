@@ -111,8 +111,10 @@ function apiProvider(spec: Spec): ProviderDriver<ApiProviderConfig> {
 export const AnthropicDriver = apiProvider({
   driverKind: "anthropic", displayName: "Anthropic (API)", label: "Anthropic", keyEnv: "ANTHROPIC_API_KEY",
   defaultUrl: "https://api.anthropic.com/v1", docsUrl: "https://docs.anthropic.com/en/api/messages",
-  models: { default: "claude-sonnet-5", options: [
-    { id: "claude-sonnet-5", label: "Claude Sonnet 5" }, { id: "claude-opus-5", label: "Claude Opus 5" }, { id: "claude-haiku-5-5", label: "Claude Haiku 5.5" },
+  // Model ids checked against docs.anthropic.com "Models overview" on 2026-10-31.
+  models: { default: "claude-sonnet-5-5", options: [
+    { id: "claude-sonnet-5-5", label: "Claude Sonnet 5.5" }, { id: "claude-opus-5-5", label: "Claude Opus 5.5" },
+    { id: "claude-haiku-5-5", label: "Claude Haiku 5.5" }, { id: "claude-fable-5-1", label: "Claude Fable 5.1" },
   ] },
   adapter: (url, key) => createAnthropicAdapter({ url, apiKey: key }),
   catalog: async (url, key) => rows((await json(`${url}/models?limit=100`, { "x-api-key": key, "anthropic-version": ANTHROPIC_VERSION })).data)
@@ -122,8 +124,9 @@ export const AnthropicDriver = apiProvider({
 export const GeminiDriver = apiProvider({
   driverKind: "gemini", displayName: "Google Gemini (API)", label: "Gemini", keyEnv: "GEMINI_API_KEY",
   defaultUrl: "https://generativelanguage.googleapis.com/v1beta", docsUrl: "https://ai.google.dev/gemini-api/docs",
+  // Model ids checked against ai.google.dev/gemini-api/docs/models on 2026-10-31 (2.5 models are limited to past users).
   models: { default: "gemini-3.8-flash", options: [
-    { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash" }, { id: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro (preview)" }, { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
+    { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash" }, { id: "gemini-4-argon", label: "Gemini 4 Argon" }, { id: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash-Lite" },
   ] },
   // Google sign-in (OAuth, the person's own client) stands in when no API key is saved; the key always works too.
   token: (env) => env.GOOGLE_OAUTH_REFRESH_TOKEN ?? "",
@@ -139,7 +142,8 @@ export const GeminiDriver = apiProvider({
 export const OpenAIResponsesDriver = apiProvider({
   driverKind: "openai-responses", displayName: "OpenAI Responses (API)", label: "OpenAI", keyEnv: "OPENAI_API_KEY",
   defaultUrl: "https://api.openai.com/v1", docsUrl: "https://platform.openai.com/docs/api-reference/responses",
-  models: { default: "gpt-5.5", options: [{ id: "gpt-5.5", label: "GPT-5.5" }, { id: "gpt-5.4-mini", label: "GPT-5.4 mini" }] },
+  // Model ids checked against platform.openai.com/docs/models on 2026-10-31.
+  models: { default: "gpt-6.1-sol", options: [{ id: "gpt-6.1-sol", label: "GPT-6.1 Sol" }, { id: "gpt-6-astra", label: "GPT-6 Astra" }] },
   adapter: (url, key) => createOpenAIResponsesAdapter({ url, apiKey: key }),
   catalog: bearerCatalog,
 });
@@ -147,6 +151,7 @@ export const OpenAIResponsesDriver = apiProvider({
 export const OllamaCloudDriver = apiProvider({
   driverKind: "ollama", displayName: "Ollama Cloud (API)", label: "Ollama", keyEnv: "OLLAMA_API_KEY",
   defaultUrl: "https://ollama.com/v1", docsUrl: "https://docs.ollama.com/cloud",
-  models: { default: "gpt-oss:120b", options: [{ id: "gpt-oss:120b", label: "gpt-oss 120B" }, { id: "gpt-oss:20b", label: "gpt-oss 20B" }] },
+  // docs.ollama.com/cloud (2026-10-31) names gemma4:31b; the live list comes from the catalog.
+  models: { default: "gemma4:31b", options: [{ id: "gemma4:31b", label: "Gemma 4 31B" }] },
   catalog: bearerCatalog,
 });

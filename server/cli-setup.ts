@@ -80,6 +80,15 @@ async function chooseModel(io: SetupIo, models: ModelCatalog): Promise<string> {
   }
 }
 
+/** Providers on their own wire protocol: saved as their driver; the first turn checks the key. */
+const NATIVE_API: Record<string, { driver: string; label: string; menu: string; keyUrl: string }> = {
+  anthropic: { driver: "anthropic", label: "Anthropic", menu: "Anthropic (native API)", keyUrl: "https://console.anthropic.com/settings/keys" },
+  gemini: { driver: "gemini", label: "Google Gemini", menu: "Google Gemini (native API)", keyUrl: "https://aistudio.google.com/apikey" },
+  "openai-responses": { driver: "openai-responses", label: "OpenAI (Responses)", menu: "OpenAI Responses API", keyUrl: "https://platform.openai.com/api-keys" },
+};
+
+const NATIVE_CHOICES = Object.values(NATIVE_API);
+
 export async function runSetup(
   options: { dataDir: string; port: number },
   io: SetupIo = defaultSetupIo(),
@@ -99,7 +108,7 @@ export async function runSetup(
     io.log("You can add integrations and change settings later.\n");
     const existingDefault = existing.findIndex(([id]) => id === cfg.defaultModelSelection?.instanceId);
     const providerOptions = [
-      "API key — OpenAI, OpenRouter, Groq or a compatible service (chat only)",
+      "API key — OpenAI, Anthropic, Gemini, OpenRouter, Groq, Ollama Cloud or a compatible service",
       ...existing.map(([id, entry]) => `Use existing: ${entry.displayName ?? id}${id === cfg.defaultModelSelection?.instanceId ? " — current" : ""}`),
     ];
     let pick: number | undefined;
@@ -132,7 +141,20 @@ export async function runSetup(
             reuse = !!key;
             if (!key) key = (await io.secret(`API key for ${url} (hidden): `)).trim();
           } else {
-            const endpoint = await io.choose("Which API service?", [...API_ENDPOINTS.map((e) => e.label), "Other OpenAI-compatible endpoint"]);
+            const endpoint = await io.choose("Which API service?", [...API_ENDPOINTS.map((e) => e.label), ...NATIVE_CHOICES.map((n) => n.menu), "Other OpenAI-compatible endpoint"]);
+            const native = NATIVE_CHOICES[endpoint - API_ENDPOINTS.length];
+            if (native) {
+              io.log(`Create a key: ${native.keyUrl}`);
+              const nativeKey = (await io.secret(`${native.label} API key (hidden): `)).trim();
+              if (!nativeKey) throw new Error("An API key is required. Nothing was saved.");
+              const driver = BUILT_IN_DRIVERS.find((d) => d.driverKind === native.driver)!;
+              const fallback = driver.models.default;
+              model = (await io.ask(`Model ID (Enter for ${fallback}): `)).trim() || fallback;
+              id = `${native.driver}-${randomUUID().slice(0, 8)}`;
+              entry = { driver: native.driver, displayName: native.label, access: "api", config: { key: nativeKey, model } };
+              io.log("The key is checked on the first message. It will be stored in your private config.json (plaintext, owner-only permissions on Unix).");
+              break;
+            }
             const preset = API_ENDPOINTS[endpoint];
             url = preset ? preset.url : normalizeApiUrl((await io.ask("API base URL (including /v1): ")).trim());
             label = preset?.label ?? new URL(url).hostname;
@@ -254,12 +276,6 @@ export async function runHeadlessSetup(
   }
 }
 
-/** Providers on their own wire protocol: saved as their driver; the first turn checks the key. */
-const NATIVE_API: Record<string, { driver: string; label: string }> = {
-  anthropic: { driver: "anthropic", label: "Anthropic" },
-  gemini: { driver: "gemini", label: "Google Gemini" },
-  "openai-responses": { driver: "openai-responses", label: "OpenAI (Responses)" },
-};
 
 function saveNativeApi(options: { dataDir: string }, answers: HeadlessSetup, native: { driver: string; label: string }, log: (line: string) => void) {
   const key = answers.apiKey.trim();

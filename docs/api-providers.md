@@ -38,3 +38,16 @@ API-key mode always works. RootClaw adds only these official OAuth flows. It has
 - **Google / Gemini:** Register your own OAuth client in Google Cloud Console (type "Web application"). Add the redirect URI `http(s)://<your RootClaw host>/api/oauth/google/callback`. Then set `gemini.oauth.clientId` and `clientSecret` in config, or use `ROOTCLAW_GOOGLE_OAUTH_CLIENT_ID` and `ROOTCLAW_GOOGLE_OAUTH_CLIENT_SECRET`. Optionally set `gemini.oauth.projectId`, which is sent as `x-goog-user-project` for quota and billing. `POST /api/oauth/google/start` returns the consent URL, and the callback stores a refresh token. When no `gemini.key` is set, the Gemini driver mints access tokens from that refresh token. The start route returns 409 until a client id is configured.
 
 Pending sign-ins expire after 10 minutes, and each `state` can be used only once.
+
+## Default models
+
+These defaults were checked against each provider's public model list on 2026-10-31. Any model id from the provider's live catalog also works.
+
+| Provider | Default | Source |
+|---|---|---|
+| Anthropic | `claude-sonnet-5-5` | docs.anthropic.com, Models overview |
+| Gemini | `gemini-3.8-flash` | ai.google.dev/gemini-api/docs/models |
+| OpenAI Responses | `gpt-6.1-sol` | platform.openai.com/docs/models |
+| Ollama Cloud | `gemma4:31b` | docs.ollama.com/cloud |
+
+`rootclaw setup` lists all of them interactively. For the native APIs (Anthropic, Gemini, OpenAI Responses) it asks for the key and an optional model id, then checks the key on the first message.
