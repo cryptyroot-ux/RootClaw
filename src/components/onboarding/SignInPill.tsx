@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowUp, Check, Copy, LoaderCircle } from "lucide-react";
-import { claudeSignInLink } from "@/components/ClaudeSignIn";
 import { chatgptPlanLink, deviceSignInProvider, type DeviceSignInStatus } from "@/components/DeviceSignIn";
 import { needsSignIn } from "@/components/EngineSetup";
 import { openExternalLink } from "@/lib/app-links";
@@ -72,11 +71,7 @@ export function useSignInPill(instance: InstanceInfo | undefined) {
       const { auth }: { auth: DeviceSignInStatus } = await api(`${base}/auth/start`, { method: "POST" });
       if (auth.phase === "succeeded") return void await done();
       if (auth.phase !== "waiting" || !auth.flowId) throw new Error(auth.message ?? t("engineSetup.device.failed"));
-      if (method === "paste-code") {
-        const link = claudeSignInLink(auth.authorizationUrl);
-        if (link) await openExternalLink(link).catch(() => {});
-        setSlot({ kind: "paste", flowId: auth.flowId });
-      } else if (method === "browser-pkce") {
+      if (method === "browser-pkce") {
         const link = chatgptPlanLink(auth.authorizationUrl);
         if (link) await openExternalLink(link).catch(() => {});
         setSlot({ kind: "waiting", flowId: auth.flowId, link });

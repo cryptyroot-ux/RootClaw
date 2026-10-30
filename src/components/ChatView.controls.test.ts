@@ -54,7 +54,7 @@ vi.mock("./ApprovalModeSelector", () => ({ ApprovalModeSelector: (props: Compone
   return createElement("span", { "data-test-approval-control": true });
 } }));
 
-const { ChatView, ErrorRow, FailedTurnRow, claudeUpdateTarget } = await import("./ChatView");
+const { ChatView, ErrorRow, FailedTurnRow } = await import("./ChatView");
 const { NewConversationInstead } = await import("./NewConversationInstead");
 const { activityPreview } = await import("@/lib/failed-turn");
 afterAll(() => vi.unstubAllGlobals());
@@ -446,25 +446,6 @@ describe("thread control placement", () => {
     const plain = renderToStaticMarkup(createElement(FailedTurnRow, { tool: { name: "error: no activity for 10 minutes — the turn was stopped", ok: false }, engine: undefined }));
     expect(plain).toContain(">no activity for 10 minutes — the turn was stopped</span>");
     expect(plain).not.toContain(">Details</summary>");
-  });
-  it("offers to update Claude Code for a too-old install, or hands over the command", () => {
-    const claude = { instanceId: "claude", driverKind: "claudeAgent", displayName: "Claude", snapshot: { state: "available", authenticated: true } } as InstanceInfo;
-    const markup = renderToStaticMarkup(createElement(ErrorRow, {
-      message: "API Error: 400 Claude Code 2.1.268 does not support this model; version 2.1.280 or newer is required.",
-      onRetry: () => {},
-      setupInstance: claude,
-      claudeUpdateInstance: claude,
-    }));
-    expect(markup).toContain("Update Claude for me");
-    expect(markup).toContain("I&#x27;ll do it myself");
-    expect(markup).not.toContain(">Retry<");
-  });
-  it("updates only a local Claude Code engine from chat", () => {
-    const claude = { instanceId: "claude", driverKind: "claudeAgent", displayName: "Claude" } as InstanceInfo;
-    expect(claudeUpdateTarget(claude)).toBe(claude);
-    expect(claudeUpdateTarget({ ...claude, readOnly: true })).toBeUndefined();
-    expect(claudeUpdateTarget({ ...claude, driverKind: "codex" })).toBeUndefined();
-    expect(claudeUpdateTarget(undefined)).toBeUndefined();
   });
   it("keeps Retry on the last failed turn after its digest, but never on an older turn", () => {
     const messages: Bot["messages"] = [

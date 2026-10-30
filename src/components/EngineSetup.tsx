@@ -5,10 +5,7 @@ import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 import { copyText } from "@/lib/copy-text";
 import { DEVICE_SIGN_IN_COPY, DeviceSignIn, deviceSignInProvider } from "./DeviceSignIn";
-import { ClaudeSignIn } from "./ClaudeSignIn";
 import { RefreshEngines } from "./EngineLibrary";
-import { AppCopyNotice, AppCopySetup } from "./EngineAppCopy";
-import { noteAppCopySwitch } from "@/state/engine-install";
 import { keyEntry, keyForInstance, type KeyId } from "./keys/key-catalog";
 import { openKeySettings } from "./keys/key-focus";
 import { KeyRow, SavedKeyLine } from "./keys/KeyRow";
@@ -178,8 +175,7 @@ function ServerEngineInstall({ instance, mode, command, quiet = false }: { insta
     setDone(false);
     setError(null);
     try {
-      const { instances, usingAppCopy } = await api(`/api/instances/${encodeURIComponent(instance.instanceId)}/install`, { method: "POST" });
-      noteAppCopySwitch(instance.instanceId, usingAppCopy === true);
+      const { instances } = await api(`/api/instances/${encodeURIComponent(instance.instanceId)}/install`, { method: "POST" });
       const installed = (instances as InstanceInfo[] | undefined)?.find((candidate) => candidate.instanceId === instance.instanceId);
       if (instances) dispatch({ type: "instances", instances });
       if (installed?.snapshot.state !== "available") {
@@ -215,7 +211,6 @@ function ServerEngineInstall({ instance, mode, command, quiet = false }: { insta
         </p>
       )}
       {done && !busy && <p role="status" className="text-center text-[11px] text-success">{t("engineSetup.installVerified")}</p>}
-      {!busy && <AppCopyNotice instance={instance} />}
       {error && <p role="alert" className="whitespace-pre-wrap text-[12px] leading-relaxed text-danger">{error}</p>}
       {terminalCommand && (
         <details className="rounded-lg border border-hairline/50 bg-app px-2.5 py-2 text-[12px] text-ink-secondary">
@@ -566,11 +561,6 @@ export function EngineSetup({
     );
   }
 
-  // The app's own copy is out of reach of the person's terminal, so its sign-in is finished here.
-  if (signInOnly && install.appCopy && !deviceSignIn && !browserSignIn && !pasteSignIn) {
-    return <AppCopySetup instance={instance} className={className} unframed={unframed} />;
-  }
-
   return (
     <div className={cn(!unframed && "rounded-xl border border-hairline/40 bg-control/30 p-3", className)}>
       <div className="flex items-start gap-2.5">
@@ -604,8 +594,6 @@ export function EngineSetup({
             </details>
           )}
         </>
-      ) : pasteSignIn ? (
-        <ClaudeSignIn key={instance.instanceId} instanceId={instance.instanceId} />
       ) : install.server && !signInOnly ? (
         <ServerEngineInstall instance={instance} mode="install" command={installCommand} />
       ) : install.managed ? (

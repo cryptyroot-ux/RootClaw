@@ -1,16 +1,30 @@
 import type { InstanceConfigMap } from "./contracts.ts";
+import { REMOVED_DRIVER_KINDS } from "./instance-fleets.ts";
 
 export const REMOVED_COMPUTER_DRIVER = "boxAgent";
 const REMOVED_COMPUTER_INSTANCE = "computer";
 
-/** An id the person reused for another engine is theirs and stays. */
+/** The instance ids of the old default fleet whose engines (agent CLIs and ACP agents) RootClaw removed. */
+const REMOVED_DEFAULT_INSTANCES: Readonly<Record<string, string>> = {
+  grok: "grokAgent", kimi: "kimiAgent", droid: "droidAgent", cursor: "cursorAgent", githubCopilot: "copilotAgent",
+  claude: "claudeAgent", claudeApi: "claudeAgent", codex: "codex", chatgpt: "codex", antigravity: "antigravityAgent",
+  opencodeGo: "opencodeGo", deepseek: "deepseekAgent", museCode: "museCode", qwen: "qwenAgent", hermes: "hermesAgent",
+  cline: "clineAgent", pi: "piAgent", gemini: "geminiAgent",
+};
+
+const removedDriver = (driver: string) => driver === REMOVED_COMPUTER_DRIVER || REMOVED_DRIVER_KINDS.has(driver);
+
+/** Instance ids whose engine was removed (the Computer engine, agent CLIs and ACP agents); a bot on one
+ * moves to the native engine. An id the person reused for a kept engine is theirs and stays. */
 export function removedComputerInstanceIds(saved: InstanceConfigMap | undefined): Set<string> {
   const ids = new Set<string>();
-  const reused = saved && Object.hasOwn(saved, REMOVED_COMPUTER_INSTANCE) &&
-    saved[REMOVED_COMPUTER_INSTANCE]!.driver !== REMOVED_COMPUTER_DRIVER;
-  if (!reused) ids.add(REMOVED_COMPUTER_INSTANCE);
+  const defaults: Record<string, string> = { [REMOVED_COMPUTER_INSTANCE]: REMOVED_COMPUTER_DRIVER, ...REMOVED_DEFAULT_INSTANCES };
+  for (const [id, driver] of Object.entries(defaults)) {
+    const reused = saved && Object.hasOwn(saved, id) && saved[id]!.driver !== driver && !removedDriver(saved[id]!.driver);
+    if (!reused) ids.add(id);
+  }
   for (const [id, entry] of Object.entries(saved ?? {})) {
-    if (entry.driver === REMOVED_COMPUTER_DRIVER) ids.add(id);
+    if (removedDriver(entry.driver)) ids.add(id);
   }
   return ids;
 }
@@ -39,7 +53,7 @@ export function computerEngineMoveText(
   botName: string,
   engine: string,
 ): string {
-  const removed = "The Computer choice in the model list was removed.";
+  const removed = "Its previous engine is no longer part of RootClaw.";
   const bot = move.scope !== "conversation";
   const head = move.scope === "conversation" ? `This conversation now uses ${engine}.`
     : move.scope === "bot-only" ? `${botName} now uses ${engine}; this conversation keeps its own model.`

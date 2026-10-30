@@ -6,7 +6,7 @@ import { execFile } from "node:child_process";
 import { closeSync, existsSync, fstatSync, openSync, readdirSync, readFileSync, readlinkSync, readSync } from "node:fs";
 import { join } from "node:path";
 
-import { redactSecretsInText } from "../../redact.ts";
+import { redactSecretsInText } from "../redact.ts";
 
 // Prompt silence guard (0 disables). Healthy agents go quiet for minutes: Qwen Code 0.24 sends
 // nothing while it compresses history, backs off a rate limit (60 s up to 5 min per wait) or runs

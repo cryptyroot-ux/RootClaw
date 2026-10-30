@@ -1,6 +1,7 @@
 #!/usr/bin/env -S node --experimental-strip-types
 // The rootclaw headless verbs for verifying an isolated fixture. A verb that
 // changes something never runs on a server it merely found.
+import { FAKE_OPENAI_MODEL, startFakeOpenAiChat, type FakeOpenAiChat } from "../server/testing/fake-openai-chat.ts";
 import { spawn, type ChildProcess } from "node:child_process";
 import { closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -20,7 +21,6 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 /** Outside the bot name pool, so no suite can plan a bot that collides with the
  * starter. */
 export const FIXTURE_STARTER_BOT_NAME = "Fixture Starter";
-const FAKE_CLI = join(ROOT, "server", "testing", "fake-claude-cli.ts");
 
 export class ControlOmbError extends HeadlessError {
   constructor(message: string, hint?: string) {
@@ -124,6 +124,8 @@ export async function runControlOmb(
 export interface VerificationServer {
   info: { url: string; pid: number; dataDir: string; logPath: string };
   fixtureDumpPath: string;
+  /** The loopback OpenAI-compatible server the fixture's native engine talks to. */
+  fakeChat: FakeOpenAiChat;
   child: ChildProcess;
   close(): Promise<void>;
 }
@@ -254,9 +256,9 @@ export async function launchVerificationServer(
   /** A stand-in enterprise layer (the folder shape core loads) and the key
    * it should accept, so a recipe can prove entitled behaviour offline. */
   enterprise?: { dir: string; licenseKey: string },
-  room?: { scripted: boolean },
+  _room?: { scripted: boolean },
   /** Optional repository-owned fake providers for multi-engine setup checks. */
-  extraProviders: Array<"codex" | "cline" | "copilot" | "customAcp"> = [],
+  _extraProviders: readonly string[] = [],
   /** Programmatic tests only: an owned loopback Boat provider, never a live account. */
   boatFixtureApi?: string,
   /** Programmatic web UI qualification against the fixture's static server. */
@@ -289,36 +291,16 @@ export async function launchVerificationServer(
   const evidenceDir = join(tmpdir(), "rootclaw-verification-evidence");
   mkdirSync(evidenceDir, { recursive: true });
   const logPath = join(evidenceDir, `server-${Date.now()}-${process.pid}.log`);
+  const fakeChat = await startFakeOpenAiChat();
   writeFileSync(join(dataDir, "config.json"), JSON.stringify({
     ...(boatFixtureApi ? { box: { token: "box_verification_fixture" } } : {}),
     // A setup card's answers would be one more engine call at every new bot, taking replies a test scripts for its turns.
     features: { smartSetupChoices: false },
+    // The native engine on a loopback fake OpenAI-compatible server: no agent CLI and no network.
+    openaiCompat: { url: fakeChat.url, key: "fixture-only", model: FAKE_OPENAI_MODEL },
+    defaultModelSelection: { instanceId: "openaiCompat", model: FAKE_OPENAI_MODEL },
     instances: {
-      ...(extraProviders.includes("codex") ? { codex: {
-        driver: "codex", displayName: "Verification Codex", config: { cli: fileURLToPath(new URL("../server/testing/fake-codex-app-server.ts", import.meta.url)) },
-      } } : {}),
-      ...(extraProviders.includes("cline") ? { cline: {
-        driver: "clineAgent", displayName: "Verification Cline",
-        config: { cli: fileURLToPath(new URL("../server/testing/fake-acp-cli.ts", import.meta.url)) },
-        environment: { CLINE_PROVIDER: "openai-compatible", CLINE_MODEL: "fixture-model", CLINE_API_KEY: "fixture-only",
-          FAKE_ACP_DUMP: join(dataDir, "cline-launch.json") },
-      } } : {}),
-      ...(extraProviders.includes("copilot") ? { githubCopilot: {
-        driver: "copilotAgent", displayName: "Verification Copilot",
-        config: { cli: fileURLToPath(new URL("../server/testing/fake-acp-cli.ts", import.meta.url)) },
-        environment: { FAKE_ACP_MODELS: "auto,claude-haiku-4.5,gpt-5.6-luna", FAKE_ACP_DUMP: join(dataDir, "copilot-launch.json") },
-      } } : {}),
-      ...(extraProviders.includes("customAcp") ? { myAgent: {
-        driver: "customAcp", displayName: "Verification custom ACP",
-        config: { cli: fileURLToPath(new URL("../server/testing/fake-acp-cli.ts", import.meta.url)) },
-        environment: { FAKE_ACP_MODELS: "fixture-fast,fixture-deep", FAKE_ACP_DUMP: join(dataDir, "custom-acp-launch.json") },
-      } } : {}),
-      claude: {
-        driver: "claudeAgent",
-        displayName: "Verification fixture",
-        config: { cli: FAKE_CLI },
-        ...(room?.scripted ? { environment: { FAKE_CLAUDE_ROOM_PLAN: join(dataDir, "room-plan.json") } } : {}),
-      },
+      openaiCompat: { driver: "openai-compat", displayName: "Verification fixture" },
     },
   }, null, 2));
 
@@ -374,6 +356,7 @@ export async function launchVerificationServer(
       await new Promise((resolve) => setTimeout(resolve, 150));
     }
   } catch (error) {
+    await fakeChat.stop().catch(() => {});
     await waitForExit(child, { signal: "SIGTERM" });
     await removeTempDir(dataDir);
     throw error;
@@ -401,6 +384,7 @@ export async function launchVerificationServer(
     });
     if (!rename.ok) throw new Error(`verification starter rename failed (${rename.status}); see ${logPath}`);
   } catch (error) {
+    await fakeChat.stop().catch(() => {});
     await waitForExit(child, { signal: "SIGTERM" });
     await removeTempDir(dataDir);
     throw error;
@@ -410,8 +394,10 @@ export async function launchVerificationServer(
   return {
     info: { url, pid: child.pid!, dataDir, logPath },
     fixtureDumpPath,
+    fakeChat,
     child,
     async close() {
+      await fakeChat.stop().catch(() => {});
       if (closed) return;
       closed = true;
       await waitForExit(child, { signal: "SIGTERM" });

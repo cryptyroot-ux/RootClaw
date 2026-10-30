@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { RuntimeEvent } from "../contracts.ts";
-import type { ProcessSample } from "../drivers/acp/quiet-status.ts";
+import type { ProcessSample } from "./quiet-status.ts";
 import { commandSummary, toolDetailPreview } from "../tool-summary.ts";
 import { LiveSteps, outputTail, TAIL_FRAME_MS } from "./live-steps.ts";
 import type { ProgressEvent } from "./progress-gate.ts";

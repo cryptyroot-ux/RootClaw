@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { RuntimeEvent } from "./contracts.ts";
-import { DEFAULT_QUIET_NOTICE_MS } from "./drivers/acp/quiet-status.ts";
+import { DEFAULT_QUIET_NOTICE_MS } from "./harness/quiet-status.ts";
 import { createFirstReplyRescue, DEFAULT_FIRST_REPLY_NOTICE_MS } from "./first-reply-rescue.ts";
 import type { Message } from "./store.ts";
 
