@@ -46,6 +46,20 @@ describe("run store", () => {
     expect(runs.get("s")).toMatchObject({ usage: { costUsd: 0.5 }, costSource: "reported" });
   });
 
+  it("records the plan and the verifier's checks, and persists them", () => {
+    const d = dir();
+    const runs = createRunStore({ dataDir: d });
+    runs.begin({ runId: "r", threadId: "t1", model: "m" });
+    runs.observe(ev("r", "plan.updated", { steps: [{ id: "1", title: "a", status: "doing" }], revision: 1, reason: "initial" }));
+    runs.observe(ev("r", "plan.updated", { steps: [{ id: "1", title: "a", status: "done" }], revision: 2, reason: "replan" }));
+    runs.observe(ev("r", "verify.completed", { verdict: "fail", attempt: 1, missing: ["tests"] }));
+    runs.observe(ev("r", "verify.completed", { verdict: "pass", attempt: 2 }));
+    runs.observe(ev("r", "turn.completed", { ok: true, stopReason: "end_turn" }));
+    const expected = { plan: { steps: [{ id: "1", title: "a", status: "done" }], revisions: 2 }, verify: { attempts: 2, verdict: "pass" } };
+    expect(runs.get("r")).toMatchObject(expected);
+    expect(createRunStore({ dataDir: d }).get("r")).toMatchObject(expected);
+  });
+
   it("marks a budget stop as completed, not failed", () => {
     const runs = createRunStore({ dataDir: dir() });
     runs.begin({ runId: "r", threadId: "t1", model: "m" });

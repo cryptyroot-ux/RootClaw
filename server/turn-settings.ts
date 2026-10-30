@@ -1,3 +1,4 @@
+import { planVerifySettings } from "./drivers/plan-verify.ts";
 import { lstatSync, mkdirSync, readlinkSync, rmdirSync, statSync, symlinkSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -63,6 +64,7 @@ export function settingsTurnFields(cfg: AppConfig, dataDir: string, restrictsMcp
   mcpCallTimeoutMs: number;
   toolErrorCorrectiveRounds: number;
   turnContext: NonNullable<SendTurnInput["turnContext"]>;
+  planVerify: NonNullable<SendTurnInput["planVerify"]>;
 } {
   const userSkillsDir = claudeUserSkillsEnabled(cfg) ? claudeUserSkillsDir(dataDir, home) : null;
   if (!claudeUserSkillsEnabled(cfg)) forgetClaudeUserSkillsDir(dataDir);
@@ -71,6 +73,7 @@ export function settingsTurnFields(cfg: AppConfig, dataDir: string, restrictsMcp
     ...(userSkillsDir ? { userSkillsDir } : {}),
     mcpCallTimeoutMs: mcpCallTimeoutMinutes(cfg) * 60_000,
     toolErrorCorrectiveRounds: correctiveRounds(cfg),
+    planVerify: planVerifySettings(process.env.ROOTCLAW_PLAN_VERIFY ? (process.env.ROOTCLAW_PLAN_VERIFY === "1" ? true : process.env.ROOTCLAW_PLAN_VERIFY) : cfg.engine?.planVerify, cfg.engine?.maxVerifyRetries),
     turnContext: {
       offloadDir: join(dataDir, "tool-outputs"),
       ...(cfg.context?.turnCompactAt ? { compactAt: cfg.context.turnCompactAt } : {}),

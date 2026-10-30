@@ -43,6 +43,10 @@ export interface RunRecord {
   retriedAt?: number;
   /** Whether `usage.costUsd` came from the provider or from a price RootClaw knows. */
   costSource?: "reported" | "estimated";
+  /** The planner's latest plan for this run (engine.planVerify). */
+  plan?: { steps: { id: string; title: string; status: string }[]; revisions: number; carried?: boolean };
+  /** The verifier's self-checks of the final answer (engine.planVerify). */
+  verify?: { attempts: number; verdict: "pass" | "fail" | "skipped"; missing?: string[] };
 }
 
 export interface RunBegin { runId: string; threadId: string; botId?: string; instanceId?: string; driver?: string; model: string }
@@ -176,6 +180,18 @@ export function createRunStore(options: { dataDir: string; cap?: number; now?: (
           if (!tool) return;
           tool.status = event.ok === false ? "failed" : "ok";
           tool.endedAt = at;
+          break;
+        }
+        case "plan.updated":
+          if (!Array.isArray(event.steps)) return;
+          run.plan = { steps: (event.steps as NonNullable<RunRecord["plan"]>["steps"]).slice(0, 8), revisions: typeof event.revision === "number" ? event.revision : (run.plan?.revisions ?? 0) + 1,
+            ...(event.reason === "carried" || run.plan?.carried ? { carried: true } : {}) };
+          break;
+        case "verify.completed": {
+          const verdict = event.verdict === "pass" || event.verdict === "fail" || event.verdict === "skipped" ? event.verdict : null;
+          if (!verdict) return;
+          const missing = Array.isArray(event.missing) ? (event.missing as unknown[]).filter((item): item is string => typeof item === "string").slice(0, 5) : [];
+          run.verify = { attempts: (run.verify?.attempts ?? 0) + (verdict === "skipped" ? 0 : 1), verdict, ...(missing.length ? { missing } : {}) };
           break;
         }
         case "turn.retrying":

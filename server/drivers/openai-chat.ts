@@ -22,7 +22,9 @@ import { ChatProtocolError, ChatReasoningDetails, ChatToolCalls, object, type Ch
 import { appendNative } from "./native.ts";
 import type { Completion, ModelAdapter, OpenAIChatMessage, Usage } from "./model-adapter.ts";
 import { BudgetMeter } from "../budget-guard.ts";
-import { prepareTokenizer } from "./tokenizer.ts";
+import { countTokens, prepareTokenizer } from "./tokenizer.ts";
+import { applyPlanUpdate, carryPlan, parseVerdict, pinPlan, PLAN_HINT, REPLAN_AFTER_ROUNDS, REPLAN_HINT, shouldPlan, takeCarriedPlan,
+  unverifiedNote, UPDATE_PLAN_DEFINITION, UPDATE_PLAN_TOOL, verifierPrompt, verifyRetryMessage, type TurnPlan } from "./plan-verify.ts";
 import { failoverHold, failoverKind } from "./failover.ts";
 import { classifyError, HttpStatusError, interruptibleDelay, nextRetryDelay, parseRetryAfter, RETRY_MAX_ATTEMPTS } from "./retry.ts";
 import { plainFailureMessage } from "./engine-errors.ts";
@@ -663,6 +665,9 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
       let correctiveRounds = 0;
       const denials: string[] = [];
       const seenCalls = new Set<string>();
+      // The planner's state lives outside the try so a failover can hand the plan to the next model in the chain.
+      let plan: TurnPlan | null = null;
+      const planCallIds = new Set<string>();
       let nudges = 0;
       let unread: string[] = [];
       let callsAtNudge = -1;
@@ -710,7 +715,27 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             else messages.unshift({ role: "system", content: WORKSPACE_TOOLS_PROMPT.trimStart() });
           }
         }
-        const readOnlyTool = (name: string) => name === READ_TOOL_OUTPUT_TOOL ? offloadOn : workspaceNames.has(name) && workspaceToolReadOnly(name);
+        // Planner/verifier (engine.planVerify, docs/design/planner-verifier.md): gated per turn, off by default.
+        const planVerify = turn.planVerify ?? { mode: "off" as const, maxVerifyRetries: 0 };
+        const planVerifyOn = planVerify.mode !== "off" && options.tools !== false;
+        plan = planVerifyOn ? takeCarriedPlan(turn.threadId) : null;
+        let planning = false;
+        let replanned = false;
+        let verifyAttempts = 0;
+        let verifyFails = 0;
+        const emitPlan = (reason: "initial" | "replan" | "carried") => {
+          if (plan) emit({ ...base(turn.threadId, turnId), type: "plan.updated", steps: plan.steps.map((step) => ({ ...step })), revision: plan.revisions, reason });
+        };
+        const startPlanning = (hint: string) => {
+          if (!planning && !tools!.definitions.some((definition) => definition.function.name === UPDATE_PLAN_TOOL)) tools!.definitions.push(UPDATE_PLAN_DEFINITION);
+          planning = true;
+          pinPlan(messages, plan, hint);
+        };
+        if (planVerifyOn) {
+          if (plan) { startPlanning(""); emitPlan("carried"); }
+          else if (shouldPlan(turn.text ?? "", { toolsEnabled: true, workspaceTools: workspaceNames.size > 0 })) startPlanning(PLAN_HINT);
+        }
+        const readOnlyTool = (name: string) => name === UPDATE_PLAN_TOOL ? planning : name === READ_TOOL_OUTPUT_TOOL ? offloadOn : workspaceNames.has(name) && workspaceToolReadOnly(name);
         const window = contextWindowFor(model, options.models());
         const budget = turnCompactBudget(window, ctx.compactAt);
         const calibration = new TokenCalibration();
@@ -741,6 +766,11 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           unread = turnEntry.asides.splice(0);
           if (unread.length) messages.push({ role: "user", content: unread.join("\n\n") });
           turnEntry.ending = round === MAX_CHAT_ROUNDS - 1;
+          // Re-plan triggers: a long turn, or a corrective round after a failed tool.
+          if (planVerifyOn && !replanned && round > 0 && (round === REPLAN_AFTER_ROUNDS || correctiveRounds > 0)) {
+            replanned = true;
+            startPlanning(REPLAN_HINT);
+          }
           // Request-size accounting before every model call; fold older steps when the turn nears its budget.
           // Once over budget, fold down to ~60% of it so the next rounds do not compact again at once.
           let target = budget;
@@ -909,6 +939,43 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
               messages.push(assistantReply(model, completion, reply));
               continue;
             }
+            // Verifier: a planned turn's final answer gets a cheap self-check; a fail goes back to the model, capped.
+            if (planVerify.mode === "plan+verify" && planning && plan) {
+              const prompt = verifierPrompt({ request: turn.text ?? "", plan, answer: reply, messages });
+              const attempt = verifyAttempts + 1;
+              let verdict: ReturnType<typeof parseVerdict> | null = null;
+              if (meter?.wouldExceed(calibration.apply(countTokens(prompt, model)) + 200)) {
+                emit({ ...base(turn.threadId, turnId), type: "verify.completed", verdict: "skipped", attempt, why: "budget" });
+              } else {
+                try {
+                  const checked = await adapter.complete({ messages: [{ role: "user", content: prompt }], model: ctx.summaryModel || model, stream: false, signal: abort.signal, tools: [] });
+                  if (checked.usage) {
+                    usage.input += checked.usage.input;
+                    usage.output += checked.usage.output;
+                    hasUsage = true;
+                    meter?.add(checked.usage);
+                  }
+                  verifyAttempts = attempt;
+                  verdict = parseVerdict(checked.text.trim() ? checked.text : checked.reasoning);
+                  emit({ ...base(turn.threadId, turnId), type: "verify.completed", verdict: verdict.verdict, attempt,
+                    ...(verdict.missing.length ? { missing: verdict.missing } : {}) });
+                } catch (error) {
+                  abort.signal.throwIfAborted();
+                  emit({ ...base(turn.threadId, turnId), type: "verify.completed", verdict: "skipped", attempt, why: safeText(asError(error).message).slice(0, 200) });
+                }
+              }
+              if (verdict?.verdict === "fail") {
+                if (verifyFails < planVerify.maxVerifyRetries && !turnEntry.ending) {
+                  verifyFails++;
+                  messages.push(assistantReply(model, completion, reply), { role: "user", content: verifyRetryMessage(verdict.missing) });
+                  continue;
+                }
+                emit({ ...base(turn.threadId, turnId), type: "runtime.notice", message: unverifiedNote(verdict.missing) });
+                ok = true;
+                stopReason = "unverified";
+                break;
+              }
+            }
             ok = true;
             stopReason = "end_turn";
             break;
@@ -974,6 +1041,18 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
                   denials.push(shown.title);
                   result = { ok: false, text: refusal(floored, (message) => emit({ ...base(turn.threadId, turnId), type: "runtime.notice", message })) };
                 }
+              } else if (planning && call.function.name === UPDATE_PLAN_TOOL) {
+                planCallIds.add(call.id);
+                emit({ ...base(turn.threadId, turnId), type: "item.started", itemType: "tool", itemId: call.id, title: UPDATE_PLAN_TOOL });
+                started = true;
+                const updated = applyPlanUpdate(plan, args as Record<string, unknown>);
+                if (updated.ok) {
+                  const first = !plan;
+                  plan = updated.plan;
+                  pinPlan(messages, plan);
+                  emitPlan(first ? "initial" : "replan");
+                  result = { ok: true, text: `Plan saved (${plan.steps.length} steps, revision ${plan.revisions}).` };
+                } else result = { ok: false, text: updated.text };
               } else if (offloadOn && call.function.name === READ_TOOL_OUTPUT_TOOL) {
                 emit({ ...base(turn.threadId, turnId), type: "item.started", itemType: "tool", itemId: call.id,
                   title: call.function.name, ...(inputPreview ? { input: inputPreview } : {}),
@@ -1038,7 +1117,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             run: runCall,
             signal: abort.signal,
             commit: ({ call, result, content, fatal }) => {
-              if (!result.ok) toolFailed = true;
+              if (!result.ok && call.function.name !== UPDATE_PLAN_TOOL) toolFailed = true;
               messages.push({ role: "tool", tool_call_id: call.id, content });
               screenshotParts.push(...chatToolImages(call.id, result.images));
               abort.signal.throwIfAborted();
@@ -1070,9 +1149,10 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           const message = options.httpErrorLabel === "upstream" ? failure : plainFailureMessage(options.httpErrorLabel, failure);
           // A clean failure the next AI in the bot's chain can take: hold this one for its cooldown.
           const kind = failedWith && !cleanupFailed && stopReason === "error"
-            ? failoverKind(failedWith, { aborted: abort.signal.aborted, produced: produced || seenCalls.size > 0, tooLarge })
+            ? failoverKind(failedWith, { aborted: abort.signal.aborted, produced: produced || seenCalls.size > planCallIds.size, tooLarge })
             : null;
           const hold = kind ? failoverHold(kind) : {};
+          if (kind) carryPlan(turn.threadId, plan);
           if (hold.stopReason) stopReason = hold.stopReason;
           emit({ ...base(turn.threadId, turnId), type: "runtime.error", message, terminal: !abort.signal.aborted,
             ...(hold.limit ? { limit: hold.limit } : {}), ...(hold.limitResetsAt ? { limitResetsAt: hold.limitResetsAt } : {}) });

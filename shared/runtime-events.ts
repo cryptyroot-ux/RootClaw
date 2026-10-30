@@ -49,6 +49,10 @@ export type RuntimeEvent = RuntimeEventBase &
     | { type: "session.model-variants"; model: string; variants: ModelVariantState }
     | { type: "session.exited"; reason?: string }
     | { type: "turn.started" }
+    /** The native engine's plan for this turn changed (planner, behind engine.planVerify). */
+    | { type: "plan.updated"; steps: { id: string; title: string; status: "pending" | "doing" | "done" | "blocked" }[]; revision: number; reason: "initial" | "replan" | "carried" }
+    /** The native engine self-checked a final answer (verifier, behind engine.planVerify). */
+    | { type: "verify.completed"; verdict: "pass" | "fail" | "skipped"; attempt: number; missing?: string[]; why?: string }
     | {
         type: "turn.retrying";
         /** 1-based: the retry about to be launched (1 = first relaunch). */
