@@ -3,13 +3,12 @@ import { readBotActivity } from "../activity.ts";
 import { activityCsv, activityEntries, parseActivityWhat, readAdminActivityRange } from "../admin-activity.ts";
 import { loadBrand } from "../brand.ts";
 import { browserEngineStatus, ensureChrome, installAgentBrowserBinary, resolveAgentBrowserBinary } from "../browser-engine.ts";
-import { DATA_DIR, EVENTS_DIR, NATIVE_DIR, instanceConfigs, type AppConfig } from "../config.ts";
+import { DATA_DIR, EVENTS_DIR, NATIVE_DIR, type AppConfig } from "../config.ts";
 import { boundRetentionDays, decisionsCsv, readDecisionRange, readDecisions, type DecisionRow } from "../decision-log.ts";
 import { editionForMembers, editionStatus, entitled } from "../enterprise.ts";
 import { fleetAvailable, fleetRequest, fleetSocketPath } from "../fleet-client.ts";
 import { noteKeyAccepted, noteKeyRejected } from "../key-rejections.ts";
 import type { OutboundCounts } from "../outbound-counts.ts";
-import { loadPlanUsage, planAccountsFromInstances } from "../plan-usage.ts";
 import { tregProviderApi } from "../included-services.ts";
 import { checkProviderKey, PROVIDER_KEY_KINDS, providerBaseUrl, type ProviderKeyKind } from "../provider-key-check.ts";
 import { checkTregKey } from "../research.ts";
@@ -128,15 +127,6 @@ export function createStatusRoutes(deps: StatusRouteDeps): RouteHandler {
       return json(res, 200, readThreadEvents({ eventsDir: EVENTS_DIR, nativeDir: NATIVE_DIR, threadId, limit }));
     }
 
-    // Subscription windows (5-hour and weekly). Unlisted, so it stays admin.
-    if (method === "GET" && path === "/api/plan-usage") {
-      res.setHeader("cache-control", "no-store");
-      const report = await loadPlanUsage({
-        accounts: planAccountsFromInstances(instanceConfigs(cfg)),
-        refresh: url.searchParams.get("refresh") === "1",
-      });
-      return json(res, 200, report);
-    }
 
     // One read-only request from this server; the verdict never carries the key.
     if (method === "POST" && path === "/api/keys/test") {

@@ -434,18 +434,6 @@ export function cloudUsageSummary(plan: CloudPlanSnapshot | null): UsageSummary 
   return null;
 }
 
-function usePlanUsageSummary(enabled: boolean): UsageSummary | null {
-  const [summary, setSummary] = useState<UsageSummary | null>(null);
-  useEffect(() => {
-    if (!enabled) return;
-    let alive = true;
-    void api<PlanUsageWindows>("/api/plan-usage", { background: true })
-      .then((report) => { if (alive) setSummary(planUsageSummary(report)); })
-      .catch(() => {});
-    return () => { alive = false; };
-  }, [enabled]);
-  return summary;
-}
 
 export function profileMenuItems({
   phone,
@@ -549,9 +537,10 @@ export function SidebarProfileMenu({ iconOnly = false, rail = false, circle = fa
 } = {}) {
   const { state, dispatch } = useStore();
   const simple = account !== undefined;
-  const [menuOpen, setMenuOpen] = useState(false);
+  const [, setMenuOpen] = useState(false);
   const cloudUsage = cloudUsageSummary(useCloudPlanSnapshot(simple ? usageBridge(state.config?.cloudHome === true) : undefined));
-  const engineUsage = usePlanUsageSummary(simple && menuOpen && cloudUsage === null && window.ogb?.remoteClient?.active !== true);
+  // Native API engines have no subscription windows to summarise.
+  const engineUsage: UsageSummary | null = null;
   const phone = useSidebarPhoneStatus();
   const connectPhone = useConnectPhoneEntry(state.config?.cloudHome === true);
   const cloudPhone = useCloudPhoneDestination(connectPhone?.target === "computer");
