@@ -1131,11 +1131,7 @@ describe("structured tool execution boundaries", () => {
   });
 
   it.each([
-    { scenario: "duplicate call IDs", frames: [chunk({ tool_calls: [toolCall(), { ...toolCall(), index: 1 }] }, "tool_calls")] },
-    { scenario: "missing call ID", frames: [chunk({ tool_calls: [{ index: 0, type: "function", function: toolCall().function }] }, "tool_calls")] },
     { scenario: "changed call ID", frames: [chunk({ tool_calls: [toolCall()] }), chunk({ tool_calls: [{ index: 0, id: "a_different_call" }] }, "tool_calls")] },
-    { scenario: "truncated tool completion", frames: [chunk({ tool_calls: [toolCall()] }, "length")] },
-    { scenario: "tool finish without a call", frames: [chunk({}, "tool_calls")] },
   ])("rejects $scenario before any tool can execute", async ({ frames }) => {
     const f = await fixture((_body, response) => sse(response, frames));
     await f.start();
@@ -1144,6 +1140,63 @@ describe("structured tool execution boundaries", () => {
     expect(f.requests).toHaveLength(1);
     expect(f.recorder.events.some((event) => event.type === "request.opened")).toBe(false);
     expect(f.recorder.events.some((event) => event.type === "runtime.error")).toBe(true);
+  });
+
+  it.each([
+    { scenario: "truncated tool completion", frames: [chunk({ tool_calls: [toolCall()] }, "length")] },
+    { scenario: "tool finish without a call", frames: [chunk({}, "tool_calls")] },
+  ])("re-requests a $scenario once, then fails clearly without executing", async ({ frames }) => {
+    const f = await fixture((_body, response) => sse(response, frames));
+    await f.start();
+    expect(await f.completed()).toMatchObject({ ok: false });
+    expect(f.effects()).toEqual([]);
+    expect(f.requests).toHaveLength(2);
+    expect(f.requests[1]).toEqual(f.requests[0]);
+    expect(f.recorder.events.filter((event) => event.type === "turn.retrying")).toEqual([expect.objectContaining({ reason: "malformed_tool_call" })]);
+    expect(f.recorder.events).toContainEqual(expect.objectContaining({ type: "runtime.error", message: expect.stringMatching(/again after one re-request/) }));
+  });
+
+  it("recovers when a re-requested round comes back whole", async () => {
+    const f = await fixture((_body, response, round) => round === 1
+      ? sse(response, [chunk({ tool_calls: [toolCall()] }, "length")])
+      : round === 2 ? sse(response, [chunk({ tool_calls: [toolCall()] }, "tool_calls")]) : answer(response));
+    await f.start({ approvalMode: "full" });
+    expect(await f.completed()).toMatchObject({ ok: true });
+    expect(f.effects()).toHaveLength(1);
+  });
+
+  it.each([
+    { scenario: "duplicate call IDs", calls: [toolCall("audit_write", '{"name":"a","value":"1"}'), { ...toolCall("audit_write", '{"name":"b","value":"2"}'), index: 1 }] },
+    { scenario: "missing call ID", calls: [{ index: 0, type: "function", function: toolCall().function }] },
+  ])("gives $scenario fresh IDs and runs the calls", async ({ calls }) => {
+    const f = await fixture((_body, response, round) => round === 1
+      ? sse(response, [chunk({ tool_calls: calls }, "tool_calls")]) : answer(response));
+    await f.start({ approvalMode: "full" });
+    expect(await f.completed()).toMatchObject({ ok: true });
+    expect(f.effects()).toHaveLength(calls.length);
+    const sent = f.requests[1].messages.find((entry) => entry.role === "assistant" && entry.tool_calls)?.tool_calls ?? [];
+    const results = f.requests[1].messages.filter((entry) => entry.role === "tool").map((entry) => entry.tool_call_id);
+    expect(new Set(sent.map((call: { id: string }) => call.id)).size).toBe(calls.length);
+    expect(results).toEqual(sent.map((call: { id: string }) => call.id));
+  });
+
+  it("answers an invalid tool name with a tool error the model can correct", async () => {
+    const f = await fixture((_body, response, round) => round === 1
+      ? sse(response, [chunk({ tool_calls: [toolCall("functions.audit write")] }, "tool_calls")]) : answer(response));
+    await f.start({ approvalMode: "full" });
+    await f.completed();
+    expect(f.effects()).toEqual([]);
+    expect(f.requests).toHaveLength(2);
+    expect(f.requests[1].messages.find((entry) => entry.role === "assistant" && entry.tool_calls)?.tool_calls?.[0]?.function.name).toBe("invalid_tool_name");
+    expect(f.requests[1].messages.at(-1)).toMatchObject({ role: "tool", content: expect.stringContaining("invalid tool name") });
+  });
+
+  it("gives a later round's reused ID a fresh one when the call itself is new", async () => {
+    const f = await fixture((_body, response, round) => round <= 2
+      ? sse(response, [chunk({ tool_calls: [toolCall("audit_write", `{"name":"step","value":"${round}"}`)] }, "tool_calls")]) : answer(response));
+    await f.start({ approvalMode: "full" });
+    expect(await f.completed()).toMatchObject({ ok: true });
+    expect(f.effects()).toHaveLength(2);
   });
 
   it("returns an MCP tool failure and preserves its unsuccessful operation status", async () => {

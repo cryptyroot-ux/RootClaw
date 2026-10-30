@@ -18,7 +18,7 @@ import { ChatToolSessionError, mountChatTools, trimmedToolsNotice, type ChatTool
 import { assertImageTransport, chatImageBudget, chatToolImages, chatUserContent, type ChatContentPart } from "./chat-images.ts";
 import { promptHalves, volatileContextNote, withContextNote } from "./prompt-split.ts";
 import { createChatToolApproval, refusal } from "./chat-tool-approval.ts";
-import { ChatProtocolError, ChatReasoningDetails, ChatToolCalls, object, type ChatToolCall } from "./openai-chat-protocol.ts";
+import { ChatProtocolError, ChatReasoningDetails, ChatToolCalls, INVALID_TOOL_NAME, MalformedToolCallError, object, syntheticToolCallId, type ChatToolCall } from "./openai-chat-protocol.ts";
 import { appendNative } from "./native.ts";
 import type { Completion, ModelAdapter, OpenAIChatMessage, Usage } from "./model-adapter.ts";
 import { BudgetMeter } from "../budget-guard.ts";
@@ -674,6 +674,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
       let correctiveRounds = 0;
       const denials: string[] = [];
       const seenCalls = new Set<string>();
+      const callSignatures = new Map<string, string>();
       // The planner's state lives outside the try so a failover can hand the plan to the next model in the chain.
       let plan: TurnPlan | null = null;
       const planCallIds = new Set<string>();
@@ -810,6 +811,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           let forced = false;
           let retryWaitedMs = 0;
           let resized = false;
+          let malformedRetried = false;
           let completion: Completion;
           for (;;) {
             let streamed = false;
@@ -877,6 +879,18 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
                   continue;
                 }
                 if (!abort.signal.aborted) throw new ChatProtocolError(refusedToolCallFailure(error, seenCalls.size > 0));
+              }
+              // A reply whose tool calls were truncated or malformed ran nothing: ask for the round once more, unless
+              // answer text already reached the person. A second malformed reply surfaces as a clear error.
+              if (error instanceof MalformedToolCallError && !answerStreamed && !abort.signal.aborted && !malformedRetried) {
+                malformedRetried = true;
+                native("in", { refused: "malformed_tool_call", error: error.message });
+                console.warn(`${options.driverKind}: ${model} ${error.message}; re-requesting the round once`);
+                emit({ ...base(turn.threadId, turnId), type: "turn.retrying", attempt: ++attempt, delayMs: 0, reason: "malformed_tool_call" });
+                continue;
+              }
+              if (error instanceof MalformedToolCallError && malformedRetried) {
+                throw new ChatProtocolError(`${error.message} (again after one re-request)`);
               }
               // A structured parameter rejection executed nothing; never downgrade mounted tools or a handled call.
               if (optionalQuestionOnly && round === 0 && !streamed && !seenCalls.size && !abort.signal.aborted &&
@@ -1010,7 +1024,16 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           if (!tools.definitions.length && !planOnly) throw new ChatProtocolError("provider returned tool calls, but no tools are available for this turn");
           // Validate IDs for the entire batch before executing any of its calls.
           for (const call of completion.toolCalls) {
-            if (seenCalls.has(call.id)) throw new ChatProtocolError("provider reused a tool-call ID; refusing to repeat an operation");
+            // A new reply that reuses an earlier round's ID (some providers count from call_0 each round) is a new
+            // call the model just made, not a replay: it gets a fresh ID so its result correlates unambiguously.
+            // An identical name and arguments under a seen ID is a replayed reply: refuse rather than repeat its effect.
+            const signature = `${call.function.name}\u0000${call.function.arguments}`;
+            if (seenCalls.has(call.id)) {
+              if (callSignatures.get(call.id) === signature) throw new ChatProtocolError("provider reused a tool-call ID; refusing to repeat an operation");
+              native("in", { repaired: "id_reused_across_rounds", id: call.id });
+              call.id = syntheticToolCallId();
+            }
+            callSignatures.set(call.id, signature);
             seenCalls.add(call.id);
           }
           if (seenCalls.size > MAX_TURN_TOOL_CALLS) throw new ChatProtocolError(stoppedAfter(`${MAX_TURN_TOOL_CALLS} tool calls`));
@@ -1029,6 +1052,9 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
               catch { throw new ChatProtocolError("tool arguments are not complete JSON"); }
               if (!object(args)) throw new ChatProtocolError("tool arguments must be a JSON object");
               const inputPreview = preview(args);
+              if (call.function.name === INVALID_TOOL_NAME) {
+                throw new Error("That tool call had an empty or invalid tool name. Call one of the offered tools by its exact name.");
+              }
               if (call.function.name === ASK_USER_TOOL) {
                 if (!questionAllowed || !allowsTool(scope, { kind: "native", name: ASK_USER_TOOL })) throw new Error("Tool selection excludes this tool");
                 // A question goes before the gate: Full would auto-run an unanswered ask, Ask would show Allow/Deny.

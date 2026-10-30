@@ -11,6 +11,21 @@ const MAX_ARGUMENT_CHARS = 256_000;
 
 export class ChatProtocolError extends Error {}
 
+/** A reply whose tool calls cannot be repaired (truncated or malformed): nothing ran, so the round may be asked once more. */
+export class MalformedToolCallError extends ChatProtocolError {}
+
+/** Stand-in name for a call whose name is empty or not a valid tool name: the call is answered with a tool error. */
+export const INVALID_TOOL_NAME = "invalid_tool_name";
+const VALID_TOOL_NAME = /^[A-Za-z0-9_-]{1,64}$/;
+
+let syntheticIds = 0;
+/** A fresh tool-call ID for a call whose provider omitted or reused one. */
+export function syntheticToolCallId(): string {
+  return `call_rc${Date.now().toString(36)}${(++syntheticIds).toString(36)}`;
+}
+
+export interface ToolCallRepair { kind: "id_missing" | "id_duplicate" | "invalid_name"; id: string; name?: string }
+
 export function object(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown> : undefined;
@@ -35,6 +50,8 @@ export class ChatReasoningDetails {
 
 /** One accumulator per completion: indexes identify deltas; IDs correlate results. */
 export class ChatToolCalls {
+  /** What finish() repaired, for logging. */
+  readonly repairs: ToolCallRepair[] = [];
   private calls = new Map<number, ChatToolCall>();
   private argumentChars = 0;
 
@@ -83,20 +100,29 @@ export class ChatToolCalls {
 
   finish(reason: string | null, malformedFrame: boolean): ChatToolCall[] {
     const calls = [...this.calls.entries()].sort(([a], [b]) => a - b).map(([, call]) => call);
-    if (malformedFrame) throw new ChatProtocolError("provider stream contained a malformed completion frame");
+    if (malformedFrame) throw new MalformedToolCallError("provider stream contained a malformed completion frame");
     if (reason === "function_call") throw new ChatProtocolError("legacy function_call is unsupported; use structured tool_calls");
-    if (reason === "tool_calls" && !calls.length) throw new ChatProtocolError("provider ended for tool calls without a complete call");
+    if (reason === "tool_calls" && !calls.length) throw new MalformedToolCallError("provider ended for tool calls without a complete call");
     if (!calls.length) return calls;
     if (reason !== null && reason !== "tool_calls" && reason !== "stop") {
-      throw new ChatProtocolError("provider tool calls were truncated or malformed");
+      throw new MalformedToolCallError("provider tool calls were truncated or malformed");
     }
+    // Repairable defects: an ID only correlates a result, so a missing or reused one gets a fresh one; a bad name
+    // becomes a stand-in the turn answers with a tool error, so the model can call again by a valid name.
     const ids = new Set<string>();
     for (const call of calls) {
-      if (!call.id || ids.has(call.id) || !/^[A-Za-z0-9_-]{1,64}$/.test(call.function.name)) {
-        throw new ChatProtocolError("provider returned an incomplete or duplicate tool call");
+      if (!call.id || ids.has(call.id)) {
+        const kind = call.id ? "id_duplicate" : "id_missing";
+        call.id = syntheticToolCallId();
+        this.repairs.push({ kind, id: call.id });
+      }
+      if (!VALID_TOOL_NAME.test(call.function.name)) {
+        this.repairs.push({ kind: "invalid_name", id: call.id, name: call.function.name.slice(0, 64) });
+        call.function.name = INVALID_TOOL_NAME;
       }
       ids.add(call.id);
     }
+    if (this.repairs.length) console.warn(`chat: repaired provider tool calls: ${this.repairs.map((r) => r.kind).join(", ")}`);
     return calls;
   }
 }

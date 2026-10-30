@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { ChatToolCalls } from "./openai-chat-protocol.ts";
+import { ChatToolCalls, INVALID_TOOL_NAME, MalformedToolCallError } from "./openai-chat-protocol.ts";
 
 const completeCall = {
   id: "call_echo",
@@ -18,11 +18,14 @@ describe("streamed chat tool calls", () => {
     expect(calls.finish("tool_calls", false)).toEqual([completeCall]);
   });
 
-  it("still rejects incomplete calls after null-only deltas", () => {
+  it("repairs a call left with neither ID nor name after null-only deltas", () => {
     const calls = new ChatToolCalls();
     calls.add([{ index: 0, id: null, type: null, function: { name: null, arguments: null } }], true);
 
-    expect(() => calls.finish("tool_calls", false)).toThrow(/incomplete or duplicate/);
+    const [call] = calls.finish("tool_calls", false);
+    expect(call.id).toMatch(/^call_rc/);
+    expect(call.function.name).toBe(INVALID_TOOL_NAME);
+    expect(calls.repairs.map((repair) => repair.kind)).toEqual(["id_missing", "invalid_name"]);
   });
 
   it.each([
@@ -97,5 +100,40 @@ describe("streamed tool calls without an index (Gemini's OpenAI-compatible endpo
     const calls = new ChatToolCalls();
     calls.add(Array.from({ length: 32 }, (_, n) => whole(`call_${n}`, "f")), true);
     expect(() => calls.add([whole("call_32", "f")], true)).toThrow(/invalid tool-call index/);
+  });
+});
+
+describe("tool-call repairs", () => {
+  it("synthesizes an ID for a call that has none", () => {
+    const calls = new ChatToolCalls();
+    calls.add([{ index: 0, function: { name: "echo", arguments: "{}" } }], true);
+    const [call] = calls.finish("tool_calls", false);
+    expect(call.id).toMatch(/^call_rc[a-z0-9]+$/);
+    expect(calls.repairs).toEqual([{ kind: "id_missing", id: call.id }]);
+  });
+
+  it("gives a duplicated ID a fresh one and keeps the first", () => {
+    const calls = new ChatToolCalls();
+    calls.add([{ index: 0, ...completeCall }, { index: 1, ...completeCall }], true);
+    const [first, second] = calls.finish("tool_calls", false);
+    expect(first.id).toBe("call_echo");
+    expect(second.id).not.toBe("call_echo");
+    expect(calls.repairs).toEqual([{ kind: "id_duplicate", id: second.id }]);
+  });
+
+  it("replaces an invalid name with the stand-in and records the original", () => {
+    const calls = new ChatToolCalls();
+    calls.add([{ index: 0, ...completeCall, function: { name: "functions.echo now", arguments: "{}" } }], true);
+    const [call] = calls.finish("stop", false);
+    expect(call.function.name).toBe(INVALID_TOOL_NAME);
+    expect(calls.repairs).toEqual([{ kind: "invalid_name", id: "call_echo", name: "functions.echo now" }]);
+  });
+
+  it.each([
+    ["truncated", () => { const c = new ChatToolCalls(); c.add([{ index: 0, ...completeCall }], true); return () => c.finish("length", false); }],
+    ["malformed frame", () => { const c = new ChatToolCalls(); c.add([{ index: 0, ...completeCall }], true); return () => c.finish("tool_calls", true); }],
+    ["tool finish without a call", () => () => new ChatToolCalls().finish("tool_calls", false)],
+  ])("still refuses a %s reply as malformed, for one bounded re-request", (_label, make) => {
+    expect(make()).toThrow(MalformedToolCallError);
   });
 });

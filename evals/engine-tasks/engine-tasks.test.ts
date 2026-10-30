@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ENGINE_TASKS, type EngineTask } from "./tasks.ts";
-import { installRequestBudget, summarize, type RunRow } from "./run-engine-tasks.ts";
+import { installRequestBudget, redact, summarize, type RunRow } from "./run-engine-tasks.ts";
 
 const dirs: string[] = [];
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
@@ -52,5 +52,29 @@ describe("engine eval tasks", () => {
       server.closeAllConnections();
       await new Promise<void>((done) => server.close(() => done()));
     }
+  });
+
+  it("keeps redacted request and response bodies for a failure log", async () => {
+    const real = globalThis.fetch;
+    const secret = "sk-test-secret-123456";
+    const server = createServer((_request, response) => response.end(`echo ${secret}`));
+    await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+    try {
+      const budget = installRequestBudget(2, undefined, [secret]);
+      const url = `http://127.0.0.1:${(server.address() as { port: number }).port}/v1/chat`;
+      expect(await (await fetch(url, { method: "POST", body: `{"key":"${secret}"}` })).text()).toBe(`echo ${secret}`);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(budget.exchanges).toEqual([{ n: 1, url: "/v1/chat", status: 200, request: '{"key":"[redacted]"}', response: "echo [redacted]" }]);
+      expect(JSON.stringify(budget.exchanges)).not.toContain(secret);
+    } finally {
+      globalThis.fetch = real;
+      server.closeAllConnections();
+      await new Promise<void>((done) => server.close(() => done()));
+    }
+  });
+
+  it("redacts bearer tokens and bounds long bodies", () => {
+    expect(redact("Authorization: Bearer abcdefgh12345", [])).toBe("Authorization: Bearer [redacted]");
+    expect(redact("x".repeat(200_010), []).endsWith("…[10 more chars]")).toBe(true);
   });
 });

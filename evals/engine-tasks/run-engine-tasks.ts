@@ -13,25 +13,49 @@ import { ENGINE_TASKS, type EngineTask } from "./tasks.ts";
 export interface RunRow {
   task: string; mode: "off" | "plan+verify"; pass: boolean; why: string; rounds: number; input: number; output: number;
   ms: number; stopReason: string | null; capped: boolean; plan?: unknown; verify?: unknown; tools: string[];
+  error?: string; failureLog?: string;
+}
+
+export interface Exchange { n: number; url: string; status: number | "ERR"; request: string; response: string }
+
+const EXCHANGE_CHARS = 200_000;
+/** Masks every configured secret and any bearer token; bodies never carry headers, but a key could echo into text. */
+export function redact(text: string, secrets: string[]): string {
+  let out = text;
+  for (const secret of secrets) if (secret && secret.length >= 8) out = out.split(secret).join("[redacted]");
+  out = out.replace(/Bearer\s+[A-Za-z0-9._~+/=-]{8,}/g, "Bearer [redacted]");
+  return out.length > EXCHANGE_CHARS ? `${out.slice(0, EXCHANGE_CHARS)}…[${out.length - EXCHANGE_CHARS} more chars]` : out;
 }
 
 const arg = (name: string, fallback?: string) => { const at = process.argv.indexOf(`--${name}`); return at >= 0 ? process.argv[at + 1] : fallback; };
 const args = (name: string) => process.argv.flatMap((value, index) => process.argv[index - 1] === `--${name}` ? [value] : []);
 
 /** Counts every outgoing HTTP request; past the budget no request is sent. */
-export function installRequestBudget(max: number, modelsFile?: string) {
+export function installRequestBudget(max: number, modelsFile?: string, secrets: string[] = []) {
   const real = globalThis.fetch;
-  const state = { sent: 0, refused: 0, log: [] as string[] };
+  /** exchanges: request/response bodies of the run in progress (redacted), kept for a failure log. */
+  const state = { sent: 0, refused: 0, log: [] as string[], exchanges: [] as Exchange[] };
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input instanceof Request ? input.url : input);
     if (modelsFile && /\/models(\?|$)/.test(url)) return new Response(readFileSync(modelsFile, "utf8"), { status: 200, headers: { "content-type": "application/json" } });
     if (state.sent >= max) { state.refused++; throw new Error(`eval request budget of ${max} reached`); }
     state.sent++;
+    const n = state.sent;
+    const path = url.replace(/^https?:\/\/[^/]+/, "");
+    const request = redact(typeof init?.body === "string" ? init.body : "", secrets);
     try {
       const response = await real(input, init);
-      state.log.push(`${state.sent} ${response.status} ${url.replace(/^https?:\/\/[^/]+/, "")}`);
+      state.log.push(`${n} ${response.status} ${path}`);
+      const exchange: Exchange = { n, url: path, status: response.status, request, response: "" };
+      state.exchanges.push(exchange);
+      // A tee of the body: the driver reads its copy; ours fills the exchange as the stream ends.
+      void response.clone().text().then((text) => { exchange.response = redact(text, secrets); }, (error) => { exchange.response = `[read failed: ${(error as Error).message}]`; });
       return response;
-    } catch (error) { state.log.push(`${state.sent} ERR ${(error as Error).message}`); throw error; }
+    } catch (error) {
+      state.log.push(`${n} ERR ${(error as Error).message}`);
+      state.exchanges.push({ n, url: path, status: "ERR", request, response: redact((error as Error).message, secrets) });
+      throw error;
+    }
   }) as typeof fetch;
   return state;
 }
@@ -41,7 +65,8 @@ async function main() {
   const model = arg("model")!;
   if (!model) throw new Error("--model is required");
   const keyEnv = arg("key-env", provider === "ollama" ? "OLLAMA_API_KEY" : "OPENAI_COMPAT_API_KEY")!;
-  const budget = installRequestBudget(Number(arg("max-requests", "40")), arg("models-file"));
+  const budget = installRequestBudget(Number(arg("max-requests", "40")), arg("models-file"), [process.env[keyEnv] ?? ""]);
+  const failures = join(dirname(fileURLToPath(import.meta.url)), "..", "reports", "runs", `engine-failures-${new Date().toISOString().replace(/[:.]/g, "-")}`);
   const roundCap = Number(arg("round-cap", "12"));
   const wanted = new Set(args("task"));
   const tasks = ENGINE_TASKS.filter((task) => !wanted.size || wanted.has(task.id));
@@ -59,9 +84,16 @@ async function main() {
   for (const task of tasks) {
     for (const mode of ["off", "plan+verify"] as const) {
       if (budget.sent >= Number(arg("max-requests", "40"))) break;
+      budget.exchanges = [];
       rows.push(await runOne(instance, runs, task, mode, model, roundCap));
       const row = rows.at(-1)!;
-      console.log(`${row.task.padEnd(14)} ${row.mode.padEnd(11)} ${row.pass ? "PASS" : "FAIL"} rounds=${row.rounds} in=${row.input} out=${row.output} ${(row.ms / 1000).toFixed(1)}s ${row.stopReason ?? ""}${row.capped ? " (round cap)" : ""} | requests so far ${budget.sent}${row.pass ? "" : ` | ${row.why}`}`);
+      if (!row.pass || row.error || (row.stopReason && row.stopReason !== "end_turn")) {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        mkdirSync(failures, { recursive: true });
+        row.failureLog = join(failures, `${task.id}-${mode}.json`);
+        writeFileSync(row.failureLog, JSON.stringify({ task: task.id, mode, why: row.why, stopReason: row.stopReason, error: row.error, exchanges: budget.exchanges }, null, 2));
+      }
+      console.log(`${row.task.padEnd(14)} ${row.mode.padEnd(11)} ${row.pass ? "PASS" : "FAIL"} rounds=${row.rounds} in=${row.input} out=${row.output} ${(row.ms / 1000).toFixed(1)}s ${row.stopReason ?? ""}${row.capped ? " (round cap)" : ""} | requests so far ${budget.sent}${row.pass ? "" : ` | ${row.why}`}${row.error ? ` | error: ${row.error}` : ""}${row.failureLog ? ` | log: ${row.failureLog}` : ""}`);
     }
     if (budget.sent >= Number(arg("max-requests", "40"))) { console.log(`request budget reached after ${task.id}; stopping`); break; }
   }
@@ -85,6 +117,7 @@ async function runOne(instance: Instance, runs: Runs, task: EngineTask, mode: Ru
   let rounds = 0;
   let capped = false;
   let turnId = "";
+  let error: string | undefined;
   const done = new Promise<{ stopReason?: string | null }>((resolve) => {
     const stop = instance.adapter.onEvent((event) => {
       if (event.threadId !== threadId) return;
@@ -92,6 +125,7 @@ async function runOne(instance: Instance, runs: Runs, task: EngineTask, mode: Ru
         capped = true;
         void instance.adapter.interruptTurn(threadId, turnId);
       }
+      if (event.type === "runtime.error") error = String((event as { message?: unknown }).message ?? "").slice(0, 500);
       if (event.type === "turn.completed") { stop(); resolve(event as { stopReason?: string | null }); }
     });
   });
@@ -103,7 +137,7 @@ async function runOne(instance: Instance, runs: Runs, task: EngineTask, mode: Ru
   const result = task.check(dir);
   rmSync(dir, { recursive: true, force: true });
   return { task: task.id, mode, pass: result.pass, why: result.why, rounds: run?.rounds ?? rounds, input: run?.usage?.input ?? 0, output: run?.usage?.output ?? 0,
-    ms: Date.now() - started, stopReason: completed.stopReason ?? null, capped, plan: run?.plan, verify: run?.verify, tools: run?.tools.map((tool) => tool.name) ?? [] };
+    ms: Date.now() - started, stopReason: completed.stopReason ?? null, capped, plan: run?.plan, verify: run?.verify, tools: run?.tools.map((tool) => tool.name) ?? [], ...(error ? { error } : {}) };
 }
 
 export function summarize(rows: RunRow[]): string {
