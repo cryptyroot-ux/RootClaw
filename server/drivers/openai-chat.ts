@@ -900,6 +900,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
               continue;
             }
             ok = true;
+            stopReason = "end_turn";
             break;
           }
           if (!tools.definitions.length) throw new ChatProtocolError("provider returned tool calls, but no tools are available for this turn");

@@ -77,6 +77,11 @@ describe("native budget guard", () => {
 });
 
 describe("native run record", () => {
+  it("a normal finish says end_turn", async () => {
+    const { done } = await runTurn(() => sse(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: "hi" }, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`));
+    expect(done).toMatchObject({ ok: true, stopReason: "end_turn" });
+  });
+
   it("records a quota failure as a failed run on its model, flagged for the chain", async () => {
     const { mkdtempSync, rmSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
