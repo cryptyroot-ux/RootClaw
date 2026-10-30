@@ -19,7 +19,7 @@ import { promptHalves, volatileContextNote, withContextNote } from "./prompt-spl
 import { createChatToolApproval, refusal } from "./chat-tool-approval.ts";
 import { ChatProtocolError, ChatReasoningDetails, ChatToolCalls, object, type ChatToolCall } from "./openai-chat-protocol.ts";
 import { appendNative } from "./native.ts";
-import { classifyError, computeBackoff, interruptibleDelay, RETRY_MAX_ATTEMPTS } from "./retry.ts";
+import { classifyError, HttpStatusError, interruptibleDelay, nextRetryDelay, parseRetryAfter, RETRY_MAX_ATTEMPTS } from "./retry.ts";
 import { plainFailureMessage } from "./engine-errors.ts";
 import { refusesRequestSize, RequestTooLargeError, sizeChange, smallerResend } from "./chat-size-limit.ts";
 import { requestTooLargeMessage } from "../../shared/request-too-large.ts";
@@ -252,6 +252,9 @@ function rejectsReasoningReplay(status: number, body: string): boolean {
 
 /** Groq fails a completion with `tool_use_failed` when a generated tool call is invalid: usually a
  *  tool it was not offered (gpt-oss inventing a "json" tool), sometimes arguments missing the schema. */
+/** A model refusing its own tool call gets three tries in all, independent of the transport retry cap. */
+const REFUSED_TOOL_CALL_ATTEMPTS = 3;
+
 class RejectedToolCallError extends ChatProtocolError {
   readonly refusal: Record<string, unknown>;
   constructor(message: string, refusal: Record<string, unknown>) {
@@ -382,7 +385,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         if (messages.some((entry) => entry.reasoning_content !== undefined) && rejectsReasoningReplay(response.status, body)) {
           throw new UnsupportedReasoningReplayError(message);
         }
-        throw new Error(message);
+        throw new HttpStatusError(message, response.status, parseRetryAfter(response.headers.get("retry-after")));
       }
       noteKeyAccepted(options.apiUrl, options.apiKey);
 
@@ -663,6 +666,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           turnEntry.ending = round === MAX_CHAT_ROUNDS - 1;
           native("out", options.nativeLog.outgoing(turn, messages, model, tools.definitions));
           let attempt = 0;
+          let retryWaitedMs = 0;
           let resized = false;
           let completion: Completion;
           for (;;) {
@@ -716,7 +720,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
               // A refused tool call ran nothing, so the request goes again, but not once answer text streamed.
               if (error instanceof RejectedToolCallError) {
                 native("in", { refused: "tool_use_failed", attempt: attempt + 1, error: error.refusal });
-                if (!answerStreamed && !abort.signal.aborted && attempt < RETRY_MAX_ATTEMPTS - 1) {
+                if (!answerStreamed && !abort.signal.aborted && attempt < REFUSED_TOOL_CALL_ATTEMPTS - 1) {
                   emit({ ...base(turn.threadId, turnId), type: "turn.retrying", attempt: ++attempt, delayMs: 0, reason: "tool_use_failed" });
                   continue;
                 }
@@ -730,11 +734,16 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
                 continue;
               }
               // Once a call has been handled, never replay it through a turn retry.
-              if (options.retryScale === undefined || abort.signal.aborted || streamed || seenCalls.size ||
-                  error instanceof ChatProtocolError || !verdict.transient || attempt >= RETRY_MAX_ATTEMPTS - 1) throw error;
-              const delayMs = computeBackoff(attempt++);
+              // Retry only before any token reached the user: a mid-stream failure surfaces as is.
+              if (abort.signal.aborted || streamed || seenCalls.size ||
+                  error instanceof ChatProtocolError || !verdict.transient) throw error;
+              const delayMs = nextRetryDelay(attempt, retryWaitedMs, error instanceof HttpStatusError ? error.retryAfterMs : undefined);
+              if (delayMs === null) throw error;
+              attempt++;
+              retryWaitedMs += delayMs;
+              console.warn(`${options.driverKind}: ${model} ${verdict.reason} (${error.message.slice(0, 120)}); retry ${attempt}/${RETRY_MAX_ATTEMPTS - 1} in ${delayMs}ms`);
               emit({ ...base(turn.threadId, turnId), type: "turn.retrying", attempt, delayMs, reason: verdict.reason });
-              await interruptibleDelay(delayMs * options.retryScale, abort.signal).promise;
+              await interruptibleDelay(delayMs * (options.retryScale ?? Number(process.env.ROOTCLAW_RETRY_SCALE ?? "1")), abort.signal).promise;
               abort.signal.throwIfAborted();
             }
           }
