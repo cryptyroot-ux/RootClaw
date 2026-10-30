@@ -81,7 +81,6 @@ What each first-run surface depends on, and how it was checked:
 |---|---|---|
 | Desktop app, own server (full bridge, `remoteClient` present) | The two-screen first run, decided without a new request | `src/components/onboarding/WelcomeGate.test.ts`, `src/components/onboarding/WelcomeFlow.test.ts` |
 | Hosted workspace opened inside the desktop app (reduced bridge, no `remoteClient`) | Treated like a browser: the server is asked | `src/components/onboarding/WelcomeGate.test.ts` |
-| Packaged desktop with the organization bridge | An optional "Using RootClaw at work?" row under Other ways in Connect an AI; a signed-in Company engine counts as ready | `src/components/onboarding/beats/OrganisationRow.test.ts`, `src/components/onboarding/ConnectAi.test.ts` (fake bridge) |
 | Browser, admin of a hosted workspace | The first screen only, with the shared-workspace line, then the chat | `src/components/onboarding/WelcomeGate.test.ts`, `src/components/onboarding/WelcomeFlow.test.ts`, `src/lib/onboarding.test.ts` |
 | Browser, hosted member (no admin scope) | No welcome flow; one dismissible note kept in browser storage; no first-conversation spotlights | `src/components/onboarding/WelcomeGate.test.ts`, `src/components/onboarding/FirstConversationTour.test.ts` |
 | Browser, client-scope session on a server that is not hosted | Nothing new: the flow does not open itself (it could not be saved); Settings replay and spotlights as before | `src/components/onboarding/WelcomeGate.test.ts`, `src/lib/onboarding.test.ts` |
@@ -100,13 +99,6 @@ write, and the note stayed away after a reload. Connect an AI was mounted from t
 `window.ogb.organization` injected before mount; it showed the row signed out,
 then connecting with the code, then connected. `begin` ran once, with the
 default Admin. Screenshots are in `.rootclaw-scratch/verify-evidence/onboarding/`.
-
-Not covered here: the real Electron preload bridge and a real Admin enrolment
-(see [organization connection](organization-settings.md), not rerun for this
-change), and a real hosted tenant's browser. The hosted beat set was rendered
-from a temporary preview entry, not reached through a hosted sign-in. The
-organization row now sits under Other ways on the first screen; its states are
-covered by the tests in the table.
 
 ## A new Cloud's welcome
 

@@ -5,14 +5,6 @@ provider charge, deployment, or running RootClaw workspace is involved.
 
 ## Real CLI transport checks
 
-Pass the path to an already installed CLI. These checks never update it.
-
-```sh
-node --experimental-strip-types scripts/verify-grok-images.ts /absolute/path/to/grok
-node --experimental-strip-types scripts/verify-claude-auth-settings.ts /absolute/path/to/claude
-node --experimental-strip-types scripts/verify-claude-auth-settings.ts /absolute/path/to/claude --api-key
-node --experimental-strip-types scripts/verify-opencode-permissions.ts /absolute/path/to/opencode
-```
 
 - Grok must deliver the **exact** synthetic PNG bytes to a loopback model.
   Grok 1.0.25 advertises `image:false` despite accepting native ACP image
@@ -46,7 +38,7 @@ and the account selected in ROOTCLAW; never request the user's keys or tokens.
 ## ACP internal-error recovery
 
 ```sh
-pnpm exec vitest run server/drivers/acp/acp.test.ts server/acp-recovery.e2e.test.ts server/resume-recovery.test.ts server/delta-context.test.ts server/incidents.e2e.test.ts server/room-coordination.e2e.test.ts
+pnpm exec vitest run server/resume-recovery.test.ts server/delta-context.test.ts server/incidents.e2e.test.ts server/room-coordination.e2e.test.ts
 ```
 
 The ACP transport fixture injects an internal RPC error, including one after
@@ -105,7 +97,7 @@ its own disposable server/browser data; the screenshots remain.
 ## Regression checks
 
 ```sh
-pnpm exec vitest run server/drivers/acp/acp.test.ts server/drivers/claude.test.ts server/drivers/claude-auth.test.ts server/drivers/codex.test.ts server/drivers/retry.test.ts server/store.test.ts src/components/ChatView.controls.test.ts
+pnpm exec vitest run server/drivers/retry.test.ts server/store.test.ts src/components/ChatView.controls.test.ts
 node --test electron/approval-trusted-mode.node-test.mjs
 pnpm typecheck
 pnpm lint

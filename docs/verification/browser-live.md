@@ -134,7 +134,6 @@ Focused automated coverage:
 ```sh
 pnpm exec vitest run server/browser-engine.test.ts server/browser-runtime.test.ts server/browser-page-size.test.ts \
   server/harness-mcp-proxy.test.ts server/browser-live.test.ts server/browser-dialogs.test.ts \
-  server/browser-live-routes.test.ts server/browser-codex-path.integration.test.ts \
   src/lib/browser-stream-v1.test.ts src/lib/browser-stream-client.test.ts src/lib/browser-control.test.ts \
   src/lib/browser-profiles.test.ts src/components/BrowserProfilesManager.test.ts \
   src/components/browser/StreamSurface.test.ts server/routes/browser-viewers.test.ts \
@@ -212,7 +211,6 @@ Never point its requests at the user's running app.
 ROOTCLAW_VERIFY_CODEX_CLI=/absolute/path/to/codex \
 ROOTCLAW_VERIFY_CODEX_AUTH=/absolute/path/to/auth.json \
 ROOTCLAW_VERIFY_CODEX_MODEL=your-supported-model \
-node --experimental-strip-types scripts/verify-codex-surface-live.ts
 ```
 
 Open the printed preview, select Ziggy, and send ordinary requests without tool

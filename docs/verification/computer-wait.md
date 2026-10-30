@@ -8,7 +8,6 @@ pnpm exec vitest run server/index.test.ts -t 'queues computer waiters in arrival
 pnpm exec vitest run server/index.test.ts -t 'parks the turn at the wait ceiling|routes a goal run around a member parked'
 pnpm exec vitest run server/runtime-roots.e2e.test.ts server/room-roots.e2e.test.ts
 pnpm exec vitest run server/turn-resources.test.ts server/group-local-vm.e2e.test.ts server/shared-computers.e2e.test.ts
-pnpm exec vitest run server/managed-desktop-cleanup.test.ts
 ```
 
 The shared-team-computer case proves:

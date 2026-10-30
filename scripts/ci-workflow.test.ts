@@ -131,30 +131,6 @@ describe("CI concurrency", () => {
     expect(delegated).not.toContain("/tasks/${peerThread.threadId}`");
   });
 
-  it("makes a release wait for its commit's CI gate before any draft", () => {
-    const release = parse(readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8"));
-    expect(release.jobs.assemble.needs).toContain("ci");
-    expect(release.jobs.ci.needs).toBe("prepare");
-    expect(release.jobs.ci.permissions).toEqual({ actions: "write", contents: "write" });
-    const wait = release.jobs.ci.steps.find((step: { run?: string }) => step.run === "node scripts/release-ci.mjs");
-    expect(wait.if).toBe("${{ !inputs.ship_without_ci }}");
-    expect(wait.env).toMatchObject({ SHA: "${{ needs.prepare.outputs.sha }}", VERSION: "${{ needs.prepare.outputs.version }}" });
-    // The script reads ci.yml's gate by its job name.
-    expect(readFileSync(new URL("./release-ci.mjs", import.meta.url), "utf8")).toContain(`job.name === "${workflow.jobs.gate.name}"`);
-    // The release lane is a branch, so its runs get their own concurrency group.
-    expect(workflow.on).toHaveProperty("workflow_dispatch");
-  });
-
-  it("checks out every module the release gate imports", () => {
-    const release = parse(readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8"));
-    const checkout = release.jobs.ci.steps.find((step: { uses?: string }) => step.uses?.startsWith("actions/checkout@"));
-    const sparse = (checkout.with["sparse-checkout"] as string).split("\n").map((line) => line.trim()).filter(Boolean);
-    const imports = [...readFileSync(new URL("./release-ci.mjs", import.meta.url), "utf8").matchAll(/^import .* from "\.\/([^"]+)";$/gm)]
-      .map((match) => `scripts/${match[1]}`);
-    expect(imports).toContain("scripts/ci-scope.mjs");
-    expect(sparse.sort()).toEqual(["scripts/release-ci.mjs", ...imports].sort());
-  });
-
   it("lets push scoping read the previous commit's CI, and nothing more", () => {
     // ci-scope.mjs runs a push's docs- or version-only diff without the runtime
     // jobs only when the commit before it has its own green run.

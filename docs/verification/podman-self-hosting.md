@@ -21,7 +21,6 @@ cd "$repo"
 podman build -f deploy/podman/Containerfile -t localhost/rootclaw-podman:verify .
 fixture=$(mktemp -d /tmp/rootclaw-podman-verify-XXXXXXXX)
 mkdir -m 700 "$fixture/.rootclaw"
-cp server/testing/fake-claude-cli.ts "$fixture/fake-claude-cli.ts"
 # Windows checkouts may have CRLF; the fake is executed via its shebang on Linux.
 sed -i 's/\r$//' "$fixture/fake-claude-cli.ts"
 chmod 700 "$fixture/fake-claude-cli.ts"

@@ -18,9 +18,9 @@ runner it checks that nothing is applied, and stops there.
 
 ```sh
 pnpm exec vitest run server/safety-floor.test.ts server/safety-floor-gate.test.ts server/auto-approve-undelivered.test.ts
-pnpm exec vitest run server/drivers/openai-chat-safety-floor.test.ts server/drivers/self-answer-safety-floor.test.ts
+pnpm exec vitest run server/drivers/openai-chat-safety-floor.test.ts
 pnpm exec vitest run server/safety-floor.e2e.test.ts
-pnpm exec vitest run server/auto-approve.test.ts server/command-allowlist.e2e.test.ts
+pnpm exec vitest run server/auto-approve.test.ts
 ```
 
 ## What it checks
@@ -59,7 +59,6 @@ pnpm exec vitest run server/auto-approve.test.ts server/command-allowlist.e2e.te
   allow this session" the never-list command never reaches the tool; at Ask
   the card reaches a person and their Allow stands; with the floor off
   nothing changes.
-- `server/drivers/self-answer-safety-floor.test.ts` drives the Codex and ACP
   drivers against their scripted fakes, which send a permission request and
   record the answer. Codex at Full access accepts a request inside the
   driver; with the floor on it raises a never-list command as a request

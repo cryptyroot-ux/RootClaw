@@ -49,7 +49,6 @@ Use only mapped, tested commands:
 - [Work summaries and engine hooks](digests.md)
 - [OpenAI-compatible structured tools](openai-tools.md)
 - [Per-bot tool selection and local-model checks](tool-selection.md)
-- [OpenCode model variants through ACP](opencode-variants.md)
 - [Bot setup, model scope, and file continuity](bot-continuity.md)
 - [Reviewed Chief team setup and scoped deletion](team-setup.md)
 - [RootClaw, everyone's helper](rootclaw.md)
@@ -77,11 +76,6 @@ Use only mapped, tested commands:
 - [Question cards: a teammate's question, in its chat and the person's inbox](question-cards.md)
 - [Chief authority over additional departments](team-access.md)
 - [Engines and Doctor](engines.md)
-- [Cline engine and native loopback qualification](cline.md)
-- [Claude coordination and turn-scoped tools](claude-tool-lifecycle.md)
-- [Codex bot instructions](codex-instructions.md)
-- [Codex browser routing and native search](codex-browser-routing.md)
-- [Codex helper event isolation](codex-helpers.md)
 - [Qwen model route selection](qwen-models.md)
 - [Team backups](team-backups.md)
 - [Sharing a whole team](team-sharing.md)
@@ -90,14 +84,12 @@ Use only mapped, tested commands:
 - [Full workspace backups](workspace-backups.md)
 - [Fleet: many workspaces on one server](fleet.md)
 - [Workspaces screen and the fleet agent](workspaces.md)
-- [Hosted workspace sign-in and revocation](hosted-workspaces.md)
 - [Shared-workspace trust: loopback, card answerers, decision log](shared-workspace-trust.md)
 - [Shared-workspace governance: bot visibility and admin activity](shared-workspace-governance.md)
 - [Usage ledger](usage-ledger.md)
 - [Bounded built-in tool results](tool-results.md)
 - [Memory: recall, upkeep and the tidy-up](memory-layer.md)
 - [Spend cap and sell prices](spend-cap.md)
-- [Enterprise layer loading and license expiry](enterprise-license.md)
 
 `control-rootclaw ui` ([Chat UI, driven headlessly](chat-ui.md)) drives the real
 renderer in a headless Chrome by accessible name, so composer sends, transcript
@@ -235,14 +227,6 @@ keyless local generation, saved-key handling, and safe errors with a local fake 
 The [independent threads fixture](threads.md) checks nested sidebar navigation,
 per-thread models, simultaneous direct conversations and thread-scoped Stop.
 
-The [custom ACP model fixture](custom-acp-models.md) checks native model and
-thinking choices, independent bot defaults and thread overrides, and retained
-settings and catalogs after restart with an offline ACP engine.
-
-The [GitHub Copilot engine checks](copilot-engine.md) cover its ACP catalog,
-model and effort selection, sign-in detection, and moving a bot or conversation
-between Claude, Copilot and a custom ACP agent with fake engines.
-
 The [mobile generated-image checks](mobile-generated-images.md) cover native image
 attachments and message-scoped download authorization using isolated fixtures.
 
@@ -279,9 +263,6 @@ with an offline CLI and custom-domain validation without touching live accounts.
 The [engine library fixture](engines-ui.md) checks onboarding and Settings cards,
 responsive layouts, theme contrast, and status refreshes without losing drafts.
 
-The [Claude account recipe](claude-account.md) checks sign-out, cancellation and
-retry against an offline Claude CLI confined to a disposable home.
-
 The [provider recovery recipe](provider-recovery.md) verifies real Grok image
 transport and Claude authentication against loopback APIs, plus scoped thread
 approvals and provider safety errors in an isolated desktop UI.
@@ -293,12 +274,6 @@ conversation, approval level and Stop/new-message precedence.
 The [skill approval lifecycle recipe](skill-approval-lifecycle.md) checks Deny,
 missing staged records and active-thread deletion in two isolated app windows,
 including the surviving conversation and sending again without deleting the bot.
-
-The [Codex account recipe](codex-account.md) checks account switching against an
-offline Codex CLI whose identity is synthetic and whose credential directory is empty.
-
-The [ChatGPT plan recipe](chatgpt-plan.md) checks the separate official OAuth
-flow, credential rotation, account ownership, and native Responses routing.
 
 The [mention fixture](mentions.md) checks candidate selection, composer highlighting,
 sent mentions, multiline scrolling and responsive wrapping in real chat views.

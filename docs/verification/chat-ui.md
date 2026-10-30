@@ -35,11 +35,6 @@ session named `rootclaw-ui-<port>`, and prints a handle:
 }
 ```
 
-`--tool-calls` and `--mode` script the fake engine (`FAKE_CLAUDE_TOOL_CALLS`
-and `FAKE_CLAUDE_MODE` in `server/testing/fake-claude-cli.ts`). Pass `ui.json`
-to every other verb as `--ui`; there is no discovery, so a recipe cannot drive
-a browser it did not launch.
-
 ## Drive
 
 ```sh

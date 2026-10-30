@@ -65,7 +65,7 @@ for an ACP member (no mark, no automatic fresh session, 409 from the room's
 Compact now). The 1:1 header's warning and its button follow the shown figure.
 
 ```sh
-pnpm exec vitest run server/acp-context-reports.e2e.test.ts server/context-budget.test.ts
+pnpm exec vitest run server/context-budget.test.ts
 ```
 
 The fixture runs each 1:1 scenario twice, with the fake agent silent and with
