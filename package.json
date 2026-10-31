@@ -27,6 +27,7 @@
     "check:contrast": "node scripts/check-skin-contrast.mjs",
     "i18n:check": "node scripts/generate-locale.mjs --check",
     "dev": "vite",
+    "start": "node dist-server/rootclaw.js serve",
     "docs:dev": "pnpm --filter @rootclaw/docs dev",
     "docs:build": "pnpm --filter @rootclaw/docs build",
     "docs:preview": "pnpm --filter @rootclaw/docs preview",

@@ -16,6 +16,7 @@ export const ENGINE_KINDS: Record<string, { config: string; instance: string; ap
   groq: { config: "groq", instance: "groq", baseUrl: "allowed" },
   mistral: { config: "mistral", instance: "mistral", baseUrl: "no" },
   cerebras: { config: "cerebras", instance: "cerebras", baseUrl: "no" },
+  ollama: { config: "ollama", instance: "ollamaCloud", baseUrl: "no" },
 };
 
 /** Never from the command line itself. */
