@@ -36,7 +36,7 @@ node dist-server/rootclaw.js run helper "Hello!"
 
 Open `http://127.0.0.1:8799` in a browser on the same machine. For a VPS
 (systemd, HTTPS, pairing a remote browser, updates) follow
-[docs/install.md](docs/install.md).
+[docs/install.md](docs/install.md). Coming from an external engine? See [docs/migration.md](docs/migration.md).
 
 Keep port `8799` on localhost or behind the HTTPS reverse proxy, and run the
 server as an unprivileged user.
