@@ -22,6 +22,12 @@ function userBlocks(content: OpenAIChatMessage["content"]): Block[] {
 }
 
 /** Canonical messages → Anthropic: system apart, tool results folded into the next user turn, roles alternating. */
+/** Whether a tool message carries the engine's failed-result envelope. */
+export function toolFailed(content: string): boolean {
+  if (!content.startsWith("{\"ok\":false")) return false;
+  try { return (JSON.parse(content) as { ok?: unknown }).ok === false; } catch { return false; }
+}
+
 export function anthropicRequest(messages: OpenAIChatMessage[]): { system: Block[]; messages: Message[] } {
   const system: Block[] = [];
   const out: Message[] = [];
@@ -34,7 +40,9 @@ export function anthropicRequest(messages: OpenAIChatMessage[]): { system: Block
   for (const message of messages) {
     if (message.role === "system") { const text = textOf(message.content); if (text) system.push({ type: "text", text }); continue; }
     if (message.role === "tool") {
-      push("user", [{ type: "tool_result", tool_use_id: message.tool_call_id ?? "", content: textOf(message.content) }]);
+      // The engine wraps every tool result as {"ok":…,"result":…}; a failed one is flagged so Claude reads it as an error (audit A01).
+      const content = textOf(message.content);
+      push("user", [{ type: "tool_result", tool_use_id: message.tool_call_id ?? "", content, ...(toolFailed(content) ? { is_error: true } : {}) }]);
       continue;
     }
     if (message.role === "assistant") {

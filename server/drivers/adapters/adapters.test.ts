@@ -53,6 +53,15 @@ describe("Anthropic Messages adapter", () => {
     expect(request.messages[2]!.content[0]).toEqual({ type: "tool_result", tool_use_id: "call_1", content: "hello" });
   });
 
+  it("flags a failed tool result as is_error and leaves a successful one unflagged (audit A01)", () => {
+    const failed = JSON.stringify({ ok: false, result: "ENOENT: a.txt" });
+    const passed = JSON.stringify({ ok: true, result: "{\"ok\":false}" });
+    const request = anthropicRequest([...history.slice(0, 3), { role: "tool", tool_call_id: "call_1", content: failed }]);
+    expect(request.messages[2]!.content[0]).toEqual({ type: "tool_result", tool_use_id: "call_1", content: failed, is_error: true });
+    const ok = anthropicRequest([...history.slice(0, 3), { role: "tool", tool_call_id: "call_1", content: passed }]);
+    expect(ok.messages[2]!.content[0]).not.toHaveProperty("is_error");
+  });
+
   it("streams text, collects a tool call and usage, and sends the API headers", async () => {
     const calls = stub(() => sse([
       ["message_start", { type: "message_start", message: { usage: { input_tokens: 100, cache_read_input_tokens: 20, output_tokens: 1 } } }],
