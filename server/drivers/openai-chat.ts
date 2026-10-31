@@ -1187,7 +1187,9 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             run: runCall,
             signal: abort.signal,
             commit: ({ call, result, content, fatal }) => {
-              if (!result.ok && call.function.name !== UPDATE_PLAN_TOOL) toolFailed = true;
+              // A failed read changed nothing, so it cannot make the answer a false receipt (a probe such as git_status
+              // outside a repo, or read_file on a missing file, is often the point); the model sees the error either way.
+              if (!result.ok && call.function.name !== UPDATE_PLAN_TOOL && !readOnlyTool(call.function.name)) toolFailed = true;
               messages.push({ role: "tool", tool_call_id: call.id, content });
               screenshotParts.push(...chatToolImages(call.id, result.images));
               abort.signal.throwIfAborted();

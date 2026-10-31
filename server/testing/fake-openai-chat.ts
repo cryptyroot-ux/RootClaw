@@ -11,6 +11,8 @@
 //   gate         file path for `slow` (FAKE_CHAT_GATE / FAKE_CLAUDE_SLOW_FINISH_GATE)
 //   replies      replies used in order, one per turn's final answer; past the end, the default reply
 //   toolCalls    [{name, input?, round?}] asked for in tool round `round` (default 0) of every turn, before its answer
+//   sequence     [[calls], [calls], ...]: streamed request N asks for entry N (empty or past the end: answer). Unlike
+//                `round`, it does not read the history, so it keeps counting after the engine compacts older steps away
 //   routes       [{match, reply?, toolCalls?, mode?}]: the first whose `match` (a regex) finds the user text overrides
 //   models       model ids GET /models lists (default: ["fixture-model"])
 //   dump         file path: the latest request as {model, prompt, systemPrompt, messages, tools}
@@ -31,7 +33,7 @@ export interface FakeToolCall { name: string; input?: Record<string, unknown>; r
 export interface FakeRoute { match: string; reply?: string; toolCalls?: FakeToolCall[]; mode?: FakeMode }
 export type FakeMode = "happy" | "slow" | "hang" | "error";
 export interface FakeScript {
-  mode?: FakeMode; gate?: string; replies?: string[]; toolCalls?: FakeToolCall[]; routes?: FakeRoute[];
+  mode?: FakeMode; gate?: string; replies?: string[]; toolCalls?: FakeToolCall[]; sequence?: FakeToolCall[][]; routes?: FakeRoute[];
   models?: string[]; dump?: string; prompts?: string; cost?: number;
   release?: string; finishGate?: string; setupFile?: string; setupDump?: string; textFile?: string; textDump?: string;
 }
@@ -85,6 +87,7 @@ export async function startFakeOpenAiChat(env: NodeJS.ProcessEnv = {}): Promise<
   const base = scriptFromEnv(env);
   let live: FakeScript = {};
   let replyIndex = 0;
+  let streamedCount = 0;
   const current = (): FakeScript => {
     const file = env.FAKE_CHAT_SCRIPT && existsSync(env.FAKE_CHAT_SCRIPT) ? json<FakeScript>(readFileSync(env.FAKE_CHAT_SCRIPT, "utf8")) ?? {} : {};
     return { ...base, ...file, ...live };
@@ -157,14 +160,17 @@ export async function startFakeOpenAiChat(env: NodeJS.ProcessEnv = {}): Promise<
     const called = newTurn ? /CALL_TOOL\s+(\S+)(?:\s+(\{.*\}))?/s.exec(userText) : null;
     const sinceUser = messages.slice(messages.findLastIndex((message) => message.role === "user") + 1);
     const round = sinceUser.filter((message) => message.role === "assistant" && (message as { tool_calls?: unknown[] }).tool_calls?.length).length;
-    const scripted = body.stream === true ? (route?.toolCalls ?? script.toolCalls ?? []).filter((call) => (call.round ?? 0) === round) : [];
+    const step = body.stream === true ? streamedCount++ : -1;
+    const scripted = body.stream !== true ? []
+      : script.sequence ? script.sequence[step] ?? []
+      : (route?.toolCalls ?? script.toolCalls ?? []).filter((call) => (call.round ?? 0) === round);
     const calls = called ? [{ name: called[1]!, arguments: called[2] ?? "{}" }]
       : scripted.map((call) => ({ name: call.name, arguments: JSON.stringify(call.input ?? {}) }));
     const answer = (): string => {
       if (released) return released;
       if (route?.reply !== undefined) return route.reply;
       if (script.replies && replyIndex < script.replies.length) return script.replies[replyIndex++]!;
-      return last?.role === "tool" && !scripted.length && !script.toolCalls?.length ? "Fixture reply: tool finished" : `Fixture reply: ${userText}`;
+      return last?.role === "tool" && !scripted.length && !script.toolCalls?.length && !script.sequence ? "Fixture reply: tool finished" : `Fixture reply: ${userText}`;
     };
     const chunk = (delta: Record<string, unknown>, finish: string | null = null) =>
       `data: ${JSON.stringify({ id: "fixture", object: "chat.completion.chunk", model, choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`;
