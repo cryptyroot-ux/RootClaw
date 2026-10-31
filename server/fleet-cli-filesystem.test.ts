@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultFleetDeps, runFleetCommand, type FleetInput } from "./fleet-cli.ts";
-import { emptyRegistry, fleetLayout, MANAGED_OPENROUTER } from "./fleet.ts";
+import { emptyRegistry, fleetLayout } from "./fleet.ts";
 import { removeTempDir } from "./testing/cleanup.ts";
 import { readUsage, summarizeUsage, type UsageRow } from "./usage-ledger.ts";
 
@@ -116,27 +116,30 @@ describe.skipIf(process.platform === "win32" || process.getuid?.() === 0)("fleet
     expect(statSync(registry).mode & 0o777).toBe(0o600);
   });
 
-  it("updates managed models through the real tenant helper and refuses a symlink without touching its target", async () => {
+  it("updates native provider models through the real tenant helper and refuses a symlink without touching its target", async () => {
     fixture.home = join(root, "var/lib/rootclaw/acme");
     mkdirSync(fixture.home, { recursive: true, mode: 0o700 });
-    const directory = join(fixture.home, ".config", "opencode");
-    mkdirSync(directory, { recursive: true, mode: 0o700 });
-    const path = join(directory, "opencode.json");
-    const managed = { npm: "@ai-sdk/openai-compatible", options: { baseURL: "https://admin.example.test/api/gateway/acme/openrouter/v1", apiKey: "fixture-scoped-key" }, models: {} };
-    writeFileSync(path, JSON.stringify({ provider: { [MANAGED_OPENROUTER]: managed, other: { keep: true } }, model: "keep/default" }), { mode: 0o600 });
+    const data = join(fixture.home, ".rootclaw");
+    mkdirSync(data, { recursive: true, mode: 0o700 });
+    const path = join(data, "config.json");
+    const managed = { url: "https://admin.example.test/api/gateway/acme/openrouter/v1", apiKeyEnv: "ROOTCLAW_OPENROUTER_API_KEY", managedModels: ["old/model"] };
+    const config = { signIn: { admins: ["a@example.test"] }, instances: { openrouter: { driver: "openai-compat", config: managed }, other: { driver: "openai-compat", config: { model: "keep" } } }, defaultModelSelection: { instanceId: "openrouter", model: "old/model" } };
+    writeFileSync(path, JSON.stringify(config), { mode: 0o600 });
     const layout = fleetLayout(root);
     const registry = { ...emptyRegistry("example.test"), workspaces: { acme: { slug: "acme", host: "acme.example.test", port: 8810, webhookPort: 8811, status: "running", createdAt: "" } } };
-    const files = new Map([[layout.registryFile, JSON.stringify(registry)], [join(layout.instancesDir, "acme.env"), "ROOTCLAW_ADMIN_URL=https://admin.example.test\nROOTCLAW_ADMIN_WORKSPACE=acme\n"]]);
+    mkdirSync(layout.instancesDir, { recursive: true });
+    const envPath = join(layout.instancesDir, "acme.env");
+    const files = new Map([[layout.registryFile, JSON.stringify(registry)], [envPath, "ROOTCLAW_ADMIN_URL=https://admin.example.test\nROOTCLAW_ADMIN_WORKSPACE=acme\nROOTCLAW_OPENROUTER_API_KEY=fixture-scoped-key\n"]]);
     const fixtureDeps = { ...deps, isRoot: () => true, readText: (name: string, owner?: string) => owner ? deps.readText(name, owner) : files.get(name) ?? null };
     const input: FleetInput = { action: "providers", slug: "acme", openrouterModels: ["provider/model"], admins: [], members: [], dryRun: false, yes: true, keepData: false, node: process.execPath, script: "/fixture/cli.js", root };
     const messages: string[] = [];
     const log = { log: (line: string) => messages.push(line), error: (line: string) => messages.push(line) };
     expect(await runFleetCommand(input, log, fixtureDeps)).toBe(0);
-    expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({ provider: { [MANAGED_OPENROUTER]: { ...managed, models: { "provider/model": { name: "provider/model" } } }, other: { keep: true } }, model: "keep/default" });
+    expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({ ...config, instances: { ...config.instances, openrouter: { ...config.instances.openrouter, config: { ...managed, managedModels: ["provider/model"] } } } });
     expect(statSync(path).mode & 0o777).toBe(0o600);
     const target = join(root, "sibling-private-config");
     writeFileSync(target, "fixture-private-do-not-read");
-    renameSync(path, join(directory, "previous.json"));
+    renameSync(path, join(data, "previous.json"));
     symlinkSync(target, path);
     expect(await runFleetCommand(input, log, fixtureDeps)).toBe(2);
     expect(readFileSync(target, "utf8")).toBe("fixture-private-do-not-read");

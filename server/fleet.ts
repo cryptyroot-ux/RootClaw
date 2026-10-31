@@ -1,6 +1,7 @@
 // Many client workspaces on one Linux server, each its own OS user and `rootclaw@<slug>` service. This module only plans:
 // it renders files and fixed argument lists as steps, and never builds a shell command string.
 import { posix } from "node:path";
+import { OPENROUTER_API_INSTANCE, OPENROUTER_API_KEY_ENV } from "./instance-fleets.ts";
 
 const { join } = posix;
 
@@ -232,7 +233,7 @@ export function caddyImportLine(layout = fleetLayout()): string {
   return `import ${layout.caddyDir}/*.caddy`;
 }
 
-export function instanceEnv(input: { workspace: FleetWorkspace; dataDir: string; licenseKey?: string; portalUrl?: string }): string {
+export function instanceEnv(input: { workspace: FleetWorkspace; dataDir: string; licenseKey?: string; portalUrl?: string; openrouterKey?: string }): string {
   const lines = [
     `ROOTCLAW_DATA_DIR=${input.dataDir}`,
     `ROOTCLAW_PORT=${input.workspace.port}`,
@@ -241,6 +242,7 @@ export function instanceEnv(input: { workspace: FleetWorkspace; dataDir: string;
   ];
   if (input.licenseKey) lines.push(`ROOTCLAW_LICENSE_KEY=${input.licenseKey}`);
   if (input.portalUrl) lines.push(`ROOTCLAW_ADMIN_URL=${input.portalUrl}`, `ROOTCLAW_ADMIN_WORKSPACE=${input.workspace.slug}`);
+  if (input.openrouterKey) lines.push(`${OPENROUTER_API_KEY_ENV}=${input.openrouterKey}`);
   return lines.join("\n") + "\n";
 }
 
@@ -259,8 +261,6 @@ export interface WorkspaceSeed {
   brandJson?: string;
 }
 
-export const MANAGED_OPENROUTER = "rootclaw-managed-openrouter";
-
 /** The gateway validates assignments too; keep filesystem seeds bounded and literal. */
 export function openRouterModelIds(value: unknown): string[] {
   if (!Array.isArray(value) || value.length > 100 || value.some((id) => typeof id !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9._:/+-]{0,159}$/.test(id))) {
@@ -269,14 +269,25 @@ export function openRouterModelIds(value: unknown): string[] {
   return [...new Set(value as string[])];
 }
 
-export function managedOpenRouterModels(models: unknown): Record<string, { name: string }> {
-  return Object.fromEntries(openRouterModelIds(models).map((id) => [id, { name: id }]));
-}
-
 export function initialConfig(seed: WorkspaceSeed): string {
   const config: Record<string, unknown> = { signIn: { admins: seed.admins, members: seed.members } };
   if (seed.anthropicKey) config.anthropic = { key: seed.anthropicKey, ...(seed.anthropicUrl ? { url: seed.anthropicUrl } : {}) };
-  if (seed.openrouterDefault && seed.openrouterModels?.length) config.defaultModelSelection = { instanceId: "opencodeGo", model: `${MANAGED_OPENROUTER}/${seed.openrouterModels[0]}` };
+  if (seed.openrouterKey && seed.openrouterUrl) {
+    const managedModels = openRouterModelIds(seed.openrouterModels ?? []);
+    config.instances = {
+      [OPENROUTER_API_INSTANCE]: {
+        driver: "openai-compat",
+        config: {
+          url: seed.openrouterUrl,
+          apiKeyEnv: OPENROUTER_API_KEY_ENV,
+          managedModels,
+        },
+      },
+    };
+  }
+  if (seed.openrouterDefault && seed.openrouterModels?.length) {
+    config.defaultModelSelection = { instanceId: OPENROUTER_API_INSTANCE, model: seed.openrouterModels[0] };
+  }
   if (seed.monthlyCapUsd !== undefined) config.budgets = { monthlyUsd: seed.monthlyCapUsd };
   return `${JSON.stringify(config, null, 2)}\n`;
 }
@@ -372,17 +383,8 @@ export function createPlan(input: {
     { kind: "write", path: layout.registryFile, content: `${JSON.stringify(reserved(true), null, 2)}\n`, mode: 0o600 },
     { kind: "mkdir", path: dataDir, mode: 0o700, owner: user },
     { kind: "write", path: join(dataDir, "config.json"), content: initialConfig(input.seed), mode: 0o600, owner: user },
-    ...(input.seed.openrouterKey ? [
-      { kind: "mkdir" as const, path: join(home, ".config"), mode: 0o700, owner: user },
-      { kind: "mkdir" as const, path: join(home, ".config", "opencode"), mode: 0o700, owner: user },
-      { kind: "write" as const, path: join(home, ".config", "opencode", "opencode.json"), mode: 0o600, owner: user, content: `${JSON.stringify({ provider: { [MANAGED_OPENROUTER]: {
-        npm: "@ai-sdk/openai-compatible", name: "Managed OpenRouter",
-        options: { baseURL: input.seed.openrouterUrl, apiKey: input.seed.openrouterKey },
-        models: managedOpenRouterModels(input.seed.openrouterModels ?? []),
-      } } }, null, 2)}\n` },
-    ] : []),
     ...(input.seed.brandJson ? [{ kind: "write" as const, path: join(dataDir, "brand.json"), content: input.seed.brandJson, mode: 0o600, owner: user }] : []),
-    { kind: "write", path: join(layout.instancesDir, `${workspace.slug}.env`), content: instanceEnv({ workspace, dataDir, licenseKey: input.licenseKey, portalUrl: input.seed.portalUrl }), mode: 0o600 },
+    { kind: "write", path: join(layout.instancesDir, `${workspace.slug}.env`), content: instanceEnv({ workspace, dataDir, licenseKey: input.licenseKey, portalUrl: input.seed.portalUrl, openrouterKey: input.seed.openrouterKey }), mode: 0o600 },
     ...(input.memoryMax
       ? [
           { kind: "mkdir" as const, path: join(layout.unitFile.replace(/rootclaw@\.service$/, ""), `rootclaw@${workspace.slug}.service.d`), mode: 0o755 },
