@@ -17,6 +17,8 @@ export interface RunRow {
   task: string; mode: "off" | "plan+verify"; pass: boolean; why: string; rounds: number; input: number; output: number;
   ms: number; stopReason: string | null; capped: boolean; costUsd?: number; compactions?: number; plan?: unknown; verify?: unknown; tools: string[];
   error?: string; failureLog?: string;
+  /** The provider, not the task, failed (rate limit, outage, credit, routing): not counted as a task failure. */
+  infra?: boolean;
 }
 
 export interface Exchange { n: number; url: string; status: number | "ERR"; request: string; response: string }
@@ -89,15 +91,22 @@ async function main() {
     for (const mode of (["off", "plan+verify"] as const).filter((entry) => !arg("mode") || (arg("mode") === "on" ? entry === "plan+verify" : entry === arg("mode")))) {
       if (budget.sent >= Number(arg("max-requests", "40"))) break;
       budget.exchanges = [];
-      rows.push(await runOne(instance, runs, task, mode, model, roundCap));
-      const row = rows.at(-1)!;
+      let row = await runOne(instance, runs, task, mode, model, roundCap);
+      // Free tiers rate-limit: back off and try the task again a couple of times before calling it an infra failure.
+      for (let attempt = 1; row.infra && attempt <= Number(arg("infra-retries", "2")) && budget.sent < Number(arg("max-requests", "40")); attempt++) {
+        console.log(`${task.id}: provider failure (${row.error?.slice(0, 120)}); retrying in ${15 * attempt}s`);
+        await new Promise((resolve) => setTimeout(resolve, 15_000 * attempt));
+        budget.exchanges = [];
+        row = await runOne(instance, runs, task, mode, model, roundCap);
+      }
+      rows.push(row);
       if (!row.pass || row.error || (row.stopReason && row.stopReason !== "end_turn")) {
         await new Promise((resolve) => setTimeout(resolve, 200));
         mkdirSync(failures, { recursive: true });
         row.failureLog = join(failures, `${task.id}-${mode}.json`);
         writeFileSync(row.failureLog, JSON.stringify({ task: task.id, mode, why: row.why, stopReason: row.stopReason, error: row.error, exchanges: budget.exchanges }, null, 2));
       }
-      console.log(`${row.task.padEnd(14)} ${row.mode.padEnd(11)} ${row.pass ? "PASS" : "FAIL"} rounds=${row.rounds} in=${row.input} out=${row.output} ${(row.ms / 1000).toFixed(1)}s ${row.stopReason ?? ""}${row.capped ? " (round cap)" : ""} | requests so far ${budget.sent}${row.pass ? "" : ` | ${row.why}`}${row.error ? ` | error: ${row.error}` : ""}${row.failureLog ? ` | log: ${row.failureLog}` : ""}`);
+      console.log(`${row.task.padEnd(14)} ${row.mode.padEnd(11)} ${row.pass ? "PASS" : row.infra ? "INFRA" : "FAIL"} rounds=${row.rounds} in=${row.input} out=${row.output} ${(row.ms / 1000).toFixed(1)}s ${row.stopReason ?? ""}${row.capped ? " (round cap)" : ""} | requests so far ${budget.sent}${row.pass ? "" : ` | ${row.why}`}${row.error ? ` | error: ${row.error}` : ""}${row.failureLog ? ` | log: ${row.failureLog}` : ""}`);
     }
     if (budget.sent >= Number(arg("max-requests", "40"))) { console.log(`request budget reached after ${task.id}; stopping`); break; }
   }
@@ -148,7 +157,8 @@ async function runOne(instance: Instance, runs: Runs, task: EngineTask, mode: Ru
   await extras.close();
   return { task: task.id, mode, pass: result.pass, why: result.why, rounds: run?.rounds ?? rounds, input: run?.usage?.input ?? 0, output: run?.usage?.output ?? 0,
     ms: Date.now() - started, stopReason: completed.stopReason ?? null, capped, plan: run?.plan, verify: run?.verify, tools: run?.tools.map((tool) => tool.name) ?? [],
-    ...(typeof run?.usage?.costUsd === "number" ? { costUsd: run.usage.costUsd } : {}), compactions: compactLines.length, ...(error ? { error } : {}) };
+    ...(typeof run?.usage?.costUsd === "number" ? { costUsd: run.usage.costUsd } : {}), compactions: compactLines.length, ...(error ? { error } : {}),
+    ...(!result.pass && error && isInfraError(error) ? { infra: true } : {}) };
 }
 
 /** A loopback page server for a web task (and the private-address allowance it needs), and a skill file outside the folder. */
@@ -183,10 +193,15 @@ async function taskExtras(task: EngineTask): Promise<{ prompt: string; system: s
   return { prompt, system, close: async () => { for (const close of closers.reverse()) await close(); } };
 }
 
+/** Errors that are the provider's, not the model's or the engine's: rate limits, outages, credit, routing. */
+export function isInfraError(message: string): boolean {
+  return /\b(429|402|502|503|504)\b|rate.?limit|too many requests|temporarily|overloaded|credit|endpoints? (are )?available|provider returned error|fetch failed|ECONNRESET|ETIMEDOUT|eval request budget/i.test(message);
+}
+
 export function summarize(rows: RunRow[]): string {
   const lines = ["| task | OFF | ON | OFF tokens (in/out) | ON tokens (in/out) | OFF rounds | ON rounds |", "|---|---|---|---|---|---|---|"];
   const tasks = [...new Set(rows.map((row) => row.task))];
-  const cell = (row?: RunRow) => row ? (row.pass ? "pass" : "FAIL") : "-";
+  const cell = (row?: RunRow) => row ? (row.pass ? "pass" : row.infra ? "infra" : "FAIL") : "-";
   for (const task of tasks) {
     const off = rows.find((row) => row.task === task && row.mode === "off");
     const on = rows.find((row) => row.task === task && row.mode === "plan+verify");
@@ -194,7 +209,7 @@ export function summarize(rows: RunRow[]): string {
   }
   const paired = tasks.filter((task) => rows.some((row) => row.task === task && row.mode === "off") && rows.some((row) => row.task === task && row.mode === "plan+verify"));
   const sum = (mode: RunRow["mode"]) => rows.filter((row) => row.mode === mode && paired.includes(row.task)).reduce((total, row) => total + row.input + row.output, 0);
-  const rate = (mode: RunRow["mode"]) => `${rows.filter((row) => row.mode === mode && row.pass).length}/${rows.filter((row) => row.mode === mode).length}`;
+  const rate = (mode: RunRow["mode"]) => `${rows.filter((row) => row.mode === mode && row.pass).length}/${rows.filter((row) => row.mode === mode && !row.infra).length}`;
   lines.push("", `success OFF ${rate("off")}, ON ${rate("plan+verify")}; token ratio ON/OFF over ${paired.length} paired task(s): ${sum("off") ? (sum("plan+verify") / sum("off")).toFixed(2) : "n/a"}`);
   return lines.join("\n");
 }
