@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { approvalModeFor } from "../../shared/approval-mode.ts";
 import { removeTempDir } from "../testing/cleanup.ts";
 import type { VerbContext } from "./context.ts";
-import { Output } from "./output.ts";
+import { Output, type HeadlessIo } from "./output.ts";
 import { botPatch, botSkillDirs, reconcile, skillFilePath, teamExportVerb, type ApplyOptions } from "./team-apply.ts";
 import { loadTeamFile, type DesiredBot, type TeamFile } from "./team-file.ts";
 
@@ -17,12 +17,12 @@ type Rec = Record<string, any>;
 
 function workspace(seed: { bots?: Rec[]; groups?: Rec[]; sections?: string[]; config?: Rec } = {}) {
   const state = {
-    bots: (seed.bots ?? []).map((bot) => ({ busy: false, title: "", description: "", modelSelection: { instanceId: "claude", model: "claude-sonnet-5" }, ...bot })) as Rec[],
+    bots: (seed.bots ?? []).map((bot) => ({ busy: false, title: "", description: "", modelSelection: { instanceId: "anthropicApi", model: "claude-sonnet-5" }, ...bot })) as Rec[],
     groups: seed.groups ?? [],
     sections: seed.sections ?? [],
     briefs: {} as Record<string, string>,
     skills: {} as Record<string, Record<string, { text: string; enabled: boolean }>>,
-    config: seed.config ?? { anthropic: { configured: false, everyClaudeBot: true } },
+    config: seed.config ?? { anthropic: { configured: false } },
   };
   const writes: string[] = [];
   let ids = 0;
@@ -34,11 +34,11 @@ function workspace(seed: { bots?: Rec[]; groups?: Rec[]; sections?: string[]; co
     const url = new URL(path, "http://rootclaw");
     const m = url.pathname.split("/").slice(1);
     if (url.pathname === "/api/config") {
-      if (method === "PUT") for (const [name, value] of Object.entries(body as Rec)) state.config[name] = { ...state.config[name], configured: true, ...(value.everyClaudeBot !== undefined ? { everyClaudeBot: value.everyClaudeBot } : {}) };
+      if (method === "PUT") for (const [name] of Object.entries(body as Rec)) state.config[name] = { ...state.config[name], configured: true };
       return state.config;
     }
-    if (url.pathname === "/api/bot-defaults") return { modelSelection: { instanceId: "claude", model: "claude-sonnet-5" } };
-    if (url.pathname === "/api/instances") return { instances: [{ instanceId: "claude", driverKind: "anthropic", snapshot: { state: "available" }, models: { default: "claude-sonnet-5", options: [{ id: "claude-sonnet-5" }, { id: "claude-haiku-5" }] } },
+    if (url.pathname === "/api/bot-defaults") return { modelSelection: { instanceId: "anthropicApi", model: "claude-sonnet-5" } };
+    if (url.pathname === "/api/instances") return { instances: [{ instanceId: "anthropicApi", driverKind: "anthropic", snapshot: { state: "available" }, models: { default: "claude-sonnet-5", options: [{ id: "claude-sonnet-5" }, { id: "claude-haiku-5" }] } },
       { instanceId: "legacy", driverKind: "not-a-native-driver", snapshot: { state: "available" }, models: { default: "legacy-1", options: [{ id: "legacy-1" }] } }] };
     if (url.pathname === "/api/sidebar-sections") {
       if (method === "POST") state.sections.push(body.name);
@@ -52,7 +52,7 @@ function workspace(seed: { bots?: Rec[]; groups?: Rec[]; sections?: string[]; co
     if (url.pathname === "/api/bots" && method === "GET") return { bots: state.bots, groups: state.groups };
     if (url.pathname === "/api/bots" && method === "POST") {
       const bot = { id: `bot-${++ids}`, busy: false, name: body.name, title: body.title ?? "", description: body.description ?? "",
-        ...(body.section ? { section: body.section } : {}), modelSelection: body.modelSelection ?? { instanceId: "claude", model: "claude-sonnet-5" } };
+        ...(body.section ? { section: body.section } : {}), modelSelection: body.modelSelection ?? { instanceId: "anthropicApi", model: "claude-sonnet-5" } };
       state.bots.push(bot);
       return { bot };
     }
@@ -93,7 +93,7 @@ function workspace(seed: { bots?: Rec[]; groups?: Rec[]; sections?: string[]; co
 
 const lead: DesiredBot = {
   name: "Room Lead", team: "Launch Room", chief: true, manages: [], title: "Launch rehearsal lead", soul: "Lead the rehearsal.\n",
-  model: { instanceId: "claude", model: "claude-sonnet-5" }, approval: "full", computer: "off", cwd: "/work/room", tools: { deny: [] },
+  model: { instanceId: "anthropicApi", model: "claude-sonnet-5" }, approval: "full", computer: "off", cwd: "/work/room", tools: { deny: [] },
   skills: [{ name: "launch-report", description: "Write it.", text: "---\nname: launch-report\ndescription: Write it.\n---\nBody\n", enabled: true, file: "skills/launch-report/SKILL.md" }],
 };
 const priya: DesiredBot = { name: "Priya", team: "Launch Room", manages: [], title: "Skeptical buyer", approval: "full", computer: "browser",
@@ -112,7 +112,7 @@ describe("team apply", () => {
     const plan = await reconcile(client, file(), options({ apply: false }));
     expect(plan.lines).toEqual([
       'team "Launch Room": create · brief set (1 line)',
-      'bot "Room Lead": create (Chief of Launch Room · claude/claude-sonnet-5 · Full access · computer off)',
+      'bot "Room Lead": create (Chief of Launch Room · anthropicApi/claude-sonnet-5 · Full access · computer off)',
       'bot "Priya": create (team Launch Room · Full access · computer browser)',
       'room "Rehearsal": create (2 members, team Launch Room)',
     ]);
@@ -216,7 +216,7 @@ describe("team apply", () => {
     const applied = await reconcile(client, file(), options());
     expect(applied.lines).toContain('bot "Priya": update title "Buyer" → "Skeptical buyer"; approval Ask → Full access; computer auto → browser; browser profile its own → guest; tools changed');
     expect(state.bots.find((bot) => bot.id === "sales-priya")).toEqual({ id: "sales-priya", name: "Priya", section: "Sales", title: "Account manager", soul: "Sell.",
-      busy: false, description: "", modelSelection: { instanceId: "claude", model: "claude-sonnet-5" } });
+      busy: false, description: "", modelSelection: { instanceId: "anthropicApi", model: "claude-sonnet-5" } });
     expect(state.bots.find((bot) => bot.id === "room-priya")).toMatchObject({ title: "Skeptical buyer", approvalMode: "full" });
     writes.length = 0;
     expect(await reconcile(client, file(), options())).toMatchObject({ lines: [], writes: 0 });
@@ -259,19 +259,19 @@ describe("team apply", () => {
     const { client } = workspace();
     await expect(reconcile(client, file({ bots: [{ ...priya, model: { instanceId: "codex", model: "gpt-6" } }] }), options({ apply: false })))
       .rejects.toThrow('bot "Priya": no engine "codex" here');
-    await expect(reconcile(client, file({ bots: [{ ...priya, model: { instanceId: "claude", model: "claude-opus-9" } }] }), options({ apply: false })))
-      .rejects.toThrow('claude offers no model "claude-opus-9"');
+    await expect(reconcile(client, file({ bots: [{ ...priya, model: { instanceId: "anthropicApi", model: "claude-opus-9" } }] }), options({ apply: false })))
+      .rejects.toThrow('anthropicApi offers no model "claude-opus-9"');
   });
 });
 
 describe("botPatch", () => {
   const echo = { id: "b1", name: "Priya", section: "Launch Room", title: "Skeptical buyer", description: "", approvalMode: "full",
-    computer: "browser", browserProfile: "guest", toolScope: { deny: ["native:Bash", "native:Write"] }, modelSelection: { instanceId: "claude", model: "claude-sonnet-5", effort: "high" } };
+    computer: "browser", browserProfile: "guest", toolScope: { deny: ["native:Bash", "native:Write"] }, modelSelection: { instanceId: "anthropicApi", model: "claude-sonnet-5", effort: "high" } };
 
   const same: DesiredBot = { ...priya, tools: { deny: ["native:Write", "native:Bash"] } };
 
   it("finds nothing to change when the echo already matches, whatever the order of tool selectors", () => {
-    expect(botPatch({ ...same, model: { instanceId: "claude", model: "claude-sonnet-5" } }, echo, "Launch Room")).toEqual({ patch: {}, changes: [] });
+    expect(botPatch({ ...same, model: { instanceId: "anthropicApi", model: "claude-sonnet-5" } }, echo, "Launch Room")).toEqual({ patch: {}, changes: [] });
     expect(botPatch(priya, echo, "Launch Room")).toEqual({ patch: { toolScope: { deny: ["mcp:mail:*"] } }, changes: ["tools changed"] });
   });
 
@@ -295,11 +295,11 @@ describe("botPatch", () => {
   });
 
   it("changes the model, keeps an effort the file does not name, and moves a bot to Auto computer with null", () => {
-    expect(botPatch({ ...same, model: { instanceId: "claude", model: "claude-haiku-5" } }, echo, "Launch Room")).toEqual({
-      patch: { modelSelection: { instanceId: "claude", model: "claude-haiku-5", effort: "high" }, requireAvailableModel: true },
-      changes: ["model claude/claude-sonnet-5 (high) → claude/claude-haiku-5 (high)"] });
+    expect(botPatch({ ...same, model: { instanceId: "anthropicApi", model: "claude-haiku-5" } }, echo, "Launch Room")).toEqual({
+      patch: { modelSelection: { instanceId: "anthropicApi", model: "claude-haiku-5", effort: "high" }, requireAvailableModel: true },
+      changes: ["model anthropicApi/claude-sonnet-5 (high) → anthropicApi/claude-haiku-5 (high)"] });
     expect(botPatch({ ...same, model: { instanceId: "codex", model: "gpt-6" } }, echo, "Launch Room").patch.modelSelection).toEqual({ instanceId: "codex", model: "gpt-6" });
-    expect(botPatch({ ...same, effort: "low" }, echo, "Launch Room").patch.modelSelection).toEqual({ instanceId: "claude", model: "claude-sonnet-5", effort: "low" });
+    expect(botPatch({ ...same, effort: "low" }, echo, "Launch Room").patch.modelSelection).toEqual({ instanceId: "anthropicApi", model: "claude-sonnet-5", effort: "low" });
     expect(botPatch({ ...same, computer: "auto" }, echo, "Launch Room")).toEqual({ patch: { computer: null }, changes: ["computer browser → auto"] });
   });
 });
@@ -327,6 +327,22 @@ describe("team export", () => {
       expect(back.bots.map((bot) => [bot.name, bot.skills.map((s) => s.text.trim().split("\n").at(-1))])).toEqual([
         ["Dev A", ["first"]], ["Dev-A", ["second"]], ["Dev A 2", ["third"]],
       ]);
+    } finally {
+      await removeTempDir(dir);
+    }
+  });
+
+  it("exports the native Anthropic provider without removed CLI routing controls", async () => {
+    const { client, state } = workspace({ bots: [{ id: "bot-a", name: "Scout" }] });
+    state.config.anthropic = { configured: true, everyClaudeBot: false };
+    const dir = mkdtempSync(join(tmpdir(), "rootclaw-team-export-provider-"));
+    try {
+      const out = join(dir, "team.yaml");
+      const io: HeadlessIo = { out: () => undefined, err: () => undefined, readStdin: async () => "" };
+      const ctx = { verb: "team export", flags: { out }, positionals: [], env: {}, io,
+        output: new Output(io, {}), client: async () => client, signal: new AbortController().signal, defaultWaitMs: 1_000 } as VerbContext;
+      await teamExportVerb(ctx);
+      expect(loadTeamFile(out).engines).toEqual([{ kind: "claude", key: { env: "SET_ME" } }]);
     } finally {
       await removeTempDir(dir);
     }

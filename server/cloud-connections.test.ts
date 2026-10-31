@@ -68,7 +68,7 @@ describe("what GET /api/cloud-connections names", () => {
       { id: "mcp:linear", kind: "mcp", label: "linear", detail: "mcp.linear.app", signIn: true },
       { id: "mcp:notes", kind: "mcp", label: "notes", detail: "127.0.0.1:9", runsHere: true },
       { id: "key:openrouter", kind: "key", label: "OpenRouter", for: ["openrouter"] },
-      { id: "key:anthropic", kind: "key", label: "Anthropic", for: ["claudeApi"] },
+      { id: "key:anthropic", kind: "key", label: "Anthropic", for: ["anthropicApi"] },
       { id: "composio", kind: "composio", label: "Connected apps", mode: "managed", account: "managed:abc", installationId: "11111111-2222-4333-8444-555555555555" },
       { id: "highlevel", kind: "highlevel", label: "HighLevel", signIn: true },
     ]);
@@ -77,9 +77,10 @@ describe("what GET /api/cloud-connections names", () => {
     expect(listConnections(sources({} as AppConfig, { highlevel: () => ({ ...HIGHLEVEL, kind: "token", refreshToken: undefined }) }))).toEqual([{ id: "highlevel", kind: "highlevel", label: "HighLevel" }]);
   });
 
-  it("an Anthropic key serves Claude (API key) alone there, never Claude bots that sign in with an account", () => {
+  it("moves the Anthropic API provider key as provider configuration", () => {
+    expect(KEY_PROVIDERS.find((provider) => provider.id === "anthropic")!.for).toEqual(["anthropicApi"]);
     expect(KEY_PROVIDERS.find((provider) => provider.id === "anthropic")!.config({ anthropic: { key: "k", everyClaudeBot: true } } as AppConfig))
-      .toEqual({ anthropic: { key: "k", everyClaudeBot: false } });
+      .toEqual({ anthropic: { key: "k" } });
   });
 });
 

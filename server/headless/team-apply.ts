@@ -26,7 +26,6 @@ export interface ApplyOptions {
   rotateSecrets: boolean;
   waitIdleMs: number;
   env: NodeJS.ProcessEnv;
-  progress?(event: Rec): void;
 }
 
 export interface Tally {
@@ -125,29 +124,24 @@ export async function reconcile(client: HeadlessClient, file: TeamFile, options:
 
   if (file.engines.length) {
     const config = await client.json<Rec>("/api/config");
-    const instances: Rec[] = (await client.json<Rec>("/api/instances")).instances ?? [];
     for (const engine of file.engines) {
       const spec = ENGINE_KINDS[engine.kind]!;
       const status: Rec = config[spec.config] ?? {};
-      const onlyClaudeApi = engine.kind === "claude" && engine.everyClaudeBot === false;
       const needsKey = status.configured !== true || options.rotateSecrets;
-      const instanceId = onlyClaudeApi ? spec.apiInstance! : spec.instance;
-      const install = engine.install === true && instances.find((instance) => instance.instanceId === instanceId)?.snapshot?.state !== "available";
       const keyValue = needsKey ? readSecret(engine.key, options.env, `engine ${engine.kind} key`) : "";
       // A secret base URL is read only when it is written or compared, and never shown.
       const secretUrl = engine.baseUrl !== undefined && typeof engine.baseUrl !== "string";
       const baseUrl = engine.baseUrl === undefined ? undefined : typeof engine.baseUrl === "string" ? engine.baseUrl
         : needsKey || typeof status.url === "string" ? readSecret(engine.baseUrl, options.env, `engine ${engine.kind} base URL`) : undefined;
-      const request = { kind: engine.kind, key: keyValue, ...(baseUrl ? { baseUrl } : {}), onlyClaudeApi, rotate: options.rotateSecrets, install, dryRun: !options.apply,
-        ...(options.progress ? { progress: options.progress } : {}) };
+      const request = { kind: engine.kind, key: keyValue, ...(baseUrl ? { baseUrl } : {}), rotate: options.rotateSecrets, dryRun: !options.apply };
       const result = await applyEngine(client, request);
-      if (options.apply && (result.changed.length || install)) tally.writes += (result.changed.length ? 1 : 0) + (install ? 1 : 0);
+      if (options.apply && result.changed.length) tally.writes += 1;
       if (!needsKey && engine.baseUrl !== undefined && typeof status.url !== "string") {
         note(`engine ${engine.kind}: its key is already set and the server does not show its base URL, so the file's was not compared (--rotate-secrets writes both)`, "kept");
       }
-      if (!result.changed.length && !install) { note(`engine ${engine.kind}: already set`, "unchanged"); continue; }
-      note(`engine ${engine.kind}: ${[...result.changed.map((field: string) => field === "key" ? `key ${mask(keyValue)}` : field === "everyClaudeBot" ? (onlyClaudeApi ? "only Claude (API key) bots use the key" : "every Claude bot uses the key") : secretUrl ? "base URL set" : `base URL ${baseUrl}`),
-        ...(install ? ["install"] : [])].join(" · ")}`, status.configured === true ? "changed" : "created");
+      if (!result.changed.length) { note(`engine ${engine.kind}: already set`, "unchanged"); continue; }
+      note(`engine ${engine.kind}: ${result.changed.map((field: string) => field === "key" ? `key ${mask(keyValue)}` : secretUrl ? "base URL set" : `base URL ${baseUrl}`).join(" · ")}`,
+        status.configured === true ? "changed" : "created");
     }
   }
 
@@ -472,18 +466,17 @@ export async function teamExportVerb(ctx: VerbContext): Promise<VerbOutcome> {
   for (const [kind, spec] of Object.entries(ENGINE_KINDS)) {
     if (config[spec.config]?.configured !== true) continue;
     const name = kind === "openai-compatible" ? "openaiCompatible" : kind;
-    engines[name] = { key: { env: "SET_ME" }, ...(kind === "openai-compatible" && config.openaiCompat?.url ? { baseUrl: config.openaiCompat.url } : {}),
-      ...(kind === "claude" && config.anthropic?.everyClaudeBot === false ? { everyClaudeBot: false } : {}) };
+    engines[name] = { key: { env: "SET_ME" }, ...(kind === "openai-compatible" && config.openaiCompat?.url ? { baseUrl: config.openaiCompat.url } : {}) };
   }
   const document = { version: 1, ...(Object.keys(engines).length ? { engines } : {}), ...(teamEntries.length ? { teams: teamEntries } : {}),
     bots: botEntries, ...(roomEntries.length ? { rooms: roomEntries } : {}) };
   if (!botEntries.length) throw new HeadlessError("no bots to export", EXIT.failed);
-  writeFileSync(resolve(out), `# Written by rootclaw team export on ${new Date().toISOString().slice(0, 10)}.\n# Engine keys are placeholders (SET_ME): set them before applying this elsewhere.\n${stringifyYaml(document, { lineWidth: 0 })}`);
+  writeFileSync(resolve(out), `# Written by rootclaw team export on ${new Date().toISOString().slice(0, 10)}.\n# Provider keys are placeholders (SET_ME): set them before applying this elsewhere.\n${stringifyYaml(document, { lineWidth: 0 })}`);
   return {
     result: { ok: true, file: resolve(out), teams: teamEntries.length, bots: botEntries.length, rooms: roomEntries.length, skills, engines: Object.keys(engines), skipped, redacted },
     exitCode: EXIT.done,
     human: [`Wrote ${out}: ${teamEntries.length} teams, ${botEntries.length} bots, ${roomEntries.length} rooms, ${skills} skills.`,
-      ...(Object.keys(engines).length ? ["Engine keys are placeholders (SET_ME): set them before applying it elsewhere."] : []),
+      ...(Object.keys(engines).length ? ["Provider keys are placeholders (SET_ME): set them before applying it elsewhere."] : []),
       ...(redacted.length ? [`A secret was taken out of: ${redacted.join(", ")} (apply leaves those as they are).`] : []),
       ...skipped.map((line) => `not exported: ${line}`)],
   };

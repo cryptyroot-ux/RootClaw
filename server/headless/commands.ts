@@ -145,14 +145,14 @@ function modelArgs(ctx: VerbContext, required: boolean): Rec {
   const instance = flag(ctx.flags, "instance")?.trim();
   const effort = flag(ctx.flags, "effort")?.trim();
   if (!model) {
-    if (instance || effort || required) throw usageError("--model is required (INSTANCE/MODEL, such as claude/claude-sonnet-5-5)", "rootclaw models lists them");
+    if (instance || effort || required) throw usageError("--model is required (INSTANCE/MODEL, such as anthropicApi/claude-sonnet-5-5)", "rootclaw models lists them");
     return {};
   }
   let instanceId = instance;
   let modelId = model;
   if (!instanceId) {
     const slash = model.indexOf("/");
-    if (slash <= 0 || slash === model.length - 1) throw usageError("--model must be INSTANCE/MODEL, such as claude/claude-sonnet-5-5", "rootclaw models lists them");
+    if (slash <= 0 || slash === model.length - 1) throw usageError("--model must be INSTANCE/MODEL, such as anthropicApi/claude-sonnet-5-5", "rootclaw models lists them");
     instanceId = model.slice(0, slash);
     modelId = model.slice(slash + 1);
   }

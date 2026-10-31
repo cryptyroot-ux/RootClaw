@@ -242,8 +242,8 @@ const featureConfigSchema = z.object({
   browser: z.boolean().optional(),
   /** Computer sharing. Off unless true, set by hand: there is no Settings toggle. */
   sharedComputers: z.boolean().optional(),
-  claudeUserMcp: z.boolean().optional(), // Claude bots also load this machine's Claude Code MCP servers. Off unless true: tools cost tokens.
-  claudeUserSkills: z.boolean().optional(), // Claude bots also load the skills in ~/.claude/skills, in place. Off unless true.
+  claudeUserMcp: z.boolean().optional(), // Include the person's Claude Code MCP servers. Off unless true: tools cost tokens.
+  claudeUserSkills: z.boolean().optional(), // Include skills from ~/.claude/skills. Off unless true.
   /** LLM-generated titles for new threads. Off unless true. */
   llmThreadTitles: z.boolean().optional(),
   /** A new bot's setup card offers answers its engine writes for it, when there is something to go on. On unless false. */
@@ -354,9 +354,9 @@ const appConfigSchema = z.object({
   /** Ollama Cloud API key; `url` defaults to https://ollama.com/v1 (its OpenAI-compatible endpoint). */
   ollama: z.object({ key: optionalText, url: optionalText }).optional(),
   xai: z.object({ key: optionalText, url: optionalText }).optional(),
-  /** Anthropic API key for Claude Code billed per token; `url` is for a proxy or test double. Never a login OAuth token. */
+  /** Anthropic API key for the native provider, billed per token; `url` is for a proxy or test double, never a login token. */
   anthropic: z.object({ key: optionalText, url: optionalText, everyClaudeBot: z.boolean().optional() }).optional(),
-  /** OpenAI API key for the `openai` instance only; Codex keeps its own login. */
+  /** OpenAI API key for the `openai` instance only. */
   openai: z.object({ key: optionalText }).optional(),
   /** OpenRouter key, for the `openrouter` instance only. */
   openrouter: z.object({ key: optionalText }).optional(),
@@ -514,7 +514,7 @@ export interface AppConfig extends HelperConfig {
   ollama?: { key?: string; url?: string };
   /** DeepSeek API key for the DeepSeek Harness engine (`dsh`). */
   deepseek?: { key?: string };
-  /** `everyClaudeBot`: the key runs every Claude bot instead of its login; unset means true. */
+  /** Compatibility option from the Claude login flow; native Anthropic API instances always use the configured key. */
   anthropic?: { key?: string; url?: string; everyClaudeBot?: boolean };
   openai?: { key?: string };
   openrouter?: { key?: string };
@@ -816,7 +816,7 @@ export function loadConfig(): AppConfig {
   if (process.env.ROOTCLAW_DEEPSEEK_API_KEY !== undefined) cfg.deepseek.key = process.env.ROOTCLAW_DEEPSEEK_API_KEY;
   cfg.xai = { ...cfg.xai };
   if (process.env.XAI_API_KEY !== undefined) cfg.xai.key = process.env.XAI_API_KEY;
-  // Never ANTHROPIC_API_KEY: an operator's stray variable must not move every Claude bot onto API billing.
+  // Never ANTHROPIC_API_KEY: an ambient provider key must not silently configure RootClaw's Anthropic connection.
   cfg.anthropic = { ...cfg.anthropic };
   if (process.env.ROOTCLAW_ANTHROPIC_API_KEY !== undefined) cfg.anthropic.key = process.env.ROOTCLAW_ANTHROPIC_API_KEY;
   if (process.env.ROOTCLAW_ANTHROPIC_API_URL !== undefined) cfg.anthropic.url = process.env.ROOTCLAW_ANTHROPIC_API_URL;
@@ -1065,22 +1065,6 @@ export function persistableInstanceConfigs(cfg: AppConfig): InstanceConfigMap {
     else delete entry.config;
   }
   return map;
-}
-
-/** Claude Code env that picks its endpoint and sign-in; an instance setting any owns its routing. */
-const CLAUDE_ROUTING_ENV = [
-  "ANTHROPIC_BASE_URL",
-  "ANTHROPIC_AUTH_TOKEN",
-  "ANTHROPIC_API_KEY",
-  "ANTHROPIC_CUSTOM_HEADERS",
-  "CLAUDE_CODE_USE_BEDROCK",
-  "CLAUDE_CODE_USE_VERTEX",
-  "CLAUDE_CODE_USE_FOUNDRY",
-] as const;
-
-/** The workspace Anthropic key must never reach a Claude instance with its own routing: it would go as x-api-key to that host. */
-export function claudeInstanceOwnsRouting(environment: Record<string, string> | undefined): boolean {
-  return CLAUDE_ROUTING_ENV.some((key) => typeof environment?.[key] === "string" && environment[key] !== "");
 }
 
 const sameUrl = (a: string, b: string) => a.trim().replace(/\/+$/u, "") === b.trim().replace(/\/+$/u, "");

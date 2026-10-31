@@ -33,11 +33,11 @@ describe("loadTeamFile", () => {
   it("puts defaults under every bot, reads souls and skills from beside the file, and keeps keys as references", () => {
     const team = loadTeamFile(file(`version: 1
 engines:
-  claude: { key: { env: ANTHROPIC_API_KEY }, baseUrl: https://gateway.example, everyClaudeBot: true }
+  claude: { key: { env: ANTHROPIC_API_KEY }, baseUrl: https://gateway.example }
   openaiCompatible: { key: { file: keys/compat }, baseUrl: { env: COMPAT_URL } }
 defaults:
   team: Launch Room
-  model: claude/claude-haiku-5-5
+  model: anthropicApi/claude-haiku-5-5
   approval: full
   computer: browser
   browser: { enabled: true, profile: guest }
@@ -49,7 +49,7 @@ bots:
   - name: Room Lead
     chief: true
     manages: [Support]
-    model: claude/claude-sonnet-5-5
+    model: anthropicApi/claude-sonnet-5-5
     effort: medium
     computer: local
     browser: false
@@ -63,17 +63,17 @@ rooms:
 `));
     expect(team.bots[0]).toEqual({
       name: "Room Lead", team: "Launch Room", chief: true, manages: ["Support"], soul: "Lead the rehearsal.\n",
-      model: { instanceId: "claude", model: "claude-sonnet-5-5" }, effort: "medium", approval: "full", computer: "local",
+      model: { instanceId: "anthropicApi", model: "claude-sonnet-5-5" }, effort: "medium", approval: "full", computer: "local",
       cwd: "/work/visitors", browser: { enabled: false }, tools: null,
       skills: [{ name: "launch-report", description: "Write the report.", text: expect.stringContaining("Body."), enabled: true, file: "skills/launch-report/SKILL.md" }],
     });
-    expect(team.bots[1]).toMatchObject({ name: "Priya", team: "Launch Room", model: { instanceId: "claude", model: "claude-haiku-5-5" },
+    expect(team.bots[1]).toMatchObject({ name: "Priya", team: "Launch Room", model: { instanceId: "anthropicApi", model: "claude-haiku-5-5" },
       browser: { enabled: true, profile: "guest" }, tools: { deny: ["native:Bash"] }, soul: "You are Priya.", skills: [], manages: [] });
     expect(team.bots[1]).not.toHaveProperty("chief");
     expect(team.teams).toEqual([{ name: "Launch Room", brief: "We rehearse.", prune: true }]);
     expect(team.rooms).toEqual([{ name: "Rehearsal", members: ["Room Lead", "Priya"], responder: "Room Lead" }]);
     expect(team.engines).toEqual([
-      { kind: "claude", key: { env: "ANTHROPIC_API_KEY" }, baseUrl: "https://gateway.example", everyClaudeBot: true },
+      { kind: "claude", key: { env: "ANTHROPIC_API_KEY" }, baseUrl: "https://gateway.example" },
       { kind: "openai-compatible", key: { file: join(dir, "keys", "compat") }, baseUrl: { env: "COMPAT_URL" } },
     ]);
     expect(team.warnings).toEqual([]);
@@ -88,6 +88,15 @@ rooms:
     expect(team.bots.map((bot) => bot.cwd)).toEqual(["/work/room", "C:\\work\\room", "C:\\work\\visitors", "\\\\nas\\share\\room", "/work/room"]);
     expect(serverFolder("work/room")).toBeUndefined();
     expect(serverFolder("\\work")).toBeUndefined();
+  });
+
+  it("rejects removed external CLI install and Claude Code routing options", () => {
+    for (const option of ["install: true", "everyClaudeBot: false"]) {
+      expect(refused(`version: 1\nengines:\n  claude: { key: { env: ANTHROPIC_API_KEY }, ${option} }\nbots:\n  - name: A`)).toMatchObject({
+        exitCode: 2,
+        message: expect.stringContaining("unknown field"),
+      });
+    }
   });
 
   it("reads a file checked out on Windows exactly as on Linux: LF line ends, either path separator", () => {

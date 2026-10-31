@@ -79,7 +79,7 @@ one of its conversations.
 | `export TARGET --out DIR` | Writes a conversation's job to a folder (below). |
 | `events` | The server's live events as JSON lines (below). |
 | `team apply FILE`, `team export --out FILE` | Makes the workspace match a team file, or writes one (below). |
-| `engine set KIND`, `engine list` | Gives the workspace an engine key without a screen (below). |
+| `engine set KIND`, `engine list` | Configures native API provider keys without a screen (below). |
 | `connect [URL]` | Gets a token for a workspace elsewhere. |
 | `new-bot`, `new-channel`, `set-model`, `edit` | Make a bot or a room, change a bot's model, rewrite an earlier message. |
 | `mcp` | The RootClaw MCP server on stdin and stdout ([docs/mcp-server.md](mcp-server.md)). |
@@ -191,22 +191,20 @@ always JSON lines; `--jsonl` is accepted and changes nothing.
 ## engine
 
 ```sh
-rootclaw engine set claude --key-env ANTHROPIC_API_KEY --base-url https://gateway.example.com --install
+rootclaw engine set claude --key-env ANTHROPIC_API_KEY --base-url https://gateway.example.com
 rootclaw engine list
 ```
 
-KIND is `claude`, `openai`, `openrouter`, `openai-compatible` (needs
+KIND is `claude` (the native Anthropic API provider), `openai`, `openrouter`, `openai-compatible` (needs
 `--base-url`), `xai`, `groq`, `mistral` or `cerebras`. The key comes from an
 environment variable (`--key-env`) or a file (`--key-file`), is written once
-through the same setting the Settings screen uses, and is never printed or
-read back. An engine that already has a key is left alone unless `--rotate`,
+through the same setting the provider connection uses, and is never printed or
+read back. A provider that already has a key is left alone unless `--rotate`,
 so a script can run this on every start. The server never shows the address
 of a key it has, so on such an engine a different `--base-url` is not written
-either (it says so): `--rotate` writes both. For `claude`, the key runs every
-Claude bot (engine `claude`); `--only-claude-api` keeps it to "Claude (API
-key)" bots (engine `claudeApi`). `--install` installs the engine's command if
-it is missing, and waits for the install to finish (minutes on a fresh
-machine). Changing keys needs a session with full access.
+either (it says so): `--rotate` writes both. For `claude`, it configures the
+native Anthropic API provider instance (`anthropicApi`). The command does not
+install or launch a vendor CLI. Changing keys needs a session with full access.
 
 ## The team file
 
@@ -225,7 +223,7 @@ Apply prints its plan, then makes the changes:
 
 ```text
 team "Launch Room": create · brief set (5 lines)
-bot "Room Lead": create (Chief of Launch Room · claude/claude-sonnet-5-5 · Full access · computer local)
+bot "Room Lead": create (Chief of Launch Room · anthropicApi/claude-sonnet-5-5 · Full access · computer local)
 bot "Priya": update title "Buyer" → "Skeptical procurement manager"; soul 3 lines changed
 bot "Old visitor": not in file (kept; --prune deletes it)
 Plan: 6 to create, 1 to change, 0 unchanged, 0 to delete.
@@ -254,7 +252,7 @@ is the confirmation.
 ```yaml
 version: 1                                  # required
 engines:                                    # optional; needs full access
-  claude: { key: SECRET, baseUrl: URL | SECRET, everyClaudeBot: true, install: false }
+  claude: { key: SECRET, baseUrl: URL | SECRET } # Anthropic API provider
   openai | openrouter | xai | groq | mistral | cerebras: { key: SECRET }
   openaiCompatible: { key: SECRET, baseUrl: URL | SECRET }
   # SECRET is { env: NAME } or { file: PATH }. A key written in the file is refused.
@@ -272,7 +270,7 @@ bots:                                       # at least one
     chief: true                             # Chief of Staff of its team (one per team); false removes it
     manages: [Support]                      # other teams this Chief is also in charge of (every bot reaches every bot anyway)
     soul: TEXT | { file: PATH }             # standing instructions, at most 24,000 bytes
-    model: claude/claude-sonnet-5-5         # INSTANCE/MODEL; rootclaw models lists them
+    model: anthropicApi/claude-sonnet-5-5    # INSTANCE/MODEL; rootclaw models lists them
     effort: none | low | medium | high | xhigh | max
     approval: ask | edits | auto | full     # a new bot starts at full; Custom is set in the desktop app
     computer: auto | off | browser | local | vm | cloud
@@ -316,7 +314,7 @@ engines can limit built-in tools). `tools: {}` or `{ deny: [] }` means every
 tool: the bot's selection is cleared.
 
 `team export` writes the workspace in this format, skills as `SKILL.md` files
-beside it and engine keys as `{ env: SET_ME }` placeholders, so applying an
+beside it and provider keys as `{ env: SET_ME }` placeholders, so applying an
 export to the same workspace prints `No changes.`. A key written into a soul,
 a brief or a skill is taken out (`«redacted N chars»`), as the app's own team
 export takes it out, and the export says where; apply leaves a field with that
@@ -324,8 +322,8 @@ mark as it is, so the secret stays only on the server.
 
 ### Example: Launch Room
 
-One Room Lead and the visitors who rehearse a launch, on a sandbox with no
-Claude login: the key runs every Claude bot.
+One Room Lead and the visitors who rehearse a launch, on a sandbox whose
+Anthropic access uses an API key.
 
 ```yaml
 # launch-room.yaml — rootclaw team apply launch-room.yaml
@@ -335,12 +333,10 @@ engines:
   claude:
     key: { env: ANTHROPIC_API_KEY }          # or { file: /run/secrets/anthropic }
     baseUrl: { env: ANTHROPIC_BASE_URL }     # your gateway; a plain https:// address works too
-    everyClaudeBot: true                     # every Claude bot (engine "claude") runs on this key
-    install: true                            # install Claude Code if the sandbox lacks it
 
 defaults:
   team: Launch Room
-  model: claude/claude-haiku-5-5
+  model: anthropicApi/claude-haiku-5-5
   approval: full                             # nobody is there to answer a permission card
   computer: browser                          # works only in its own built-in browser
   browser: { enabled: true, profile: guest } # a fresh temporary profile per bot
@@ -361,7 +357,7 @@ bots:
     chief: true
     title: Launch rehearsal lead
     description: Hands the site to every visitor, then writes the launch report.
-    model: claude/claude-sonnet-5-5
+    model: anthropicApi/claude-sonnet-5-5
     effort: medium
     computer: local
     cwd: /work/room
@@ -393,8 +389,8 @@ rootclaw run "Room Lead" "Rehearse the launch of https://example.com with every 
 A Room Lead can brief up to 64 teammates in one turn before any of them
 reports back.
 
-The visitors read sites nobody vetted. A Claude bot keeps its built-in tools
-(a shell, file edits) whatever its `tools` say, so run them where those tools
+The visitors read sites nobody vetted. A native provider model keeps RootClaw's built-in tools
+(a shell, file edits) whatever its `tools` say, so run it where those tools
 can do no harm, such as a throwaway sandbox like Launch Room's, or give them
 an engine that can limit built-in tools.
 
@@ -402,7 +398,7 @@ an engine that can limit built-in tools.
 
 ```yaml
 # .github/workflows/rehearse.yml (a sketch)
-- run: npm install -g rootclaw @anthropic-ai/claude-code
+- run: npm install -g rootclaw
 - run: rootclaw serve --no-pair --data-dir "$RUNNER_TEMP/rootclaw" &
   env: { ROOTCLAW_ANTHROPIC_API_KEY: "${{ secrets.ANTHROPIC_API_KEY }}" }   # the workspace's Claude key from the start
 - run: rootclaw doctor --wait 2m          # the server answers and an engine is ready

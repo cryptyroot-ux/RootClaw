@@ -43,8 +43,7 @@ export interface ConnectionListing {
 }
 
 /** What the person's own Cloud has a key for, when the key is theirs; keys for what a Cloud includes (voice, Boat, X
- * research, the decider) are not listed, since the person's own key would replace what it includes. An Anthropic key
- * goes for "Claude (API key)" alone: there it never takes over Claude bots that sign in with a Claude account. */
+ * research, the decider) are not listed, since the person's own key would replace what it includes. */
 interface Provider { id: string; label: string; for: string[]; config(cfg: AppConfig): Partial<AppConfig> | null }
 
 const keyed = (name: "openai" | "openrouter" | "mistral" | "cerebras") => (cfg: AppConfig): Partial<AppConfig> | null => {
@@ -59,8 +58,8 @@ const keyedUrl = (name: "xai" | "groq" | "meta") => (cfg: AppConfig): Partial<Ap
 export const KEY_PROVIDERS: readonly Provider[] = [
   { id: "openai", label: "OpenAI", for: ["openai"], config: keyed("openai") },
   { id: "openrouter", label: "OpenRouter", for: ["openrouter"], config: keyed("openrouter") },
-  { id: "anthropic", label: "Anthropic", for: ["claudeApi"], config: (cfg) => cfg.anthropic?.key
-    ? { anthropic: { key: cfg.anthropic.key, ...(cfg.anthropic.url ? { url: cfg.anthropic.url } : {}), everyClaudeBot: false } } : null },
+  { id: "anthropic", label: "Anthropic", for: ["anthropicApi"], config: (cfg) => cfg.anthropic?.key
+    ? { anthropic: { key: cfg.anthropic.key, ...(cfg.anthropic.url ? { url: cfg.anthropic.url } : {}) } } : null },
   { id: "xai", label: "xAI", for: ["xaiApi"], config: keyedUrl("xai") },
   { id: "mistral", label: "Mistral", for: ["mistral"], config: keyed("mistral") },
   { id: "cerebras", label: "Cerebras", for: ["cerebras"], config: keyed("cerebras") },

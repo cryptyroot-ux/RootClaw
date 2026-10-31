@@ -1,7 +1,7 @@
 // Credential env names and the strippers that keep them out of child processes. Lives apart from
-// config.ts so the lists can grow (one name per engine) without that file growing with them.
+// config.ts so provider credentials can be added without growing that file.
 
-/** Workspace credential env names; spawned engine CLIs must never inherit them. */
+/** Workspace credential env names; spawned tools must never inherit them. */
 export const WORKSPACE_CREDENTIAL_ENV = [
   "XAI_API_KEY",
   "MISTRAL_API_KEY",
@@ -71,4 +71,3 @@ export const PROVIDER_CREDENTIAL_ENV = [
   "CURSOR_API_KEY",
   "CURSOR_AUTH_TOKEN",
 ] as const;
-
