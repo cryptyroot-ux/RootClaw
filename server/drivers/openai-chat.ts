@@ -769,10 +769,10 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         // Exact counts for known encodings; loads lazily (once per process) and falls back to the estimate.
         await prepareTokenizer(model);
         let compactions = 0;
-        const compact = async (reason: "budget" | "overflow", keepExchanges: number) => {
+        const compact = async (reason: "budget" | "overflow", keepExchanges: number, targetTokens?: number) => {
           const summaryModel = ctx.summaryModel || model;
           const result = await compactTurnMessages(messages, request, {
-            tools: tools!.definitions, model, keepExchanges,
+            tools: tools!.definitions, model, keepExchanges, ...(targetTokens ? { targetTokens } : {}),
             summaryBudgetBytes: Math.max(4_000, Math.floor(window * 0.4 * 3.5)),
             summarize: async (prompt) => {
               const { text, reasoning } = await adapter.complete({ messages: [{ role: "user", content: prompt }], model: summaryModel, stream: false, signal: abort.signal, tools: [] });
@@ -802,10 +802,11 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           // Once over budget, fold down to ~60% of it so the next rounds do not compact again at once.
           // The plan rides in one trailing message: taken out before compaction, put back at the end after it.
           if (planning) unpinPlan(messages);
-          let target = budget;
-          for (let keep = ctx.keepExchanges ?? DEFAULT_KEEP_EXCHANGES; keep >= 1; keep = keep > 1 ? Math.floor(keep / 2) : 0) {
-            if (calibration.apply(estimateRequestTokens(messages, tools.definitions, model)) < target) break;
-            if (await compact("budget", keep)) target = Math.floor(budget * 0.6);
+          // One pass folds as much as it takes to land at ~60% of the budget (the estimate is calibrated, so the
+          // target is divided back by the learned ratio), keeping as many recent exchanges as fit.
+          if (calibration.apply(estimateRequestTokens(messages, tools.definitions, model)) >= budget) {
+            const ratio = Math.max(1, calibration.apply(1_000_000) / 1_000_000);
+            await compact("budget", ctx.keepExchanges ?? DEFAULT_KEEP_EXCHANGES, Math.floor((budget * 0.6) / ratio));
           }
           if (planning) pinPlan(messages, plan, planHint);
           const sentEstimate = estimateRequestTokens(messages, tools.definitions, model);

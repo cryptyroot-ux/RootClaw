@@ -252,9 +252,10 @@ export function renderForSummary(messages: readonly OpenAIChatMessage[], budgetB
   return lines.join("\n");
 }
 
-export function summaryPrompt(previousSummary: string | null, rendered: string): string {
+export function summaryPrompt(previousSummary: string | null, rendered: string, maxBytes?: number): string {
   return [
     "You compact an AI agent's working context. Write a dense, structured note that lets the agent continue the SAME task without the original messages.",
+    ...(maxBytes ? [`Keep the note under ${Math.floor(maxBytes / 6)} words; findings, errors and exact identifiers first.`] : []),
     "Use exactly these sections, as bullet lists (write 'none' when empty):",
     "## Goal", "## Decisions", "## Facts and constraints (keep every exact identifier, number, path, URL, name, and value verbatim)",
     "## Files and resources touched", "## Open todos / next steps",
@@ -278,26 +279,50 @@ export function deterministicTurnSummary(previousSummary: string | null, folded:
 
 export interface CompactResult { messages: OpenAIChatMessage[]; folded: number; beforeTokens: number; afterTokens: number; summarizer: "model" | "fallback" }
 
-/** One incremental compaction: folds older steps (plus any earlier summary) into a new summary message. */
+/** One incremental compaction: folds older steps (plus any earlier summary) into a new summary message.
+ * With `targetTokens`, it folds enough in ONE pass to land at or under the target (keeping as many recent exchanges as
+ * fit, at least one), and bounds the summary itself; without it, it keeps `keepExchanges` as before. Folding a fixed
+ * small batch per pass barely shrank a history far over budget, and an unbounded summary could be as large as what it
+ * replaced. */
 export async function compactTurnMessages(
   messages: readonly OpenAIChatMessage[],
   request: OpenAIChatMessage,
-  input: { tools?: readonly ChatToolDefinition[]; model?: string; keepExchanges?: number; summarize: (prompt: string) => Promise<string>; summaryBudgetBytes: number },
+  input: { tools?: readonly ChatToolDefinition[]; model?: string; keepExchanges?: number; summarize: (prompt: string) => Promise<string>; summaryBudgetBytes: number;
+    targetTokens?: number },
 ): Promise<CompactResult | null> {
-  const plan = planCompaction(messages, request, input.keepExchanges);
+  const target = input.targetTokens;
+  const summaryCapBytes = target ? Math.max(1_200, Math.floor(target * 0.25 * 3.5)) : undefined;
+  const plan = target ? planToFit(messages, request, input, target, summaryCapBytes!) : planCompaction(messages, request, input.keepExchanges);
   if (!plan) return null;
   const beforeTokens = estimateRequestTokens(messages, input.tools, input.model);
   let summary: string;
   let summarizer: CompactResult["summarizer"] = "model";
   try {
-    summary = (await input.summarize(summaryPrompt(plan.previousSummary, renderForSummary(plan.folded, input.summaryBudgetBytes)))).trim();
+    summary = (await input.summarize(summaryPrompt(plan.previousSummary, renderForSummary(plan.folded, input.summaryBudgetBytes), summaryCapBytes))).trim();
     if (!summary) throw new Error("empty summary");
   } catch {
     summary = deterministicTurnSummary(plan.previousSummary, plan.folded);
     summarizer = "fallback";
   }
+  // A summary over its cap is cut like a long tool result: head, tail, and the finding lines in between.
+  if (summaryCapBytes && Buffer.byteLength(summary) > summaryCapBytes) summary = elide(summary, summaryCapBytes);
   const next = plan.build(summary);
   return { messages: next, folded: plan.folded.length, beforeTokens, afterTokens: estimateRequestTokens(next, input.tools, input.model), summarizer };
+}
+
+/** The plan that keeps the most recent exchanges while the projected request (summary at its cap) fits the target;
+ * when none fits, the smallest tail (one exchange). */
+function planToFit(messages: readonly OpenAIChatMessage[], request: OpenAIChatMessage,
+  input: { tools?: readonly ChatToolDefinition[]; model?: string; keepExchanges?: number }, target: number, summaryCapBytes: number): CompactionPlan | null {
+  const placeholder = "x".repeat(summaryCapBytes);
+  let fallback: CompactionPlan | null = null;
+  for (let keep = Math.max(1, input.keepExchanges ?? DEFAULT_KEEP_EXCHANGES); keep >= 1; keep--) {
+    const plan = planCompaction(messages, request, keep);
+    if (!plan) continue;
+    fallback = plan;
+    if (estimateRequestTokens(plan.build(placeholder), input.tools, input.model) <= target) return plan;
+  }
+  return fallback;
 }
 
 /** A provider's refusal of a prompt over its context window (OpenAI, Groq, Mistral, OpenRouter, vLLM, llama.cpp, LM Studio …). */

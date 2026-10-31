@@ -105,6 +105,9 @@ describe("native engine features (fake provider)", () => {
     writeFileSync(join(f.cwd, "one.txt"), big("alpha"));
     writeFileSync(join(f.cwd, "two.txt"), big("bravo"));
     writeFileSync(join(f.cwd, "three.txt"), "small\n");
+    const summaryFile = join(f.cwd, "..", "summary.txt");
+    writeFileSync(summaryFile, "## Goal\n- read the three files\n## Facts\n- one.txt and two.txt were read");
+    f.fake.set({ textFile: summaryFile });
     await f.start({ approvalMode: "full", turnContext: { compactAt: 4_000 } } as Partial<SendTurnInput>);
     const done = await f.completed();
     expect(done).toMatchObject({ type: "turn.completed" });
@@ -230,5 +233,25 @@ describe("compaction keeps a finding from the middle of a long tool result", () 
     const prompts = f.fake.requests.filter((body) => body.stream === false).map((body) => JSON.stringify(body.messages)).filter((text) => text.includes("You compact"));
     expect(prompts.length).toBeGreaterThan(0);
     expect(prompts.some((text) => text.includes("req-2-77731"))).toBe(true);
+  });
+});
+
+describe("compaction far over budget", () => {
+  it("brings every request after a compaction under the budget, even with a summarizer as verbose as its input", async () => {
+    const { estimateRequestTokens } = await import("./turn-context.ts");
+    const files = ["a", "b", "c", "d", "e", "f"];
+    // The fake summarizer echoes its input's last line, i.e. a summary about as large as what it folds: the case where
+    // folding one small batch per pass left the request stuck over budget round after round.
+    const f = await fixture([], files.map((k) => [{ name: "read_file", input: { path: `${k}.log` } }]));
+    for (const k of files) writeFileSync(join(f.cwd, `${k}.log`), Array.from({ length: 120 }, (_, i) => `${k} line ${i} INFO worker handled request req-${i} ok`).join("\n"));
+    const budget = 6_000;
+    await f.start({ approvalMode: "full", turnContext: { compactAt: budget } } as Partial<SendTurnInput>);
+    await f.completed();
+    const all = f.fake.requests;
+    const firstSummary = all.findIndex((body) => body.stream === false && JSON.stringify(body.messages).includes("You compact"));
+    expect(firstSummary).toBeGreaterThan(0);
+    const after = all.slice(firstSummary).filter((body) => body.stream === true);
+    expect(after.length).toBeGreaterThan(1);
+    for (const body of after) expect(estimateRequestTokens(body.messages as never, body.tools as never, "fixture-model")).toBeLessThanOrEqual(budget);
   });
 });
