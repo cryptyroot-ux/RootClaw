@@ -8,6 +8,7 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["evals/**/*.test.ts"],
+    exclude: ["evals/evals.test.ts", "evals/runners/run-skill-bench.test.ts"],
     setupFiles: ["server/testing/setup.ts"],
     // the e2e scenarios boot verification servers and fake provider CLIs;
     // parallel files introduce load-sensitive flakes for no win

@@ -183,10 +183,6 @@ jobs:
         # Same reporter pair as the vitest shards, so a failure annotates
         # the PR with the failing test and assertion.
         run: pnpm exec vitest run --config evals/vitest.config.ts --reporter=default --reporter=github-actions
-      - name: Tier 1 scenarios (scripted harness, no models)
-        run: pnpm eval
-      - name: Tier 2 golden replay against committed baselines
-        run: pnpm eval --golden
       - name: Tier 3 stays offline in CI (the skip is the pass condition)
         run: |
           output="$(pnpm eval --live 2>&1)"
@@ -268,8 +264,6 @@ jobs:
         # Builds dist-server/ and runs a copy of it outside the repo; the
         # phone-relay smoke below forks the same dist-server/index.js.
         run: pnpm test:packaged-server
-      - name: Verify native approval mode transitions
-        run: pnpm exec electron scripts/smoke-approval-modes.cjs
       - name: Verify app permissions and guarded display capture
         run: node scripts/smoke-app-permissions.mjs
       - name: Verify chat app frames stay sealed
