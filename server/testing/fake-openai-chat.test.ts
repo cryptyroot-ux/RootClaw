@@ -18,6 +18,7 @@ async function turn(messages: unknown[], signal?: AbortSignal) {
     calls: deltas.flatMap((delta) => delta.tool_calls ?? []).map((call: any) => [call.function.name, JSON.parse(call.function.arguments)]) };
 }
 const user = (content: string) => [{ role: "user", content }];
+const called = { role: "assistant", tool_calls: [{ id: "c", type: "function", function: { name: "x", arguments: "{}" } }] };
 
 describe("the scriptable native fake", () => {
   it("echoes by default and honours CALL_TOOL", async () => {
@@ -36,7 +37,15 @@ describe("the scriptable native fake", () => {
   it("asks for scripted tool calls at a turn's start and answers after their results", async () => {
     fake = await startFakeOpenAiChat({ FAKE_CHAT_TOOL_CALLS: JSON.stringify([{ name: "shell", input: { command: "echo hi" } }, { name: "list_dir" }]) });
     expect((await turn(user("go"))).calls).toEqual([["shell", { command: "echo hi" }], ["list_dir", {}]]);
-    expect((await turn([...user("go"), { role: "assistant" }, { role: "tool", content: "{}" }])).text).toBe("Fixture reply: go");
+    expect((await turn([...user("go"), called, { role: "tool", content: "{}" }])).text).toBe("Fixture reply: go");
+  });
+
+  it("asks for each round's calls once the earlier round has its results", async () => {
+    fake = await startFakeOpenAiChat({ FAKE_CHAT_TOOL_CALLS: JSON.stringify([{ name: "a" }, { name: "b", round: 1 }]) });
+    expect((await turn(user("go"))).calls).toEqual([["a", {}]]);
+    const first = [...user("go"), called, { role: "tool", content: "{}" }];
+    expect((await turn(first)).calls).toEqual([["b", {}]]);
+    expect((await turn([...first, called, { role: "tool", content: "{}" }])).text).toBe("Fixture reply: go");
   });
 
   it("holds a slow reply until its gate exists, and fails on a gate that says so", async () => {

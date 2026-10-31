@@ -10,7 +10,7 @@
 //                | hang (never answers until the request is aborted) | error (HTTP 500 on every call)
 //   gate         file path for `slow` (FAKE_CHAT_GATE / FAKE_CLAUDE_SLOW_FINISH_GATE)
 //   replies      replies used in order, one per turn's final answer; past the end, the default reply
-//   toolCalls    [{name, input?}] asked for at the start of every turn, before its answer
+//   toolCalls    [{name, input?, round?}] asked for in tool round `round` (default 0) of every turn, before its answer
 //   routes       [{match, reply?, toolCalls?, mode?}]: the first whose `match` (a regex) finds the user text overrides
 //   models       model ids GET /models lists (default: ["fixture-model"])
 //   dump         file path: the latest request as {model, prompt, systemPrompt, messages, tools}
@@ -21,7 +21,8 @@ import { createServer, type Server } from "node:http";
 
 export const FAKE_OPENAI_MODEL = "fixture-model";
 
-export interface FakeToolCall { name: string; input?: Record<string, unknown> }
+/** `round` (default 0) is which tool round of the turn asks for the call, so a turn can call, read results, then call again. */
+export interface FakeToolCall { name: string; input?: Record<string, unknown>; round?: number }
 export interface FakeRoute { match: string; reply?: string; toolCalls?: FakeToolCall[]; mode?: FakeMode }
 export type FakeMode = "happy" | "slow" | "hang" | "error";
 export interface FakeScript {
@@ -54,7 +55,7 @@ export function scriptFromEnv(env: NodeJS.ProcessEnv): FakeScript {
   const replies = json<unknown[]>(pick("REPLIES", "REPLIES"));
   if (Array.isArray(replies)) script.replies = replies.map((reply) => Array.isArray(reply) ? reply.join("\n\n") : String(reply));
   const calls = json<FakeToolCall[]>(pick("TOOL_CALLS", "TOOL_CALLS"));
-  if (Array.isArray(calls)) script.toolCalls = calls.map(({ name, input }) => ({ name, ...(input ? { input } : {}) }));
+  if (Array.isArray(calls)) script.toolCalls = calls.map(({ name, input, round }) => ({ name, ...(input ? { input } : {}), ...(typeof round === "number" ? { round } : {}) }));
   const routes = json<FakeRoute[]>(pick("ROUTES", "TEXT_ROUTES"));
   if (Array.isArray(routes)) script.routes = routes;
   const models = json<string[]>(pick("MODELS"));
@@ -120,7 +121,9 @@ export async function startFakeOpenAiChat(env: NodeJS.ProcessEnv = {}): Promise<
     }
     // Tool calls: an explicit CALL_TOOL, else the route's or script's list, asked for once at the start of a turn.
     const called = newTurn ? /CALL_TOOL\s+(\S+)(?:\s+(\{.*\}))?/s.exec(userText) : null;
-    const scripted = newTurn && body.stream === true ? route?.toolCalls ?? script.toolCalls ?? [] : [];
+    const sinceUser = messages.slice(messages.findLastIndex((message) => message.role === "user") + 1);
+    const round = sinceUser.filter((message) => message.role === "assistant" && (message as { tool_calls?: unknown[] }).tool_calls?.length).length;
+    const scripted = body.stream === true ? (route?.toolCalls ?? script.toolCalls ?? []).filter((call) => (call.round ?? 0) === round) : [];
     const calls = called ? [{ name: called[1]!, arguments: called[2] ?? "{}" }]
       : scripted.map((call) => ({ name: call.name, arguments: JSON.stringify(call.input ?? {}) }));
     const answer = (): string => {

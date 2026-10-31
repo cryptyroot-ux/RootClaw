@@ -1052,10 +1052,15 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             let result: ChatToolResult;
             let started = false;
             let fatal: Error | undefined;
+            // A call that runs a command carries it as the activity's summary, so the run card can list its steps.
+            let command: string | undefined;
+            const commandSummary = () => command ? { summary: command } : {};
             try {
               let args: unknown;
               try { args = JSON.parse(call.function.arguments); }
               catch { throw new ChatProtocolError("tool arguments are not complete JSON"); }
+              const named = object(args)?.command;
+              if (typeof named === "string" && named.trim()) command = safeText(named.trim()).slice(0, 1_000);
               if (!object(args)) throw new ChatProtocolError("tool arguments must be a JSON object");
               const inputPreview = preview(args);
               if (call.function.name === INVALID_TOOL_NAME) {
@@ -1066,7 +1071,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
                 // A question goes before the gate: Full would auto-run an unanswered ask, Ask would show Allow/Deny.
                 const questions = parseAskQuestions(args);
                 abort.signal.throwIfAborted();
-                emit({ ...base(turn.threadId, turnId), type: "item.started", itemType: "tool", itemId: call.id,
+                emit({ ...base(turn.threadId, turnId), type: "item.started", itemType: "tool", itemId: call.id, ...commandSummary(),
                   title: call.function.name, ...(inputPreview ? { input: inputPreview } : {}),
                 });
                 started = true;
@@ -1091,7 +1096,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
                   || await approval.ask(shown.title, inputPreview ?? "This tool has no arguments.", shown.grant,
                     call.function.name === SHELL_TOOL ? shellCommandScope(args as Record<string, unknown>, workspace) : undefined));
                 abort.signal.throwIfAborted();
-                emit({ ...base(turn.threadId, turnId), type: "item.started", itemType: "tool", itemId: call.id,
+                emit({ ...base(turn.threadId, turnId), type: "item.started", itemType: "tool", itemId: call.id, ...commandSummary(),
                   title: shown.title, ...(inputPreview ? { input: inputPreview } : {}),
                 });
                 started = true;
@@ -1102,7 +1107,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
                 }
               } else if (planning && call.function.name === UPDATE_PLAN_TOOL) {
                 planCallIds.add(call.id);
-                emit({ ...base(turn.threadId, turnId), type: "item.started", itemType: "tool", itemId: call.id, title: UPDATE_PLAN_TOOL });
+                emit({ ...base(turn.threadId, turnId), type: "item.started", itemType: "tool", itemId: call.id, ...commandSummary(), title: UPDATE_PLAN_TOOL });
                 started = true;
                 const updated = applyPlanUpdate(plan, args as Record<string, unknown>);
                 // After the tool is withdrawn, a stray call is never a failure to retry: the answer is what is missing.
@@ -1118,7 +1123,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
                   result = { ok: true, text: `Plan saved (${plan.steps.length} steps, revision ${plan.revisions}).` };
                 } else result = { ok: false, text: updated.text };
               } else if (offloadOn && call.function.name === READ_TOOL_OUTPUT_TOOL) {
-                emit({ ...base(turn.threadId, turnId), type: "item.started", itemType: "tool", itemId: call.id,
+                emit({ ...base(turn.threadId, turnId), type: "item.started", itemType: "tool", itemId: call.id, ...commandSummary(),
                   title: call.function.name, ...(inputPreview ? { input: inputPreview } : {}),
                 });
                 started = true;
@@ -1133,7 +1138,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
                 const allowed = !floored && (full || !shown.ask
                   || await approval.ask(shown.title, shownPreview ?? "This tool has no arguments.", shown.grant));
                 abort.signal.throwIfAborted();
-                emit({ ...base(turn.threadId, turnId), type: "item.started", itemType: "tool", itemId: call.id,
+                emit({ ...base(turn.threadId, turnId), type: "item.started", itemType: "tool", itemId: call.id, ...commandSummary(),
                   title: shown.title, ...(shownPreview ? { input: shownPreview } : {}),
                 });
                 started = true;
@@ -1162,7 +1167,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
                 ? "Tool interrupted; an operation already dispatched may have taken effect. Verify its state before retrying."
                 : safeText(asError(error).message).slice(0, 2_000) };
             }
-            if (!started) emit({ ...base(turn.threadId, turnId), type: "item.started", itemType: "tool", itemId: call.id, title: call.function.name });
+            if (!started) emit({ ...base(turn.threadId, turnId), type: "item.started", itemType: "tool", itemId: call.id, ...commandSummary(), title: call.function.name });
             let text = safeText(result.text);
             const offloaded = offloadOn && call.function.name !== READ_TOOL_OUTPUT_TOOL
               ? offloadToolOutput(text, { dir: ctx.offloadDir, threadId: turn.threadId, callId: call.id, thresholdBytes: ctx.offloadBytes })

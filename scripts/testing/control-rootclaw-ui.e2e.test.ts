@@ -28,10 +28,19 @@ const run = enabled ? it : it.skip;
 // agent-browser is cached.
 const LAUNCH_TIMEOUT_MS = forced ? 600_000 : 180_000;
 
+// Scripted native calls exercise the UI, not the commands themselves: each carries its command as the step's summary.
+// agents_list_bots succeeds whatever it is handed; "Bash" is not offered to the native engine, so that step fails.
+// The last call comes in a second round, so its success settles the turn past the earlier failure.
+const TOOL_CALLS = JSON.stringify([
+  { name: "agents_list_bots", input: { command: "pnpm control:rootclaw doctor" } },
+  { name: "Bash", input: { command: "pnpm control:rootclaw ui click --name Missing" } },
+  { name: "agents_list_bots", input: { command: "pnpm control:rootclaw ui flag --set features.showToolCalls=true --dry-run" }, round: 1 },
+]);
 const REPLY = "hello from the fixture engine"; // every turn's reply, scripted on the native fake below
 // The native fake answers every turn with REPLY and offers two models, so the picker has somewhere to switch to.
 const FIXTURE_ENV = { ...process.env, FAKE_CHAT_ROUTES: JSON.stringify([{ match: "[\\s\\S]", reply: REPLY }]),
   FAKE_CHAT_MODELS: JSON.stringify(["fixture-model", "fixture-model-2"]) };
+const COMPOSER = `document.querySelector('textarea[aria-label="Message Pepper"]')`;
 // ROOTCLAW_UI_EVIDENCE_DIR keeps the screenshot (CI uploads it); otherwise it is temporary.
 const evidenceDir = process.env.ROOTCLAW_UI_EVIDENCE_DIR ? resolve(ROOT, process.env.ROOTCLAW_UI_EVIDENCE_DIR) : mkdtempSync(join(tmpdir(), "rootclaw-ui-evidence-"));
 const ownsEvidenceDir = !process.env.ROOTCLAW_UI_EVIDENCE_DIR;
@@ -251,8 +260,8 @@ describe("control-rootclaw ui drives the real renderer", () => {
     expect(existsSync(info.dataDir)).toBe(false);
   }, LAUNCH_TIMEOUT_MS + 180_000);
 
-  run("sends a turn from the composer and shows the reply", async () => {
-    launched = await launch([]);
+  run("sends a turn from the composer and shows the reply and the scripted tool chip", async () => {
+    launched = await launch(["--tool-calls", TOOL_CALLS]);
     const { info } = launched;
     expect(info.ui).toBe(join(info.dataDir, "ui.json"));
     expect(existsSync(info.ui)).toBe(true);
@@ -316,8 +325,32 @@ describe("control-rootclaw ui drives the real renderer", () => {
     const transcript = tree.slice(transcriptStart);
     expect(transcript).toContain('StaticText "hello"'); // the sent turn
     expect(transcript).toContain(`StaticText "${REPLY}"`);
+    expect(transcript).toMatch(/StaticText "Bash"/);
     expect(tree).not.toContain("Not logged in");
     expect(tree).not.toContain("Execution timeline");
+    // All three scripted commands go through the control CLI, so all are verified.
+    expect(tree).toContain("3 steps · 3 verified · 1 failed · 1 dry run");
+
+    // Hit-test the actual layout, not just the Tailwind class strings: the
+    // blank band beside the floating card must reach the transcript while
+    // the card and composer remain interactive.
+    const hitTest = await ui("eval", info.ui, "--js", `(() => {
+      const card = document.querySelector('section[aria-label="This run"]');
+      const dock = card.parentElement.parentElement;
+      const rect = card.getBoundingClientRect();
+      const blank = document.elementFromPoint(dock.getBoundingClientRect().left + 8, rect.top + rect.height / 2);
+      const onCard = document.elementFromPoint(rect.left + 20, rect.top + 20);
+      const scroll = document.querySelector('[role="log"]').parentElement;
+      const composer = ${COMPOSER};
+      const input = composer.getBoundingClientRect();
+      return {
+        blankReachesTranscript: scroll.contains(blank) && !dock.contains(blank) && getComputedStyle(scroll).overflowY === 'auto',
+        cardInteractive: card.contains(onCard),
+        composerInteractive: document.elementFromPoint(input.left + input.width / 2, input.top + input.height / 2) === composer,
+      };
+    })()`);
+    expect(hitTest).toMatchObject({ result: { blankReachesTranscript: true, cardInteractive: true, composerInteractive: true } });
+
     expect(await runControlOmb(["doctor", "--url", info.url])).toMatchObject({ ok: true });
     await expect(ui("click", info.ui, "--name", "Deliberately missing QA control")).rejects.toThrow("no element is named");
 
@@ -345,9 +378,41 @@ describe("control-rootclaw ui drives the real renderer", () => {
     expect(png.length).toBeGreaterThan(1_000);
     expect(png.subarray(0, 8)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
 
+    const rowsBefore = await ui("eval", info.ui, "--js", "document.querySelectorAll('[data-mid]').length");
+    await ui("click", info.ui, "--name", "Save as skill");
+    const drafted = await ui("eval", info.ui, "--js", `${COMPOSER}.value`);
+    expect(drafted.ok).toBe(true);
+    const draft = drafted.result as string;
+    expect(draft.startsWith("Create a verification skill from the run below.\nGoal: hello\n")).toBe(true);
+    expect(draft).toContain("✓ doctor — pnpm control:rootclaw doctor (verified)\n");
+    expect(draft).toContain("✗ ui — pnpm control:rootclaw ui click --name Missing (verified)\n");
+    expect(draft).toContain("[dry run] ui — pnpm control:rootclaw ui flag --set features.showToolCalls=true --dry-run (verified)\n");
+    expect(draft.endsWith("\n\n")).toBe(true);
+    expect(await ui("eval", info.ui, "--js", `document.activeElement === ${COMPOSER}`)).toMatchObject({ ok: true, result: true });
+    // The composer sits inside the conversation landmark, so its draft shows up
+    // in that snapshot; "nothing was sent" is the message-row count, unchanged.
+    const rowsAfter = await ui("eval", info.ui, "--js", "document.querySelectorAll('[data-mid]').length");
+    expect(rowsAfter.result).toBe(rowsBefore.result);
+    const afterSave = await ui("snapshot", info.ui);
+    const transcriptAfterSave = (afterSave.snapshot as string).slice((afterSave.snapshot as string).indexOf('log "Conversation with Pepper"'));
+    expect(transcriptAfterSave.match(/StaticText "hello"/g)).toHaveLength(1);
+
+    await ui("click", info.ui, "--name", "Collapse the run");
+    const collapsed = await ui("snapshot", info.ui);
+    expect(collapsed.snapshot).toContain("Expand the run");
+    expect(collapsed.snapshot).not.toContain('list "Run steps"');
+
     await ui("click", info.ui, "--name", "More");
     await ui("click", info.ui, "--name", "Inspector");
     const inspected = await ui("snapshot", info.ui);
+    const runLog = (inspected.snapshot as string).slice((inspected.snapshot as string).indexOf('complementary "Inspector"'));
+    expect(runLog).toContain('tab "Run Log" [selected');
+    expect(runLog).toContain("pnpm control:rootclaw doctor");
+    expect(runLog).toContain("pnpm control:rootclaw ui click --name Missing");
+    expect(runLog).toContain('StaticText "Failed"');
+    expect(runLog).toContain("Copy redacted run log");
+    await ui("screenshot", info.ui, "--out", join(evidenceDir, "run-log.png"));
+
     const [eventsTab] = refsNamed(inspected, "Events", "tab");
     expect(eventsTab).toBeDefined();
     await ui("click", info.ui, "--ref", eventsTab);
