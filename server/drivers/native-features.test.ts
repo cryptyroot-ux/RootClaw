@@ -211,3 +211,24 @@ describe("an error frame inside a 200 stream", () => {
     expect(run.calls()).toBe(1);
   });
 });
+
+describe("compaction keeps a finding from the middle of a long tool result", () => {
+  it("shows the summarizer the ERROR line buried mid-log, not just the head and tail", async () => {
+    const log = (n: number, needle?: number) => Array.from({ length: n }, (_, i) => i === needle
+      ? "2026-10-31T02:11:00Z ERROR worker-4 failed request req-2-77731: upstream reset"
+      : `2026-10-31T02:${String(i % 60).padStart(2, "0")}:00Z INFO worker-${i % 13} handled request req-${String(i).padStart(6, "0")} in ${(i * 37) % 900}ms`).join("\n");
+    const f = await fixture([], [
+      [{ name: "read_file", input: { path: "a.log" } }],
+      [{ name: "read_file", input: { path: "b.log" } }],
+      [{ name: "read_file", input: { path: "c.log" } }],
+    ]);
+    writeFileSync(join(f.cwd, "a.log"), log(300));
+    writeFileSync(join(f.cwd, "b.log"), log(300, 211));
+    writeFileSync(join(f.cwd, "c.log"), log(300));
+    await f.start({ approvalMode: "full", turnContext: { compactAt: 12_000 } } as Partial<SendTurnInput>);
+    await f.completed();
+    const prompts = f.fake.requests.filter((body) => body.stream === false).map((body) => JSON.stringify(body.messages)).filter((text) => text.includes("You compact"));
+    expect(prompts.length).toBeGreaterThan(0);
+    expect(prompts.some((text) => text.includes("req-2-77731"))).toBe(true);
+  });
+});

@@ -207,14 +207,42 @@ export function planCompaction(messages: readonly OpenAIChatMessage[], request: 
 const RENDER_MESSAGE_BYTES = 3_000;
 
 /** Folded messages as plain text for the summarizer, each bounded. */
+const SALIENT = /\b(error|errors|fail(?:ed|ure|s)?|exception|fatal|panic|traceback|warn(?:ing)?|denied|refused|timeout|todo|fixme)\b/i;
+const SALIENT_BYTES = 2_000;
+
+/** Head and tail of a long text, plus the lines from the cut middle that look like findings (errors, failures,
+ * warnings), so what the agent was looking for survives even when it sat in the middle. */
+export function elide(text: string, maxBytes: number): string {
+  const tailBytes = Math.min(1_000, Math.floor(maxBytes / 6));
+  const headBytes = Math.max(200, maxBytes - tailBytes - SALIENT_BYTES - 200);
+  const head = prefixBytes(text, headBytes);
+  const tail = text.slice(-tailBytes);
+  const middle = text.slice(head.length, Math.max(head.length, text.length - tail.length));
+  const picked: string[] = [];
+  let size = 0;
+  // Tool results arrive as JSON ({"ok":…,"result":"…"}), where line breaks are the two characters \ and n.
+  for (const line of middle.split(/\n|\\n/)) {
+    if (!SALIENT.test(line)) continue;
+    const kept = line.length > 300 ? `${line.slice(0, 300)}…` : line;
+    if (size + kept.length > SALIENT_BYTES) break;
+    picked.push(kept);
+    size += kept.length + 1;
+  }
+  return `${head} …${picked.length ? `\n[matching lines from the omitted middle]\n${picked.join("\n")}\n…` : ""} ${tail}`;
+}
+
 export function renderForSummary(messages: readonly OpenAIChatMessage[], budgetBytes: number): string {
   const lines: string[] = [];
   let used = 0;
+  // Each message may use its share of the whole budget (never less than RENDER_MESSAGE_BYTES): a fixed 3 KB head+tail
+  // dropped the middle of every long tool result, so a finding there (one ERROR line in a 20 KB log) never reached
+  // the summarizer and the agent re-read the file after every compaction.
+  const share = Math.max(RENDER_MESSAGE_BYTES, Math.floor(budgetBytes / Math.max(1, messages.length)) - 200);
   for (const message of messages) {
     const { text, images } = textOf(message.content);
     const calls = message.tool_calls?.map((call) => `${call.function.name}(${call.function.arguments.slice(0, 400)})`).join("; ");
     let body = text;
-    if (Buffer.byteLength(body) > RENDER_MESSAGE_BYTES) body = `${prefixBytes(body, RENDER_MESSAGE_BYTES - 400)} … ${body.slice(-300)}`;
+    if (Buffer.byteLength(body) > share) body = elide(body, share);
     const line = `[${message.role}${message.tool_call_id ? ` result ${message.tool_call_id}` : ""}] ${calls ? `calls: ${calls} ` : ""}${body}${images ? ` [${images} image(s)]` : ""}`;
     const size = Buffer.byteLength(line);
     if (used + size > budgetBytes) { lines.push(`[… ${messages.length - lines.length} more message(s) not shown]`); break; }
