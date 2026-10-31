@@ -5,7 +5,7 @@ import { createServer, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 // Transport retries (429/5xx/network) wait for real; shrink them so failure cases settle fast.
 process.env.ROOTCLAW_RETRY_SCALE ??= "0.001";
@@ -1416,6 +1416,10 @@ describe("a turn with the person's Windows computer, the built-in browser and th
     data: catalog(syntheticToolNames("table", 5)),
     ...more,
   });
+
+  // These count the full catalog the model is offered, so lazy schemas (tool-loading.ts) are off here.
+  beforeEach(() => { process.env.ROOTCLAW_LAZY_TOOLS = "0"; });
+  afterEach(() => { delete process.env.ROOTCLAW_LAZY_TOOLS; });
 
   it("sends at most 128 tools, ask_user and every agents tool among them", async () => {
     const f = await fixture((_body, response) => answer(response));

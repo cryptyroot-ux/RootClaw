@@ -257,3 +257,23 @@ describe("compaction far over budget", () => {
     for (const body of after) expect(estimateRequestTokens(body.messages as never, body.tools as never, "fixture-model")).toBeLessThanOrEqual(budget);
   });
 });
+
+describe("lazy tool schemas (fake provider)", () => {
+  it("offers RootClaw's own tools behind load_tools, loads on request, runs a direct call, and keeps them loaded next turn", async () => {
+    const toolsFile = join(mkdtempSync(join(tmpdir(), "rc-lazy-")), "tools.json");
+    writeFileSync(toolsFile, JSON.stringify(["load", "sql", "show", "describe", "export"].map((name) => ({ name, description: `Data ${name}. Details.`, inputSchema: { type: "object", properties: {} } }))));
+    const data = { command: process.execPath, args: ["--experimental-strip-types", "--no-warnings", join(import.meta.dirname, "..", "testing", "fake-mcp-server.ts")], env: { FAKE_MCP_TOOLS_FILE: toolsFile } };
+    const f = await fixture([], [[{ name: "load_tools", input: { names: ["sql"] } }], [{ name: "data_sql", input: {} }, { name: "data_show", input: {} }]]);
+    await f.start({ approvalMode: "full", integrations: { data } } as Partial<SendTurnInput>);
+    await f.completed();
+    const offered = f.streamed().map((body) => (body.tools as { function: { name: string } }[]).map((tool) => tool.function.name));
+    expect(offered[0]).toContain("load_tools");
+    expect(offered[0]).not.toContain("data_sql");
+    expect(offered[1]).toContain("data_sql");
+    expect(offered[1]).not.toContain("data_show");
+    // A direct call to a held-back tool runs, and loads it for the rounds after.
+    expect(f.toolResults().map((result) => result.ok)).toEqual([true, true, true]);
+    expect(offered[2]).toContain("data_show");
+  });
+});
+

@@ -393,6 +393,7 @@ import {
   longCommandsPrompt,
   THREADS_PROMPT, WIDGET_PROMPT,
   LEARN_PROMPT,
+  APPLIED_RESULT_PROMPT,
   PROFILE_PROMPT,
   TEAM_MEMORY_PROMPT,
   TRIGGER_PROMPT,
@@ -8302,7 +8303,7 @@ async function startTurn(
       const routinePrompt = integrations.agents ? TRIGGER_PROMPT : "";
       const profilePrompt = integrations.agents ? PROFILE_PROMPT : "";
       const recallPrompt = integrations.agents && bot.memoryEnabled !== false ? SESSION_SEARCH_SYSTEM_PROMPT : "";
-      const learnPrompt = skillAuthoring ? LEARN_PROMPT : "";
+      const learnPrompt = skillAuthoring ? (profilePrompt ? LEARN_PROMPT.replace(APPLIED_RESULT_PROMPT, "") : LEARN_PROMPT) : "";
 
       // Wait for the snapshot right before dispatch: the engine must not edit the project until it settles.
       if (checkpointCwd) {
@@ -10171,7 +10172,7 @@ async function runClaimedGroupMemberTurn(
     integrations.agents && (!orchestration || orchestration.roomHandoffId) && "For actual RootClaw teamwork, discover IDs with list_room_targets and use coordinate_bots for advice or work in this or another room. Do not substitute native coding helpers for these named bots. Consult only when needed to make a decision; no discussion step is mandatory. Give concrete responsibilities, exact accessible paths and acceptance checks. End your turn after assigning; busy teammates queue and results automatically resume you. When they return, finish the requested verification and give the user one final answer. Native helper names are not evidence that an RootClaw teammate participated. Plain @mentions are only for conversational replies in this room." + requesterRule,
     integrations.agents && TRIGGER_PROMPT.trim(),
     integrations.agents && PROFILE_PROMPT.trim(),
-    integrations.agents && skillAuthoringEnabled(cfg) && LEARN_PROMPT.trim(),
+    integrations.agents && skillAuthoringEnabled(cfg) && LEARN_PROMPT.replace(APPLIED_RESULT_PROMPT, "").trim(),
     orchestration?.systemInstructions,
   ]
     .filter(Boolean)

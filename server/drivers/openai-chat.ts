@@ -34,6 +34,7 @@ import { refusesRequestSize, RequestTooLargeError, sizeChange, smallerResend } f
 import { compactTurnMessages, DEFAULT_KEEP_EXCHANGES, estimateRequestTokens, offloadToolOutput, READ_TOOL_OUTPUT_DEFINITION,
   READ_TOOL_OUTPUT_TOOL, readToolOutput, refusesContextLength, TokenCalibration, turnCompactBudget, type TurnContextSettings } from "./turn-context.ts";
 import { contextWindowFor } from "../context-budget.ts";
+import { deferTools, lazyToolsEnabled, LOAD_TOOLS_TOOL, loadToolsResult } from "./tool-loading.ts";
 import { executeWorkspaceTool, skillReadRoots, validateWorkspaceArgs, WORKSPACE_TOOL_DEFINITIONS, WORKSPACE_TOOLS_PROMPT, workspaceToolReadOnly, workspaceToolView, shellCommandScope, SHELL_TOOL, stopBackgroundJobs, type WorkspaceToolsConfig } from "./workspace-tools.ts";
 import { runToolBatch } from "./tool-batch.ts";
 import { requestTooLargeMessage } from "../../shared/request-too-large.ts";
@@ -735,6 +736,8 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             else messages.unshift({ role: "system", content: WORKSPACE_TOOLS_PROMPT.trimStart() });
           }
         }
+        // RootClaw's own tool schemas wait behind load_tools until the model needs them (server/drivers/tool-loading.ts).
+        const lazy = options.tools !== false && lazyToolsEnabled() ? deferTools(tools.definitions, turn.threadId) : null;
         // Planner/verifier (engine.planVerify, docs/design/planner-verifier.md): gated per turn, off by default.
         const planVerify = turn.planVerify ?? { mode: "off" as const, maxVerifyRetries: 0 };
         const planVerifyOn = planVerify.mode !== "off" && options.tools !== false;
@@ -762,7 +765,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           if (plan) { startPlanning(PLAN_KEEP_HINT); emitPlan("carried"); }
           else if (shouldPlan(turn.text ?? "", { toolsEnabled: true, workspaceTools: workspaceNames.size > 0 })) startPlanning(PLAN_HINT);
         }
-        const readOnlyTool = (name: string) => name === UPDATE_PLAN_TOOL ? planning : name === READ_TOOL_OUTPUT_TOOL ? offloadOn : workspaceNames.has(name) && workspaceToolReadOnly(name);
+        const readOnlyTool = (name: string) => name === LOAD_TOOLS_TOOL ? lazy !== null : name === UPDATE_PLAN_TOOL ? planning : name === READ_TOOL_OUTPUT_TOOL ? offloadOn : workspaceNames.has(name) && workspaceToolReadOnly(name);
         const window = contextWindowFor(model, options.models());
         const budget = turnCompactBudget(window, ctx.compactAt);
         const calibration = new TokenCalibration(model);
@@ -1074,7 +1077,14 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
               if (call.function.name === INVALID_TOOL_NAME) {
                 throw new Error("That tool call had an empty or invalid tool name. Call one of the offered tools by its exact name.");
               }
-              if (call.function.name === ASK_USER_TOOL) {
+              if (lazy?.isDeferred(call.function.name)) lazy.load([call.function.name]);
+              if (lazy && call.function.name === LOAD_TOOLS_TOOL) {
+                emit({ ...base(turn.threadId, turnId), type: "item.started", itemType: "tool", itemId: call.id, ...commandSummary(),
+                  title: call.function.name, ...(inputPreview ? { input: inputPreview } : {}),
+                });
+                started = true;
+                result = loadToolsResult(args as Record<string, unknown>, lazy);
+              } else if (call.function.name === ASK_USER_TOOL) {
                 if (!questionAllowed || !allowsTool(scope, { kind: "native", name: ASK_USER_TOOL })) throw new Error("Tool selection excludes this tool");
                 // A question goes before the gate: Full would auto-run an unanswered ask, Ask would show Allow/Deny.
                 const questions = parseAskQuestions(args);
@@ -1208,7 +1218,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           if (planOnly) {
             planOnlyRounds++;
             // With nothing real to batch a status update with, or after a second status-only round, withdraw the tool.
-            const realTools = tools.definitions.some((definition) => ![UPDATE_PLAN_TOOL, ASK_USER_TOOL, READ_TOOL_OUTPUT_TOOL].includes(definition.function.name));
+            const realTools = tools.definitions.some((definition) => ![UPDATE_PLAN_TOOL, ASK_USER_TOOL, READ_TOOL_OUTPUT_TOOL, LOAD_TOOLS_TOOL].includes(definition.function.name));
             if (!realTools || planOnlyRounds >= 2) dropPlanTool();
           }
         }
