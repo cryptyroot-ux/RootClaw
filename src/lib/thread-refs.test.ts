@@ -130,7 +130,7 @@ describe("canonical thread links", () => {
       `rootclaw://thread/${uuid}/extra?bot=scout`,
       `rootclaw://thread/${uuid}?bot=scout&x=1`,
       `rootclaw://thread/${uuid}?bot=`,
-      `rootclaw://thread/${uuid}?bot=scout`,
+      `rootclaw://threads/${uuid}?bot=scout`,
       "https://thread/" + uuid,
     ]) {
       expect(parseThreadRefUrl(miss)).toBeNull();

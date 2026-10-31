@@ -805,7 +805,7 @@ export async function handleToolCall(
   switch (name) {
     case "get_system_health": {
       const res = await fetcher("/api/health");
-      if (res?.app !== "rootclaw") throw new Error("The configured endpoint is not an RootClaw server");
+      if (res?.app !== "rootclaw") throw new Error("The configured endpoint is not a RootClaw server");
       return {
         status: "connected",
         endpoint: discoveredBaseUrl ?? ROOTCLAW_BASE_URL,
