@@ -165,7 +165,6 @@ waits on; it is read-only and refuses an id handed out in the same turn.
 pnpm exec vitest run server/runtime-paths.e2e.test.ts server/runtime-coordinator.test.ts server/runtime/import-legacy.test.ts
 pnpm exec vitest run server/independent-threads-api.test.ts -t "holds coordinated work behind a peer's approval"
 pnpm exec vitest run server/independent-threads-api.test.ts -t "unanswered|what became of each teammate approval"
-pnpm exec vitest run server/comms.test.ts server/thread-capacity-api.test.ts -t "free slot"
 ```
 
 The approval fixtures use the isolated launcher and per-model fake-engine

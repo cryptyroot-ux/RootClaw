@@ -212,7 +212,6 @@ that the same VPS computer tools reach the agent without a Boat key. These are
 deterministic routing checks, not a live model-choice or real VPS acceptance test.
 
 ```sh
-pnpm exec vitest run server/vps-routing.test.ts server/routine-cron.e2e.test.ts
 ```
 
 ```sh

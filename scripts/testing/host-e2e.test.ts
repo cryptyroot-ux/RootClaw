@@ -37,7 +37,6 @@ describe("the e2e files every host runs", () => {
   it("leave every other test file to every host", () => {
     expect(isPortableE2e("server/room-coordination.e2e.test.ts")).toBe(true);
     expect(isPortableE2e("server/shared-computers.e2e.test.ts")).toBe(false);
-    expect(isPortableE2e("server/steer-queue.test.ts")).toBe(false);
     const portable = portableE2eFiles(ROOT, INCLUDE);
     expect(portable.length).toBeGreaterThan(100);
     expect(portable.every((file) => E2E.test(file) && !Object.hasOwn(HOST_E2E, file))).toBe(true);

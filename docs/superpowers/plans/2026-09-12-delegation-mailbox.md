@@ -1004,7 +1004,6 @@ Run:
 
 ```bash
 pnpm vitest run server/delegations.test.ts server/peer-roster.test.ts server/chief-of-staff.test.ts \
-  server/drivers/agents-proxy.test.ts server/routines-startup.test.ts server/comms.test.ts \
   server/thread-aware-bots.e2e.test.ts server/peer-allowlist.e2e.test.ts
 ```
 

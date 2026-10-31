@@ -326,7 +326,6 @@ pnpm exec vitest run server/group-goal-run.e2e.test.ts server/group-goal-wait-ca
 pnpm exec vitest run server/room-recovery.e2e.test.ts server/testing/room-handoff-agent.test.ts
 pnpm exec vitest run server/direct-coordination.e2e.test.ts --maxWorkers=1
 pnpm exec vitest run server/turn-dispatch-guard.test.ts
-pnpm exec vitest run server/comms.test.ts server/thread-aware-bots.e2e.test.ts server/routine-delegation.e2e.test.ts server/independent-threads-api.test.ts server/peer-allowlist.e2e.test.ts server/steer-queue.test.ts
 pnpm exec vitest run server/runtime-paths.e2e.test.ts server/notification-routing.e2e.test.ts server/post-to-room.test.ts
 ROOTCLAW_UI_E2E=1 pnpm exec vitest run scripts/testing/direct-coordination-ui.e2e.test.ts
 ```
@@ -352,7 +351,6 @@ composer and clicks the existing handoff receipt into the exact recipient task,
 with ordinary tool chips hidden. Screenshots and JSON are retained beside the
 fixture's printed server log; all fixture processes and temporary data are closed.
 A consultation (`coordinate_bots` with `consult: true`) is covered by
-`server/comms.test.ts` and `server/runtime-paths.e2e.test.ts`:
 there is no inline wait; the asker finishes its turn with a receipt and the
 teammate's answer resumes it, in a work thread of the asker's conversation
 (docs/runtime-contract.md §9).

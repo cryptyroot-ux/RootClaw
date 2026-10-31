@@ -16,7 +16,6 @@
 
 ### comms
 
-`TypeError: fetch failed` / `read ECONNRESET`。#1637 の差分に `server/comms.test.ts` は無い。今回も変えない。
 
 ## 変更
 
@@ -46,4 +45,3 @@
 
 ## 非対象
 
-iOS UI、`comms.test.ts`、ピンと `updatedAt` の製品動作。

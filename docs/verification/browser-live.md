@@ -226,6 +226,5 @@ composer and panel must keep the real destination highlighted during sends.
 
 Ctrl-C closes the exact fixture and removes the copied sign-in and browser
 data. VM/cloud transport and turn-bound switching are separately covered by
-`server/group-local-vm.e2e.test.ts`, `server/vps-routing.test.ts` and
 `server/index.test.ts` with
 isolated providers. These are not evidence of real cloud provisioning.
