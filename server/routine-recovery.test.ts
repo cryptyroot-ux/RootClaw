@@ -95,7 +95,7 @@ describe("classifyRoutineFailure", () => {
     [BUSY, { cause: "busy" }, { kind: "busy" }],
     ["xAI hit a rate limit (HTTP 429). Wait a minute, then run it again.", {}, { kind: "retry", cause: "rate_limited" }],
     ["Claude is overloaded right now (HTTP 529). This is usually temporary, so try again in a few minutes.", {}, { kind: "retry", cause: "provider" }],
-    [ROUTING, {}, { kind: "retry", cause: "provider" }],
+    [ROUTING, {}, { kind: "retry", cause: "failed" }],
     [SIGNED_OUT, { setup: true, stopReason: "auth_required" }, { kind: "owner", cause: "signed_out" }],
     ["workspace routing discovery unauthorized (401)", {}, { kind: "owner", cause: "signed_out" }],
     ["Your xAI account is out of credits (xAI says: \"Your team has run out of credits\"). Add credits with xAI, then run it again.", {}, { kind: "owner", cause: "credits" }],
@@ -150,17 +150,17 @@ describe("an unattended run that fails for a passing reason", () => {
     h.event("thread-1", { type: "item.started", itemType: "tool", itemId: "t1", title: "shell" });
     h.event("thread-1", { type: "item.completed", itemType: "assistant_text", text: "Half done" });
     h.fail("thread-1", ROUTING);
-    expect(h.run(run.id)).toMatchObject({ status: "queued", retried: "provider", threadId: "thread-1", retryAt: START + 15 * SECOND,
-      attention: `Starting again shortly after a temporary error: ${ROUTING}` });
+    expect(h.run(run.id)).toMatchObject({ status: "queued", retried: "failed", threadId: "thread-1", retryAt: START + 15 * SECOND,
+      attention: `Starting again shortly after a failure: ${ROUTING}` });
     expect(h.failed).toEqual([]);
 
     await h.advance(14 * SECOND);
     expect(h.started).toHaveLength(1);
     await h.advance(2 * SECOND);
     expect(h.started.map((turn) => turn.threadId)).toEqual(["thread-1", "thread-1"]);
-    expect(h.started[1]!.prompt).toBe(`${h.started[0]!.prompt}\n\n${retryNote("provider")}`);
+    expect(h.started[1]!.prompt).toBe(`${h.started[0]!.prompt}\n\n${retryNote("failed")}`);
     h.complete("thread-1");
-    expect(h.run(run.id)).toMatchObject({ status: "completed", retried: "provider", output: "Inbox swept.", attention: undefined, error: undefined });
+    expect(h.run(run.id)).toMatchObject({ status: "completed", retried: "failed", output: "Inbox swept.", attention: undefined, error: undefined });
     expect(h.tasks()).toBe(1);
   });
 
@@ -170,7 +170,7 @@ describe("an unattended run that fails for a passing reason", () => {
     h.fail("thread-1", ROUTING);
     await h.advance(16 * SECOND);
     h.fail("thread-1", ROUTING);
-    expect(h.run(run.id)).toMatchObject({ status: "failed", retried: "provider", error: `Failed after one automatic retry: ${ROUTING}` });
+    expect(h.run(run.id)).toMatchObject({ status: "failed", retried: "failed", error: `Failed after one automatic retry: ${ROUTING}` });
     expect(h.failed).toHaveLength(1);
     expect(h.failed[0]!.alert).toBeUndefined();
     await h.advance(MINUTE);
