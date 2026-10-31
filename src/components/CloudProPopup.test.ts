@@ -272,6 +272,7 @@ describe("the popup as a dialog", () => {
 
 describe("who clicked, through the app's analytics", () => {
   async function fresh(enabled: boolean) {
+    vi.stubEnv("VITE_POSTHOG_TOKEN", "phc_test");
     const stored = new Map<string, string>(enabled ? [] : [["rootclaw-analytics-opt-out", "1"]]);
     vi.stubGlobal("localStorage", { getItem: (key: string) => stored.get(key) ?? null, setItem: (key: string, value: string) => void stored.set(key, value) });
     vi.resetModules();
@@ -287,6 +288,7 @@ describe("who clicked, through the app's analytics", () => {
   const identify = ["identify", "person@example.test", { email: "person@example.test" }];
   // A page of the desktop's window at one origin: that origin's own storage, and the desktop's bridge.
   async function pageOn(desktop: Desktop, origin: string, stored: Map<string, string>) {
+    vi.stubEnv("VITE_POSTHOG_TOKEN", "phc_test");
     setURL(`${origin}/`);
     vi.stubGlobal("localStorage", { getItem: (key: string) => stored.get(key) ?? null, setItem: (key: string, value: string) => void stored.set(key, value) });
     (window as { ogb?: Ogb }).ogb = desktop(origin);

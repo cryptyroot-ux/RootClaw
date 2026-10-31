@@ -46,7 +46,7 @@ const state = (patch: Partial<UpdaterState>): UpdaterState => ({ status: "idle",
 
 describe("profileInitials", () => {
   it("takes the first letter of the first two words", () => {
-    expect(profileInitials({ name: "Crypty Root" })).toBe("MS");
+    expect(profileInitials({ name: "Crypty Root" })).toBe("CR");
     expect(profileInitials({ name: "Ada Byron Lovelace" })).toBe("AB");
   });
 
