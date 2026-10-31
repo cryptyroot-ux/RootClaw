@@ -618,6 +618,13 @@ describe("createOpenAIChatRuntime mid-turn steer", () => {
 });
 
 describe("createOpenAIChatRuntime stream termination", () => {
+  it("reports the provider's own charge for a streamed turn as its cost, and none when the provider gives none", async () => {
+    const priced = await runTurn('data: {"choices":[{"index":0,"finish_reason":"stop","delta":{"content":"Hi"}}],"usage":{"prompt_tokens":5,"completion_tokens":2,"cost":0.0125}}\n\ndata: [DONE]\n\n');
+    expect(priced.at(-1)).toMatchObject({ type: "turn.completed", ok: true, cost: 0.0125 });
+    const unpriced = await runTurn('data: {"choices":[{"index":0,"finish_reason":"stop","delta":{"content":"Hi"}}],"usage":{"prompt_tokens":5,"completion_tokens":2}}\n\ndata: [DONE]\n\n');
+    expect(unpriced.at(-1)).toMatchObject({ type: "turn.completed", ok: true, cost: null });
+  });
+
   it("treats EOF after a finish_reason chunk as a clean completion when [DONE] never arrives", async () => {
     const events = await runTurn(
       'data: {"choices":[{"index":0,"delta":{"content":"<think>\\nuser said hi\\n</think>Hello!"}}]}\n\n' +

@@ -38,7 +38,8 @@ describe("bot setup and tools in the real renderer", () => {
       process.on('message', message => { if (message === 'stop') process.emit('SIGINT'); });
       try { await launchUi([]); } finally { process.disconnect(); }`;
     child = spawn(process.execPath, ["--experimental-strip-types", "--input-type=module", "-e", bootstrap], {
-      cwd: ROOT, env: process.env, stdio: ["ignore", "pipe", "pipe", "ipc"],
+      // The native fake bills each answer one cent, so the header usage shortcut has a cost to show.
+      cwd: ROOT, env: { ...process.env, FAKE_CHAT_COST: "0.01" }, stdio: ["ignore", "pipe", "pipe", "ipc"],
     });
     child.stdout!.on("data", (chunk: Buffer) => { stdout += String(chunk); });
     child.stderr!.on("data", (chunk: Buffer) => { stderr += String(chunk); });

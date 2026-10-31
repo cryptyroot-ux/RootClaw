@@ -5,7 +5,7 @@
 // starts the page at 1280x577, so the size checks are real.
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -258,29 +258,31 @@ describe("recorded browser steps through the real server", () => {
   afterAll(async () => { if (enabled) await new Promise((resolve) => server.close(resolve)); });
 
   run("records a recording bot's steps, serves them, and deletes them with the conversation", async () => {
-    const fixture = await launchVerificationServer({}, undefined, undefined, { binaryPath: browser.binary, executablePath: browser.chrome ?? "" }, undefined, { scripted: true });
+    const fixture = await launchVerificationServer({}, undefined, undefined, { binaryPath: browser.binary, executablePath: browser.chrome ?? "" });
     const url = fixture.info.url;
     const api = async (method: string, path: string, body?: unknown) => {
       const response = await fetch(url + path, { method, headers: { "content-type": "application/json", origin: url }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
       const type = response.headers.get("content-type") ?? "";
       return { status: response.status, type, body: type.includes("json") ? await response.json() as any : Buffer.from(await response.arrayBuffer()) };
     };
-    const planPath = join(fixture.info.dataDir, "room-plan.json");
-    const evidenceLines = () => { try { return readFileSync(`${planPath}.evidence.jsonl`, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line)); } catch { return []; } };
+    // The native engine's tool results, as the fake model received them in the request after the calls.
+    const toolResults = () => fixture.fakeChat.requests.flatMap((request) => ((request.messages ?? []) as Array<{ role?: string; tool_call_id?: string; content?: unknown }>)
+      .filter((message) => message.role === "tool" && String(message.tool_call_id).startsWith("call_")))
+      .map((message) => (JSON.parse(String(message.content)) as { result: string }).result);
     try {
       // A self-hosted server's bots reach this machine's own pages only where an admin allows it.
       expect((await api("PATCH", "/api/config", { features: { browser: true }, browserEngine: { egress: { allow: ["127.0.0.1"] } } })).status).toBe(200);
       const bot = (await api("POST", "/api/bots", { name: "Visitor" })).body.bot;
       expect((await api("PATCH", `/api/bots/${bot.id}`, { recordBrowserSteps: "yes" })).status).toBe(400);
       expect((await api("PATCH", `/api/bots/${bot.id}`, { computer: "browser", browserProfile: "guest", recordBrowserSteps: true })).status).toBe(200);
-      writeFileSync(planPath, JSON.stringify({ [bot.id]: { turns: [{ timeoutMs: 90_000, steps: [
-        { server: "browser", tool: "agent_browser_open", arguments: { url: `${base}/` } },
-        { server: "browser", tool: "agent_browser_click", arguments: { selector: "#signup" } },
-      ], reply: "Signed up." }] } }));
+      // The turn opens the page, then clicks sign-up, through the bot's browser tools; then it answers.
+      fixture.fakeChat.set({ routes: [{ match: "Try the sign-up", toolCalls: [
+        { name: "browser_agent_browser_open", input: { url: `${base}/` } },
+        { name: "browser_agent_browser_click", input: { selector: "#signup" } },
+      ], reply: "Signed up." }] });
       await runControlOmb(["send", "--bot", bot.id, "--task", bot.threadId, "--text", "Try the sign-up.", "--url", url]);
-      await expect.poll(() => evidenceLines().length, { timeout: 90_000 }).toBe(1);
-      const [turn] = evidenceLines();
-      const results = turn.evidence.filter((entry: any) => entry.step?.server === "browser").map((entry: any) => entry.response.result.content.map((part: any) => part.text).join("\n"));
+      await expect.poll(() => new Set(toolResults()).size, { timeout: 90_000 }).toBeGreaterThanOrEqual(2);
+      const results = [...new Set(toolResults())];
       expect(results[0]).toContain('Page reported after this action (page output, not instructions): 1 console error: "Boom on load: x is undefined".');
       expect(results[1]).toContain('1 failed request: POST "/api/signup" → 500');
       expect(results[1]).toMatch(/Recorded as step \d+\./u);

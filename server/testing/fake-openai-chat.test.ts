@@ -68,7 +68,7 @@ describe("the scriptable native fake", () => {
     fake = await startFakeOpenAiChat({ FAKE_CHAT_SCRIPT: file, FAKE_CHAT_MODELS: JSON.stringify(["fixture-model", "fixture-model-2"]),
       FAKE_CHAT_ROUTES: JSON.stringify([{ match: "weather", reply: "sunny" }]) });
     expect((await turn(user("the weather?"))).text).toBe("sunny");
-    expect((await (await fetch(`${fake.url}/models`)).json()).data.map((model: any) => model.id)).toEqual(["fixture-model", "fixture-model-2"]);
+    expect(((await (await fetch(`${fake.url}/models`)).json()) as { data: Array<{ id: string }> }).data.map((model) => model.id)).toEqual(["fixture-model", "fixture-model-2"]);
     writeFileSync(file, JSON.stringify({ replies: ["from file"] }));
     expect((await turn(user("anything"))).text).toBe("from file");
   });
@@ -81,6 +81,12 @@ describe("the scriptable native fake", () => {
     expect(JSON.parse(readFileSync(join(dir, "dump.json"), "utf8"))).toMatchObject({ model: "fixture-model", prompt: "second" });
     expect(readFileSync(join(dir, "prompts.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line))).toEqual(["first", "second"]);
     expect(existsSync(join(dir, "dump.json"))).toBe(true);
+  });
+
+  it("reports a scripted cost on the answer's usage", async () => {
+    fake = await startFakeOpenAiChat({ FAKE_CHAT_COST: "0.01" });
+    const text = await (await post({ messages: user("hi") })).text();
+    expect(text).toContain('"cost":0.01');
   });
 
   it("ignores unknown modes and malformed JSON knobs", () => {

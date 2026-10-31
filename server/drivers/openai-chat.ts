@@ -139,7 +139,8 @@ interface RuntimeOptions<Config> {
 
 const usageFrom = (usage: CompletionJson["usage"]): Usage | null =>
   usage
-    ? { input: usage.prompt_tokens ?? 0, output: usage.completion_tokens ?? 0 }
+    ? { input: usage.prompt_tokens ?? 0, output: usage.completion_tokens ?? 0,
+      ...(typeof usage.cost === "number" && Number.isFinite(usage.cost) && usage.cost >= 0 ? { costUsd: usage.cost } : {}) }
     : null;
 
 const completionUsage = (json: CompletionJson) => json.usage ?? json.x_groq?.usage;
@@ -675,6 +676,8 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
       const denials: string[] = [];
       const seenCalls = new Set<string>();
       const callSignatures = new Map<string, string>();
+      /** The provider-reported charge, summed over this turn's model rounds that reported one. */
+      let costUsd: number | undefined;
       // The planner's state lives outside the try so a failover can hand the plan to the next model in the chain.
       let plan: TurnPlan | null = null;
       const planCallIds = new Set<string>();
@@ -919,6 +922,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           if (completion.usage) {
             usage.input += completion.usage.input;
             usage.output += completion.usage.output;
+            if (completion.usage.costUsd !== undefined) costUsd = (costUsd ?? 0) + completion.usage.costUsd;
             hasUsage = true;
             calibration.observe(sentEstimate, completion.usage.input);
             const contextWindow = options.models().options.find((entry) => entry.id === model)?.contextWindow;
@@ -1241,7 +1245,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           }
         }
         active.delete(turn.threadId);
-        emit({ ...base(turn.threadId, turnId), type: "turn.completed", ok, stopReason, cost: null,
+        emit({ ...base(turn.threadId, turnId), type: "turn.completed", ok, stopReason, cost: costUsd ?? null,
           ...(hasUsage && (options.includeUsageInCompleted || seenCalls.size) ? { usage } : {}),
           ...(denials.length ? { denials } : {}),
         });

@@ -32,7 +32,6 @@ const REPLY = "hello from the fixture engine"; // every turn's reply, scripted o
 // The native fake answers every turn with REPLY and offers two models, so the picker has somewhere to switch to.
 const FIXTURE_ENV = { ...process.env, FAKE_CHAT_ROUTES: JSON.stringify([{ match: "[\\s\\S]", reply: REPLY }]),
   FAKE_CHAT_MODELS: JSON.stringify(["fixture-model", "fixture-model-2"]) };
-const COMPOSER = `document.querySelector('textarea[aria-label="Message Pepper"]')`;
 // ROOTCLAW_UI_EVIDENCE_DIR keeps the screenshot (CI uploads it); otherwise it is temporary.
 const evidenceDir = process.env.ROOTCLAW_UI_EVIDENCE_DIR ? resolve(ROOT, process.env.ROOTCLAW_UI_EVIDENCE_DIR) : mkdtempSync(join(tmpdir(), "rootclaw-ui-evidence-"));
 const ownsEvidenceDir = !process.env.ROOTCLAW_UI_EVIDENCE_DIR;

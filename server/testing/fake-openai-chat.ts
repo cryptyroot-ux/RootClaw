@@ -15,6 +15,7 @@
 //   models       model ids GET /models lists (default: ["fixture-model"])
 //   dump         file path: the latest request as {model, prompt, systemPrompt, messages, tools}
 //   prompts      file path: every turn's user text appended as one JSON line
+//   cost         USD the final answer's usage reports as `cost`, as OpenRouter does (FAKE_CHAT_COST)
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 
@@ -25,7 +26,7 @@ export interface FakeRoute { match: string; reply?: string; toolCalls?: FakeTool
 export type FakeMode = "happy" | "slow" | "hang" | "error";
 export interface FakeScript {
   mode?: FakeMode; gate?: string; replies?: string[]; toolCalls?: FakeToolCall[]; routes?: FakeRoute[];
-  models?: string[]; dump?: string; prompts?: string;
+  models?: string[]; dump?: string; prompts?: string; cost?: number;
 }
 
 export interface FakeOpenAiChat {
@@ -62,6 +63,8 @@ export function scriptFromEnv(env: NodeJS.ProcessEnv): FakeScript {
   if (dump) script.dump = dump;
   const prompts = pick("PROMPTS", "PROMPTS");
   if (prompts) script.prompts = prompts;
+  const cost = Number(pick("COST"));
+  if (pick("COST") && Number.isFinite(cost) && cost >= 0) script.cost = cost;
   return script;
 }
 
@@ -142,7 +145,7 @@ export async function startFakeOpenAiChat(env: NodeJS.ProcessEnv = {}): Promise<
     } else {
       const reply = answer();
       for (const piece of reply.match(/.{1,12}/gs) ?? [reply]) res.write(chunk({ content: piece }));
-      res.write(`data: ${JSON.stringify({ id: "fixture", object: "chat.completion.chunk", choices: [{ index: 0, delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } })}\n\n`);
+      res.write(`data: ${JSON.stringify({ id: "fixture", object: "chat.completion.chunk", choices: [{ index: 0, delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15, ...(script.cost !== undefined ? { cost: script.cost } : {}) } })}\n\n`);
     }
     res.end("data: [DONE]\n\n");
   });

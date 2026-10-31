@@ -27,6 +27,8 @@ export interface OpenAIChatMessage {
 export interface Usage {
   input: number;
   output: number;
+  /** The provider's own charge for the call in USD, when it reports one (OpenRouter's `usage.cost`). */
+  costUsd?: number;
 }
 
 /** One round's result. `protocolReasoning*` are echoed back on the next request by providers that require it. */
