@@ -70,7 +70,7 @@ async function seal(
 }
 
 describe("PhoneSecretBridge", () => {
-  it("opens an envelope produced by Apple's CryptoKit HPKE implementation", async () => {
+  it("opens a pinned envelope for this computer's phone credential key", async () => {
     let bridge!: PhoneSecretBridge;
     const send = vi.fn((message: { requestId: string; value: string }) => {
       expect(message.value).toBe("swift-to-node-secret");
@@ -104,8 +104,8 @@ describe("PhoneSecretBridge", () => {
       messageId: "message-1",
       target: "ttsKey",
       requestKey: "credential-request-1",
-      encapsulatedKey: "BDhy_5hMSvVIy3zGSmBwBECAedYBAwwFLvbWoXCGTJyLRH1cItoQXo9NBcEG0cTQV_VwaEf5judXcsJlh2jfW7Q",
-      ciphertext: "CjM0CnBT8NYd_BHAXJRKFrbYrSw6OgMIlJLAKs8VUPSSCsa2",
+      encapsulatedKey: "BA5lrZScbYXUGrUja2wE7vyGs8_QDdW_26VdJ1nCCLKPWioWHYAHoaFWVsbBsAQBiFsVggTiU7DW47HxS8sH0lE",
+      ciphertext: "_Nqx7VJ4oFlfP5wrymW3r0x3meNGVAX-YxlC3k2zP0KCAjw0",
     })).resolves.toBeUndefined();
     expect(send).toHaveBeenCalledTimes(1);
   });
