@@ -1,6 +1,6 @@
 import { createServer, type Server } from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
-import { executeWebTool, privateAddress, type WebOptions } from "./web-tools.ts";
+import { executeWebTool, operatorAllowsAddress, privateAddress, type WebOptions } from "./web-tools.ts";
 
 let server: Server | undefined;
 afterEach(() => new Promise<void>((resolve) => { if (server) server.close(() => resolve()); else resolve(); server = undefined; }));
@@ -75,5 +75,17 @@ describe("web_fetch's network guard", () => {
     expect((await fetchText(`http://127.0.0.1:${port}/to-name`, options)).text).toMatch(/internal\.test is a private or local address/);
     expect((await fetchText(`http://127.0.0.1:${port}/loop`, options)).text).toMatch(/too many redirects/);
     expect(hops).toBe(6);
+  });
+});
+
+describe("operator CIDR exceptions (fake-IP DNS)", () => {
+  it("allows only addresses inside the listed IPv4 ranges, and ignores junk entries", () => {
+    expect(operatorAllowsAddress("198.18.0.1", "198.18.0.0/15")).toBe(true);
+    expect(operatorAllowsAddress("198.19.255.254", "198.18.0.0/15")).toBe(true);
+    expect(operatorAllowsAddress("198.20.0.1", "198.18.0.0/15")).toBe(false);
+    expect(operatorAllowsAddress("127.0.0.1", "198.18.0.0/15, nonsense, 10.0.0.0/99")).toBe(false);
+    expect(operatorAllowsAddress("10.1.2.3", "10.0.0.0/8")).toBe(true);
+    expect(operatorAllowsAddress("::1", "0.0.0.0/0")).toBe(false);
+    expect(operatorAllowsAddress("198.18.0.1", "")).toBe(false);
   });
 });

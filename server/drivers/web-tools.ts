@@ -81,7 +81,22 @@ export interface WebOptions {
 }
 
 const allowsPrivate = (options: WebOptions) => options.allowPrivate === true || process.env.ROOTCLAW_WEB_ALLOW_PRIVATE === "1";
+
+/** ROOTCLAW_WEB_ALLOW_PRIVATE as a comma list of IPv4 CIDRs (e.g. "198.18.0.0/15"): the operator's exceptions for a
+ * network where every name resolves into a reserved range, as with a fake-IP DNS proxy (Clash, sing-box, some VPNs),
+ * which would otherwise refuse every public site. "1" still allows everything (local evals only). */
+export function operatorAllowsAddress(address: string, setting = process.env.ROOTCLAW_WEB_ALLOW_PRIVATE ?? ""): boolean {
+  if (isIP(address) !== 4) return false;
+  const value = (ip: string) => ip.split(".").reduce((sum, part) => sum * 256 + Number(part), 0);
+  return setting.split(",").map((entry) => entry.trim()).some((entry) => {
+    const match = /^(\d+\.\d+\.\d+\.\d+)\/(\d{1,2})$/.exec(entry);
+    if (!match || isIP(match[1]!) !== 4 || Number(match[2]) > 32) return false;
+    const size = 2 ** (32 - Number(match[2]));
+    return Math.floor(value(address) / size) === Math.floor(value(match[1]!) / size);
+  });
+}
 const refused = (address: string, options: WebOptions) => !allowsPrivate(options) && privateAddress(address)
+  && !operatorAllowsAddress(address.replace(/^\[|\]$/g, ""))
   && !(typeof options.allowPrivate === "function" && options.allowPrivate(address.replace(/^\[|\]$/g, "")));
 
 /** Checks what can be checked before connecting: the scheme, and a literal IP host. The URL parser has already turned

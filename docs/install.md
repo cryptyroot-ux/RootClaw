@@ -175,6 +175,7 @@ Your data in `~/.rootclaw` is kept; back it up before upgrading.
 | Provider shows `unavailable` in `rootclaw models` | No key yet: `rootclaw engine set KIND --key-env VAR`, then `rootclaw doctor`. |
 | `EADDRINUSE` on 8799 | Something else is on the port: `ss -ltnp \| grep 8799`, or use `--port`. |
 | "browser engine: unavailable" at start | Optional. `rootclaw browser install --with-deps` (as root once) enables bots' web browsing. |
+| Bots' `web_fetch` says every site is "a private or local address" | Your DNS hands out fake IPs (Clash/sing-box/VPN fake-IP mode, e.g. 198.18.0.0/15). Allow just that range: `ROOTCLAW_WEB_ALLOW_PRIVATE=198.18.0.0/15` in the service environment. |
 | A remote browser only shows the pair page | Expected: run `rootclaw pair` on the server and enter the code. |
 
 More detail: [self-hosting.md](self-hosting.md), [deploy-vps.md](deploy-vps.md),
