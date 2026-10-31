@@ -38,7 +38,8 @@ function workspace(seed: { bots?: Rec[]; groups?: Rec[]; sections?: string[]; co
       return state.config;
     }
     if (url.pathname === "/api/bot-defaults") return { modelSelection: { instanceId: "claude", model: "claude-sonnet-5" } };
-    if (url.pathname === "/api/instances") return { instances: [{ instanceId: "claude", driverKind: "claudeAgent", snapshot: { state: "available" }, models: { default: "claude-sonnet-5", options: [{ id: "claude-sonnet-5" }, { id: "claude-haiku-5" }] } }] };
+    if (url.pathname === "/api/instances") return { instances: [{ instanceId: "claude", driverKind: "anthropic", snapshot: { state: "available" }, models: { default: "claude-sonnet-5", options: [{ id: "claude-sonnet-5" }, { id: "claude-haiku-5" }] } },
+      { instanceId: "legacy", driverKind: "not-a-native-driver", snapshot: { state: "available" }, models: { default: "legacy-1", options: [{ id: "legacy-1" }] } }] };
     if (url.pathname === "/api/sidebar-sections") {
       if (method === "POST") state.sections.push(body.name);
       return { sections: state.sections };
@@ -246,11 +247,10 @@ describe("team apply", () => {
 
   it("refuses a tool selection the bot's engine cannot hold, before anything is written", async () => {
     const { client, writes } = workspace();
-    // Claude limits MCP tools only: a built-in one in the selection would stop every turn it runs
-    for (const visitor of [{ ...priya, tools: { deny: ["native:Bash"] } }, { ...priya, model: { instanceId: "claude", model: "claude-haiku-5" }, tools: { deny: ["native:Bash"] } }]) {
-      await expect(reconcile(client, file({ bots: [lead, visitor] }), options({ apply: false })))
-        .rejects.toThrow('bot "Priya": claudeAgent: native tool selection is not supported by this engine');
-    }
+    // The native engine holds any selection; an engine id outside it (one left from a removed engine) holds none.
+    await expect(reconcile(client, file({ bots: [lead, { ...priya, tools: { deny: ["native:Bash"] } }] }), options({ apply: false }))).resolves.toBeDefined();
+    await expect(reconcile(client, file({ bots: [lead, { ...priya, model: { instanceId: "legacy", model: "legacy-1" }, tools: { deny: ["native:Bash"] } }] }), options({ apply: false })))
+      .rejects.toThrow('bot "Priya": not-a-native-driver: tool selection is not supported by this engine');
     expect(writes).toEqual([]);
     expect((await reconcile(client, file(), options({ apply: false }))).created).toBe(4);
   });

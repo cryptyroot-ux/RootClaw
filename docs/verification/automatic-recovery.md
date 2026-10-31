@@ -36,7 +36,7 @@ runner changes require a manual choice. Backup provider charges may apply.
 ## Repeatable checks
 
 ```sh
-pnpm exec vitest run server/direct-coordination.e2e.test.ts server/guarded-messages-api.test.ts --maxWorkers=2
+pnpm exec vitest run server/direct-coordination.e2e.test.ts --maxWorkers=2
 pnpm typecheck
 pnpm lint
 pnpm i18n:check
