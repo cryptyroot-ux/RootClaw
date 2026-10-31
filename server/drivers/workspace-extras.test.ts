@@ -79,6 +79,12 @@ describe("git tools", () => {
     expect(workspaceToolReadOnly("git_commit")).toBe(false);
     expect(workspaceToolView("git_commit", { message: "m" }).ask).toBe(true);
     expect(workspaceToolView("git_status", {}).ask).toBe(false);
+    // The web reaches outside the machine, so it goes through the approval gate; a fetch's session grant is per site.
+    expect(workspaceToolView("web_fetch", { url: "https://example.com/a?q=1" })).toMatchObject({ ask: true, grant: JSON.stringify(["web", "web_fetch", "https://example.com"]) });
+    expect(workspaceToolView("web_fetch", { url: "https://example.com/other" }).grant).toBe(workspaceToolView("web_fetch", { url: "https://example.com/a" }).grant);
+    expect(workspaceToolView("web_fetch", { url: "not a url" })).toMatchObject({ ask: true });
+    expect(workspaceToolView("web_fetch", { url: "not a url" }).grant).toBeUndefined();
+    expect(workspaceToolView("web_search", { query: "x" })).toMatchObject({ ask: true, grant: JSON.stringify(["web", "web_search"]) });
     expect(() => validateWorkspaceArgs("git_diff", { paths: "a.txt" })).toThrow(/array/);
     expect(() => validateWorkspaceArgs("git_diff", { paths: ["a.txt"] })).not.toThrow();
   });

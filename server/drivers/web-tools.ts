@@ -1,7 +1,8 @@
 // Native web tools: web_fetch (HTTP GET, page text) and web_search (DuckDuckGo's free HTML results; no API key, may
 // be rate-limited or change shape). Private, loopback and link-local addresses are refused, including after redirects.
 import { lookup } from "node:dns/promises";
-import { isIP } from "node:net";
+import { isIP, type LookupFunction } from "node:net";
+import { Agent, fetch as undiciFetch } from "undici";
 import type { ChatToolDefinition, ChatToolResult } from "./chat-mcp-tools.ts";
 
 const FETCH_TIMEOUT_MS = 30_000;
@@ -16,53 +17,133 @@ export const WEB_TOOL_DEFINITIONS: readonly ChatToolDefinition[] = [
     parameters: { type: "object", properties: { query: { type: "string", description: "The search query." } }, required: ["query"], additionalProperties: false } } },
 ];
 
-export function privateAddress(address: string): boolean {
-  const v4 = address.startsWith("::ffff:") ? address.slice(7) : address;
-  if (isIP(v4) === 4) {
-    const [a, b] = v4.split(".").map(Number) as [number, number];
-    return a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)
-      || (a === 100 && b >= 64 && b <= 127) || a >= 224;
+/** Parses an IPv6 literal into eight 16-bit groups (an embedded dotted IPv4 tail included), or null. */
+function ipv6Groups(address: string): number[] | null {
+  let text = address.toLowerCase().split("%")[0]!;
+  const dotted = /(\d+\.\d+\.\d+\.\d+)$/.exec(text);
+  if (dotted) {
+    if (isIP(dotted[1]!) !== 4) return null;
+    const [a, b, c, d] = dotted[1]!.split(".").map(Number) as [number, number, number, number];
+    text = text.slice(0, -dotted[1]!.length) + ((a << 8) | b).toString(16) + ":" + ((c << 8) | d).toString(16);
   }
-  const v6 = address.toLowerCase();
-  return v6 === "::" || v6 === "::1" || v6.startsWith("fc") || v6.startsWith("fd") || v6.startsWith("fe80");
+  const halves = text.split("::");
+  if (halves.length > 2) return null;
+  const head = halves[0] ? halves[0].split(":") : [];
+  const tail = halves.length === 2 && halves[1] ? halves[1].split(":") : [];
+  const fill = halves.length === 2 ? 8 - head.length - tail.length : 0;
+  if (fill < 0 || (halves.length === 1 && head.length !== 8)) return null;
+  const groups = [...head, ...Array(fill).fill("0"), ...tail].map((group) => /^[0-9a-f]{1,4}$/.test(group) ? parseInt(group, 16) : NaN);
+  return groups.length === 8 && groups.every((group) => Number.isInteger(group)) ? groups : null;
+}
+
+function privateV4(address: string): boolean {
+  const [a, b, c] = address.split(".").map(Number) as [number, number, number];
+  return a === 0 // "this network", 0.0.0.0/8
+    || a === 10 || a === 127 // RFC 1918, loopback
+    || (a === 100 && b >= 64 && b <= 127) // CGNAT 100.64/10
+    || (a === 169 && b === 254) // link-local, cloud metadata
+    || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) // RFC 1918
+    || (a === 192 && b === 0 && (c === 0 || c === 2)) // IETF protocol assignments, TEST-NET-1
+    || (a === 192 && b === 88 && c === 99) // 6to4 relay anycast
+    || (a === 198 && (b === 18 || b === 19)) // benchmarking 198.18/15
+    || (a === 198 && b === 51 && c === 100) || (a === 203 && b === 0 && c === 113) // TEST-NET-2/3
+    || a >= 224; // multicast 224/4, reserved 240/4, broadcast
+}
+
+/** True for every address a fetch must never reach: loopback, private, link-local, CGNAT, multicast, reserved and
+ * documentation ranges, and IPv6 forms that carry one of those IPv4 addresses (mapped, compatible, NAT64, 6to4). */
+export function privateAddress(address: string): boolean {
+  const bare = address.replace(/^\[|\]$/g, "");
+  if (isIP(bare) === 4) return privateV4(bare);
+  const g = ipv6Groups(bare);
+  if (!g) return true; // unparseable: refuse
+  const v4 = (hi: number, lo: number) => `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
+  if (g.slice(0, 6).every((x) => x === 0)) return true; // ::, ::1 and IPv4-compatible ::a.b.c.d (deprecated)
+  if (g.slice(0, 5).every((x) => x === 0) && g[5] === 0xffff) return privateV4(v4(g[6]!, g[7]!)); // ::ffff:a.b.c.d
+  if (g[0] === 0x64 && g[1] === 0xff9b) return true; // NAT64 64:ff9b::/96 (and the local-use /48) reaches IPv4 inside
+  if (g[0] === 0x2002) return privateV4(v4(g[1]!, g[2]!)); // 6to4 carries its IPv4 in bits 16-47
+  if (g[0] === 0x2001 && g[1] === 0) return true; // Teredo tunnels to an arbitrary IPv4
+  if (g[0] === 0x2001 && g[1] === 0xdb8) return true; // documentation
+  if (g[0] === 0x100 && g[1] === 0 && g[2] === 0 && g[3] === 0) return true; // discard-only 100::/64
+  const top = g[0]!;
+  return (top & 0xfe00) === 0xfc00 // unique local fc00::/7
+    || (top & 0xffc0) === 0xfe80 || (top & 0xffc0) === 0xfec0 // link-local, old site-local
+    || (top & 0xff00) === 0xff00; // multicast
 }
 
 export interface WebOptions {
-  /** Tests only: allow loopback/private targets (the operator can also set ROOTCLAW_WEB_ALLOW_PRIVATE=1 for local evals). */
-  allowPrivate?: boolean;
+  /** Tests only: allow loopback/private targets, all or those a predicate names (the operator can also set
+   * ROOTCLAW_WEB_ALLOW_PRIVATE=1 for local evals). */
+  allowPrivate?: boolean | ((address: string) => boolean);
   searchUrl?: string;
+  /** Tests only: resolve names with this instead of the system resolver. */
+  resolve?: (host: string) => Promise<Array<{ address: string; family: number }>>;
 }
 
-async function guard(url: URL, options: WebOptions): Promise<void> {
+const allowsPrivate = (options: WebOptions) => options.allowPrivate === true || process.env.ROOTCLAW_WEB_ALLOW_PRIVATE === "1";
+const refused = (address: string, options: WebOptions) => !allowsPrivate(options) && privateAddress(address)
+  && !(typeof options.allowPrivate === "function" && options.allowPrivate(address.replace(/^\[|\]$/g, "")));
+
+/** Checks what can be checked before connecting: the scheme, and a literal IP host. The URL parser has already turned
+ * numeric, octal and hex host spellings (2130706433, 0x7f.1, 0177.0.0.1) into a dotted address, so they land here. */
+function guard(url: URL, options: WebOptions): void {
   if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("only http and https URLs are allowed");
-  if (options.allowPrivate || process.env.ROOTCLAW_WEB_ALLOW_PRIVATE === "1") return;
+  if (url.username || url.password) throw new Error("URLs with credentials are not fetched");
   const host = url.hostname.replace(/^\[|\]$/g, "");
-  const addresses = isIP(host) ? [host] : (await lookup(host, { all: true })).map((entry) => entry.address);
-  if (!addresses.length || addresses.some(privateAddress)) throw new Error(`${url.hostname} is a private or local address`);
+  if (isIP(host) && refused(host, options)) throw new Error(`${url.hostname} is a private or local address`);
+}
+
+/** A dispatcher whose connections resolve the name once, refuse it unless every address is public, and connect to the
+ * address just checked: no second lookup a rebinding DNS server could answer differently. TLS still verifies, and
+ * sends SNI for, the URL's own host name. */
+function pinnedDispatcher(options: WebOptions): Agent {
+  const resolve = options.resolve ?? ((host: string) => lookup(host, { all: true, verbatim: true }));
+  const pinned: LookupFunction = (hostname, lookupOptions, callback) => {
+    resolve(hostname).then((entries) => {
+      if (!entries.length) throw new Error(`${hostname} did not resolve`);
+      if (entries.some((entry) => refused(entry.address, options))) throw new Error(`${hostname} is a private or local address`);
+      if (lookupOptions.all) callback(null, entries.map((entry) => ({ address: entry.address, family: entry.family })));
+      else callback(null, entries[0]!.address, entries[0]!.family);
+    }).catch((error: Error) => callback(Object.assign(error, { code: "EADDRNOTALLOWED" }) as NodeJS.ErrnoException, "", 0));
+  };
+  return new Agent({ connect: { lookup: pinned }, pipelining: 0 });
 }
 
 async function get(raw: string, signal: AbortSignal, options: WebOptions): Promise<{ url: string; status: number; type: string; body: string; cut: boolean }> {
   let url = new URL(raw);
   const timeout = AbortSignal.any([signal, AbortSignal.timeout(FETCH_TIMEOUT_MS)]);
-  for (let hop = 0; ; hop++) {
-    await guard(url, options);
-    const response = await fetch(url, { redirect: "manual", signal: timeout, headers: { "user-agent": "Mozilla/5.0 (compatible; RootClaw)", accept: "text/html,text/plain,application/json,*/*" } });
-    const location = response.headers.get("location");
-    if (response.status >= 300 && response.status < 400 && location) {
-      if (hop >= MAX_REDIRECTS) throw new Error("too many redirects");
-      url = new URL(location, url);
-      continue;
+  const dispatcher = pinnedDispatcher(options);
+  try {
+    for (let hop = 0; ; hop++) {
+      guard(url, options);
+      let response: Awaited<ReturnType<typeof undiciFetch>>;
+      try {
+        response = await undiciFetch(url, { redirect: "manual", signal: timeout, dispatcher,
+          headers: { "user-agent": "Mozilla/5.0 (compatible; RootClaw)", accept: "text/html,text/plain,application/json,*/*" } });
+      } catch (error) {
+        const cause = (error as { cause?: unknown }).cause;
+        throw cause instanceof Error && /private or local|did not resolve/.test(cause.message) ? cause : error;
+      }
+      const location = response.headers.get("location");
+      if (response.status >= 300 && response.status < 400 && location) {
+        await response.body?.cancel().catch(() => {});
+        if (hop >= MAX_REDIRECTS) throw new Error("too many redirects");
+        url = new URL(location, url);
+        continue;
+      }
+      const reader = response.body?.getReader();
+      const chunks: Uint8Array[] = [];
+      let size = 0; let cut = false;
+      while (reader) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value); size += value.length;
+        if (size > FETCH_MAX_BYTES) { cut = true; await reader.cancel(); break; }
+      }
+      return { url: url.href, status: response.status, type: response.headers.get("content-type") ?? "", body: Buffer.concat(chunks).subarray(0, FETCH_MAX_BYTES).toString("utf8"), cut };
     }
-    const reader = response.body?.getReader();
-    const chunks: Uint8Array[] = [];
-    let size = 0; let cut = false;
-    while (reader) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      chunks.push(value); size += value.length;
-      if (size > FETCH_MAX_BYTES) { cut = true; await reader.cancel(); break; }
-    }
-    return { url: url.href, status: response.status, type: response.headers.get("content-type") ?? "", body: Buffer.concat(chunks).subarray(0, FETCH_MAX_BYTES).toString("utf8"), cut };
+  } finally {
+    await dispatcher.close().catch(() => {});
   }
 }
 

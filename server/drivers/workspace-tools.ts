@@ -166,8 +166,17 @@ type Paths = ReturnType<typeof createWorkspacePaths>;
 const ok = (text: string): ChatToolResult => ({ ok: true, text });
 const fail = (text: string): ChatToolResult => ({ ok: false, text });
 
-/** How a workspace call shows on the approval card: shell and writes ask in Ask mode; reads never do. */
+/** How a workspace call shows on the approval card: shell, writes and the web ask in Ask mode; folder reads never do.
+ * The web tools only read, but they reach outside the machine (a URL or query can carry what the bot read), so they go
+ * through the same gate as every other tool: Full runs them, Approve-for-me grants a web search and cards a fetch
+ * (server/auto-approve.ts), Ask cards both. "Always allow" on a fetch covers that site for the session. */
 export function workspaceToolView(name: string, args: Record<string, unknown>): ChatToolCallView {
+  if (name === "web_fetch") {
+    let site = "";
+    try { site = new URL(String(args.url ?? "")).origin; } catch { /* an unparseable URL gets no grant, and fails when run */ }
+    return { title: name, input: args, ask: true, ...(site && site !== "null" ? { grant: JSON.stringify(["web", name, site]) } : {}) };
+  }
+  if (name === "web_search") return { title: name, input: args, ask: true, grant: JSON.stringify(["web", name]) };
   if (READ_ONLY.has(name)) return { title: name, input: args, ask: false };
   // A session grant covers the tool, never "every command": shell grants stay per exact command line.
   const grant = name === SHELL_TOOL ? JSON.stringify(["workspace", name, String(args.command ?? "")]) : JSON.stringify(["workspace", name]);
