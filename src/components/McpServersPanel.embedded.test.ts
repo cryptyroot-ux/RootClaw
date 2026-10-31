@@ -52,7 +52,7 @@ describe("Your MCP servers inside the Apps pop-up", () => {
     const html = render(true);
     expect(html).toContain("Your MCP servers");
     expect(html).toContain("Add MCP server");
-    expect(html.match(/role="switch"/g)?.length).toBeGreaterThanOrEqual(3); // two servers + the Claude Code switch
+    expect(html.match(/role="switch"/g)?.length).toBeGreaterThanOrEqual(2); // two servers
     expect(html).toMatch(/aria-label="Turn notes off" type="button" role="switch" aria-checked="true"/);
     expect(html).toMatch(/aria-label="Turn docs on" type="button" role="switch" aria-checked="false"/);
     expect(html).toContain('aria-label="Edit notes"');

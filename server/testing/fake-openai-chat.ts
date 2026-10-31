@@ -132,7 +132,10 @@ export async function startFakeOpenAiChat(env: NodeJS.ProcessEnv = {}): Promise<
         usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }));
       return;
     }
-    if (script.dump) writeFileSync(script.dump, JSON.stringify({ model, prompt, systemPrompt: textOf(messages.find((message) => message.role === "system")?.content),
+    const __systemPrompt = textOf(messages.find((message) => message.role === "system")?.content);
+    let __cwd: string | undefined;
+    try { const __m = __systemPrompt.match(/"currentWorkingFolder":\s*"([^"]+)"/); if (__m) __cwd = JSON.parse(`"${__m[1]}"`); } catch { /* ignore */ }
+    if (script.dump) writeFileSync(script.dump, JSON.stringify({ model, prompt, systemPrompt: __systemPrompt, cwd: __cwd,
       messages, tools: body.tools ?? [], mcpConfig: { mcpServers: mountedServers(Array.isArray(body.tools) ? body.tools : []) } }, null, 2));
     if (newTurn && script.prompts && body.stream === true) appendFileSync(script.prompts, `${JSON.stringify(prompt)}\n`);
     const route = script.routes?.find((entry) => { try { return new RegExp(entry.match).test(prompt); } catch { return false; } });

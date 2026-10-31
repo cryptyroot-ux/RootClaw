@@ -254,7 +254,6 @@ describe("fetchDeepSeekCatalog", () => {
 });
 ```
 
-The fake CLI (`server/testing/fake-dsh-cli.ts`, `#!/usr/bin/env node`, run through the same `resolveCli` the Hermes test relies on for `.ts` fixtures — check how `hermes.test.ts` / `opencode-go.test.ts` invoke `fake-acp-cli.ts` and copy that spawn convention): reads newline JSON-RPC from stdin; appends `{method, params}` to `FAKE_DSH_DUMP` when set; `initialize` → the real dsh initialize result captured in the spec; `session/new` → `JSON.parse(FAKE_DSH_SESSION)`; `session/close` → `{}`. `FAKE_DSH_MODE=hang` never answers; `FAKE_DSH_MODE=exit` exits 0 before answering `initialize`.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 

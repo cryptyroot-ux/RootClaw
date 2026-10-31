@@ -30,7 +30,6 @@ item N", the executor reads that section of v1.
 - Never break the one-file driver promise: a new provider is one file in `server/drivers/` plus one registration.
 - Nothing is ever deleted from the store record; only model-facing rebuilds are bounded.
 - `~/.rootclaw` is shared across app versions — every new field or message kind must be ignorable by an older build.
-- e2e tests follow the `server/branching.test.ts` pattern: real server, fake CLI (`server/testing/fake-acp-cli.ts`), POSIX-gated.
 - All 59 existing test files must stay green (`pnpm test`); v1's "82 test files" figure was wrong.
 
 ---
@@ -375,7 +374,6 @@ Run: `pnpm test`
 Expected: green (59 test files + updater test).
 
 ```bash
-git add server/turn-context.ts server/turn-context.test.ts server/index.ts server/branching.test.ts server/testing/fake-acp-cli.ts
 git commit -m "fix: rebuild context when a bot's engine switches mid-thread"
 ```
 

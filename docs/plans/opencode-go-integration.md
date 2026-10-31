@@ -185,7 +185,6 @@ permission behavior are covered by tests.
   credential UI and configured-only state.
 - `src/components/ProviderIcons.tsx`, onboarding, and the model picker: provider
   presentation and setup entry points.
-- `server/testing/fake-acp-cli.ts` plus ACP/config tests: deterministic protocol,
   credential, catalog, and lifecycle coverage.
 
 Keep unrelated engine setup, styling, and provider refactors out of the

@@ -109,7 +109,6 @@ merges but does not manage.
   ```
   Default timeout 10_000. The error string is for a human and must never contain a header value, an env value, or a raw provider error body.
 
-- [ ] Write a failing test using a fake stdio MCP server script (follow the pattern of `server/testing/fake-acp-cli.ts`): probing returns the tool list from `tools/list`.
 - [ ] Write a failing test that a server which never responds is abandoned at the timeout and returns `{ ok: false }` — not a hang. Assert the child process is killed, not merely orphaned.
 - [ ] Write a failing test that a server which exits immediately, or writes non-JSON to stdout, returns a typed failure naming what went wrong.
 - [ ] Write a failing test that the failure string for a server configured with `env: { TOKEN: "sekret" }` does not contain `sekret`, even when the child prints it to stderr.

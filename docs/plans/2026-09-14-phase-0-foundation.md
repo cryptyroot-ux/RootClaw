@@ -26,7 +26,6 @@ capability flag, per the existing rule in `contracts.ts` that a bot is never tol
 capability its driver cannot mount). Engine-specific channels (Claude hooks) are accelerators; the
 baseline of every item is the canonical `RuntimeEvent` stream every driver already emits. §"Every
 engine, every item" collects the matrix, and the test plan runs each item against every fake
-engine in `server/testing/` (`fake-claude-cli`, `fake-codex-app-server`, `fake-acp-cli`,
 `fake-agy-cli`, `fake-pi-cli`, `fake-driver`).
 
 ## Why
@@ -402,7 +401,6 @@ Follow `docs/verification/README.md`: every claim below is proven against an iso
 (`scripts/control-rootclaw.ts launch`), never the live app.
 
 - **Matrix tests are mandatory for every item.** Each e2e case below runs as `describe.each` over
-  the fake engines (`fake-claude-cli`, `fake-codex-app-server`, `fake-acp-cli`, `fake-agy-cli`,
   `fake-pi-cli`) plus the in-memory `fake-driver` standing in for the HTTP family and the box
   agent, in the style of `drivers/acp/approval-matrix.test.ts`. A case that legitimately cannot
   apply to an engine asserts the *degraded* or *not supported* behaviour named in the matrix

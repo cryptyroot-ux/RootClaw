@@ -21,7 +21,6 @@
 - Modify `src/components/ApiKeys.tsx` and `src/components/SettingsModal.tsx`: add the optional OpenCode Go credential row.
 - Modify `src/components/Onboarding.tsx`: show OpenCode Go in the engine check.
 - Modify `src/components/ProviderIcons.tsx`: add a stable OpenCode mark/fallback.
-- Modify `server/testing/fake-acp-cli.ts` and `server/drivers/acp/acp.test.ts`: exercise exact ACP ordering/model selection with a fake CLI.
 - Modify `docs/opencode-go.md`: document prerequisites, live links, privacy boundary, and opt-in behavior.
 
 ### Task 1: Extend ACP model resolution
@@ -69,7 +68,6 @@
 
 ### Task 5: Verify ACP runtime behavior end to end
 
-**Files:** `server/testing/fake-acp-cli.ts`, `server/drivers/acp/opencode-go.test.ts`
 
 - [ ] Add a fake-CLI mode that records received JSON-RPC methods/model config in a test-only temporary file and emits initialize, session/new, session/set_config_option, session/update, permission, and prompt result messages.
 - [ ] Add failing integration tests asserting order `initialize -> session/new/load -> session/set_config_option(model=opencode-go/...) -> session/prompt`, no duplicate final text, permission allow/deny, resume fallback, cancellation, malformed JSON-RPC, and process cleanup.
