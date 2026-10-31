@@ -241,7 +241,6 @@
             "enum": [
               "xaiApiKey",
               "boxToken",
-              "opencodeGoApiKey",
               "ttsKey",
               "fishAudioKey",
               "openaiImageApiKey",

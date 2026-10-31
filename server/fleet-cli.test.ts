@@ -48,7 +48,7 @@ describe("rootclaw fleet", () => {
     const config = { model: "my-own-default", provider: { unrelated: { models: { keep: {} } }, [MANAGED_OPENROUTER]: {
       npm: "@ai-sdk/openai-compatible", name: "Keep this name", options: { baseURL: "https://admin.example.test/api/gateway/acme/openrouter/v1", apiKey: "scoped-secret" }, models: { "old/model": { name: "Old" } },
     } } };
-    const initialFiles = { ...withRegistry({ acme: workspace }), [path]: JSON.stringify(config), [cfgPath]: '{"defaultModelSelection":{"instanceId":"claude","model":"keep"}}', "/etc/rootclaw/instances/acme.env": "ROOTCLAW_ADMIN_URL=https://admin.example.test\nOMB_ADMIN_WORKSPACE=acme\n" };
+    const initialFiles = { ...withRegistry({ acme: workspace }), [path]: JSON.stringify(config), [cfgPath]: '{"defaultModelSelection":{"instanceId":"claude","model":"keep"}}', "/etc/rootclaw/instances/acme.env": "ROOTCLAW_ADMIN_URL=https://admin.example.test\nROOTCLAW_ADMIN_WORKSPACE=acme\n" };
     const m = machine({ root: true, files: initialFiles });
     const output = io();
     const input: FleetInput = { ...base, action: "providers", slug: "acme", openrouterModels: ["next/model", "next/model"] };

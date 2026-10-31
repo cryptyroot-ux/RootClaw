@@ -97,7 +97,7 @@ describe("rendered files", () => {
   it("writes the environment, the first config and the sign-in edits the server reads live", () => {
     const workspace: FleetWorkspace = { slug: "acme", host: "acme.agentada.cc", port: 8810, webhookPort: 8811, status: "running", createdAt: "" };
     expect(instanceEnv({ workspace, dataDir: "/var/lib/rootclaw/acme/.rootclaw", licenseKey: "omb1.k" })).toBe(
-      "ROOTCLAW_DATA_DIR=/var/lib/rootclaw/acme/.rootclaw\nOMB_PORT=8810\nOMB_WEBHOOK_PORT=8811\nOMB_PUBLIC_URL=https://acme.agentada.cc\nOMB_LICENSE_KEY=omb1.k\n",
+      "ROOTCLAW_DATA_DIR=/var/lib/rootclaw/acme/.rootclaw\nROOTCLAW_PORT=8810\nROOTCLAW_WEBHOOK_PORT=8811\nROOTCLAW_PUBLIC_URL=https://acme.agentada.cc\nROOTCLAW_LICENSE_KEY=omb1.k\n",
     );
     expect(JSON.parse(initialConfig({ admins: ["ada@example.test"], members: ["@acme.test"], anthropicKey: "sk-ant-x", monthlyCapUsd: 50 }))).toEqual({
       signIn: { admins: ["ada@example.test"], members: ["@acme.test"] }, anthropic: { key: "sk-ant-x" }, budgets: { monthlyUsd: 50 },
@@ -205,7 +205,7 @@ describe("plans", () => {
     const seed = { admins: ["owner@example.test"], members: [], portalUrl: "https://admin.example.test", anthropicUrl: "https://admin.example.test/api/gateway/acme/anthropic", anthropicKey: "workspace-scoped-token" };
     const plan = createPlan({ registry, slug: "acme", seed, now, layout });
     const env = plan.steps.find((step) => step.kind === "write" && step.path.endsWith("/acme.env"));
-    expect(env).toMatchObject({ mode: 0o600, content: expect.stringContaining("ROOTCLAW_ADMIN_URL=https://admin.example.test\nOMB_ADMIN_WORKSPACE=acme") });
+    expect(env).toMatchObject({ mode: 0o600, content: expect.stringContaining("ROOTCLAW_ADMIN_URL=https://admin.example.test\nROOTCLAW_ADMIN_WORKSPACE=acme") });
     expect(env).not.toHaveProperty("owner");
     const config = plan.steps.find((step) => step.kind === "write" && step.path.endsWith("/config.json"));
     expect(config).toMatchObject({ owner: "rootclaw-acme", content: expect.stringContaining('"url": "https://admin.example.test/api/gateway/acme/anthropic"') });

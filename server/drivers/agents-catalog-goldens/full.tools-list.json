@@ -775,7 +775,6 @@
             "enum": [
               "xaiApiKey",
               "boxToken",
-              "opencodeGoApiKey",
               "ttsKey",
               "fishAudioKey",
               "openaiImageApiKey",
@@ -1468,7 +1467,7 @@
           },
           "engine": {
             "type": "string",
-            "description": "limit_reset: the engine id whose limit to wait for, e.g. claude or codex. Omit for your own engine."
+            "description": "limit_reset: the engine id whose limit to wait for, e.g. xaiApi or groq. Omit for your own engine."
           },
           "repeat": {
             "type": "string",
@@ -1658,7 +1657,7 @@
             "properties": {
               "instanceId": {
                 "type": "string",
-                "description": "Engine instance id, for example codex or claude."
+                "description": "Engine instance id, for example xaiApi or groq."
               },
               "model": {
                 "type": "string",
