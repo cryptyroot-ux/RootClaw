@@ -10,17 +10,6 @@ export interface AnthropicEndpoint {
   doc?: string;
 }
 
-export type CodexUnsupportedReason = "no-responses-api" | "not-supported";
-
-export type CodexSupport =
-  | {
-    kind: "documented";
-    doc: string;
-    denyModels?: RegExp;
-    denyKeyPrefixes?: readonly string[];
-  }
-  | { kind: "unsupported"; reason: CodexUnsupportedReason };
-
 export interface ProviderPreset {
   id: string;
   catalogId?: string;
@@ -33,8 +22,6 @@ export interface ProviderPreset {
   env?: string;
   doc?: string;
   anthropic?: AnthropicEndpoint;
-  /** Absent: Codex only as an experiment, and only if the check passes. */
-  codex?: CodexSupport;
   /** Path added to `api` for a GET that proves the key (a 2xx means it works). */
   keyCheck?: string;
   /** GET {api}/models answers without a key, so it proves nothing about one. */
@@ -60,7 +47,6 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
       auth: "bearer",
       doc: "https://openrouter.ai/docs/guides/guides/claude-code-integration",
     },
-    codex: { kind: "documented", doc: "https://openrouter.ai/docs/cookbook/coding-agents/codex-cli" },
     // /models is public; /key answers only with a valid key.
     keyCheck: "/key",
     publicModels: true,
@@ -77,13 +63,6 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
       auth: "bearer",
       doc: "https://docs.fireworks.ai/tools-sdks/anthropic-compatibility",
     },
-    codex: {
-      kind: "documented",
-      doc: "https://docs.fireworks.ai/ecosystem/fireconnect/codex",
-      // Fireworks: MiniMax models and Fire Pass keys do not work with Codex.
-      denyModels: /minimax/i,
-      denyKeyPrefixes: ["fpk_"],
-    },
     checkedAt: CHECKED,
   },
   {
@@ -93,7 +72,6 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     recommended: 3,
     api: "https://api.deepseek.com",
     anthropic: { baseUrl: "https://api.deepseek.com/anthropic", doc: "https://api-docs.deepseek.com/guides/anthropic_api" },
-    codex: { kind: "unsupported", reason: "no-responses-api" },
     checkedAt: CHECKED,
   },
   {
@@ -102,7 +80,6 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     label: "Cline (ClinePass)",
     recommended: 4,
     api: "https://api.cline.bot/api/v1",
-    codex: { kind: "unsupported", reason: "not-supported" },
     publicModels: true,
     checkedAt: CHECKED,
   },
@@ -114,7 +91,6 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     api: "https://api.cline.bot/api/v1",
     env: "CLINE_API_KEY",
     doc: "https://docs.cline.bot/api/overview",
-    codex: { kind: "unsupported", reason: "not-supported" },
     publicModels: true,
     checkedAt: CHECKED,
   },
@@ -158,7 +134,6 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     catalogId: "openai",
     label: "OpenAI",
     api: "https://api.openai.com/v1",
-    codex: { kind: "documented", doc: "https://github.com/openai/codex" },
     checkedAt: CHECKED,
   },
   {
@@ -183,59 +158,4 @@ const BY_ID = new Map(PROVIDER_PRESETS.map((preset) => [preset.id, preset]));
 
 export function providerPreset(id: string): ProviderPreset | undefined {
   return BY_ID.get(id);
-}
-
-export type ResponsesCheck = "works" | "missing" | "key-refused" | "unchecked";
-
-export type CodexNoReason =
-  /** The provider has no Responses API (DeepSeek). */
-  | "provider-no-responses-api"
-  /** The provider does not support Codex (Cline). */
-  | "provider-unsupported"
-  /** This kind of key is documented not to work (Fireworks Fire Pass). */
-  | "key-type"
-  /** /responses answered a plain 404 or 405. */
-  | "route-missing"
-  /** /responses refused a key that /models accepted. */
-  | "key-refused"
-  | "not-checked"
-  /** Not documented; available once the experimental switch is on. */
-  | "experimental-off";
-
-export type CodexVerdict =
-  | { use: "yes" }
-  | { use: "experimental" }
-  | { use: "no"; reason: CodexNoReason };
-
-export function codexKeyAllowed(preset: ProviderPreset | undefined, key: string): boolean {
-  const codex = preset?.codex;
-  return !(codex?.kind === "documented" && codex.denyKeyPrefixes?.some((prefix) => key.startsWith(prefix)));
-}
-
-export function codexModelAllowed(preset: ProviderPreset | undefined, model: string): boolean {
-  const codex = preset?.codex;
-  return !(codex?.kind === "documented" && codex.denyModels?.test(model));
-}
-
-export function codexModels(preset: ProviderPreset | undefined, models: readonly string[]): string[] {
-  return models.filter((model) => codexModelAllowed(preset, model));
-}
-
-/** Whether Codex can use a provider. `preset` is undefined for custom providers. */
-export function codexVerdict(input: {
-  preset: ProviderPreset | undefined;
-  responses: ResponsesCheck;
-  experimental: boolean;
-  key?: string;
-}): CodexVerdict {
-  const codex = input.preset?.codex;
-  if (codex?.kind === "unsupported") {
-    return { use: "no", reason: codex.reason === "no-responses-api" ? "provider-no-responses-api" : "provider-unsupported" };
-  }
-  if (input.key !== undefined && !codexKeyAllowed(input.preset, input.key)) return { use: "no", reason: "key-type" };
-  if (input.responses === "missing") return { use: "no", reason: "route-missing" };
-  if (input.responses === "key-refused") return { use: "no", reason: "key-refused" };
-  if (input.responses !== "works") return { use: "no", reason: "not-checked" };
-  if (codex?.kind === "documented") return { use: "yes" };
-  return input.experimental ? { use: "experimental" } : { use: "no", reason: "experimental-off" };
 }

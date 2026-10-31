@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { normalizeApiUrl } from "../cli-api-setup.ts";
-import { PROVIDER_PRESETS, codexModels, codexVerdict, providerPreset, type ResponsesCheck } from "./presets.ts";
+import { PROVIDER_PRESETS, providerPreset } from "./presets.ts";
 import { containsBrace, trimModelsDevCatalog, unpackCatalog } from "./trim.ts";
 
 const snapshot = JSON.parse(readFileSync(join(import.meta.dirname, "models-dev.snapshot.json"), "utf8"));
@@ -28,7 +28,7 @@ describe("provider presets table", () => {
       expect(normalizeApiUrl(preset.api)).toBe(preset.api);
       expect(preset.api.startsWith("https://")).toBe(true);
       if (preset.anthropic) expect(normalizeApiUrl(preset.anthropic.baseUrl)).toBe(preset.anthropic.baseUrl);
-      for (const link of [preset.doc, preset.anthropic?.doc, preset.codex?.kind === "documented" ? preset.codex.doc : undefined]) {
+      for (const link of [preset.doc, preset.anthropic?.doc]) {
         if (link) expect(new URL(link).protocol).toBe("https:");
       }
       expect(preset.checkedAt).toMatch(/^\d{4}-\d{2}-\d{2}$/);
@@ -60,55 +60,9 @@ describe("provider presets table", () => {
     expect(providerPreset("deepseek")?.anthropic?.auth).toBeUndefined();
   });
 
-  it("documents Codex only for OpenRouter, Fireworks and OpenAI", () => {
-    expect(PROVIDER_PRESETS.filter((preset) => preset.codex?.kind === "documented").map((preset) => preset.id).sort())
-      .toEqual(["fireworks-ai", "openai", "openrouter"]);
-  });
-
   it("proves OpenRouter keys through /key because its model list is public", () => {
     expect(providerPreset("openrouter")).toMatchObject({ keyCheck: "/key", publicModels: true });
     expect(providerPreset("cline-credits")).toMatchObject({ publicModels: true });
     expect(providerPreset("cline-credits")?.keyCheck).toBeUndefined();
-  });
-});
-
-describe("Codex rules", () => {
-  const openrouter = providerPreset("openrouter");
-  const fireworks = providerPreset("fireworks-ai");
-  const groq = providerPreset("groq");
-
-  it("offers Codex for a documented provider only after /responses works", () => {
-    expect(codexVerdict({ preset: openrouter, responses: "works", experimental: false })).toEqual({ use: "yes" });
-    const blocked: Array<[ResponsesCheck, string]> = [["missing", "route-missing"], ["key-refused", "key-refused"], ["unchecked", "not-checked"]];
-    for (const [responses, reason] of blocked) {
-      expect(codexVerdict({ preset: openrouter, responses, experimental: true })).toEqual({ use: "no", reason });
-    }
-  });
-
-  it("keeps undocumented providers behind the experimental switch, and still needs the check", () => {
-    expect(codexVerdict({ preset: groq, responses: "works", experimental: false })).toEqual({ use: "no", reason: "experimental-off" });
-    expect(codexVerdict({ preset: groq, responses: "works", experimental: true })).toEqual({ use: "experimental" });
-    expect(codexVerdict({ preset: groq, responses: "missing", experimental: true })).toEqual({ use: "no", reason: "route-missing" });
-    expect(codexVerdict({ preset: undefined, responses: "works", experimental: true })).toEqual({ use: "experimental" });
-    expect(codexVerdict({ preset: undefined, responses: "works", experimental: false })).toEqual({ use: "no", reason: "experimental-off" });
-  });
-
-  it("never offers Codex where the provider rules it out, even with the switch on", () => {
-    expect(codexVerdict({ preset: providerPreset("deepseek"), responses: "works", experimental: true }))
-      .toEqual({ use: "no", reason: "provider-no-responses-api" });
-    for (const id of ["cline-pass", "cline-credits"]) {
-      expect(codexVerdict({ preset: providerPreset(id), responses: "works", experimental: true }))
-        .toEqual({ use: "no", reason: "provider-unsupported" });
-    }
-  });
-
-  it("refuses Fireworks Fire Pass keys and MiniMax models", () => {
-    expect(codexVerdict({ preset: fireworks, responses: "works", experimental: false, key: "fpk_abc123" }))
-      .toEqual({ use: "no", reason: "key-type" });
-    expect(codexVerdict({ preset: fireworks, responses: "works", experimental: false, key: "fw_abc123" })).toEqual({ use: "yes" });
-    expect(codexModels(fireworks, ["accounts/fireworks/models/minimax-m2p5", "accounts/fireworks/models/MiniMax-M3", "accounts/fireworks/models/glm-5"]))
-      .toEqual(["accounts/fireworks/models/glm-5"]);
-    expect(codexModels(openrouter, ["minimax/minimax-m2"])).toEqual(["minimax/minimax-m2"]);
-    expect(codexVerdict({ preset: openrouter, responses: "works", experimental: false, key: "fpk_abc" })).toEqual({ use: "yes" });
   });
 });
