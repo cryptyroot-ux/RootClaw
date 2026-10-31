@@ -37,8 +37,6 @@ export interface HandedState {
   /** The provider session (resume cursor) this describes; absent, it matches none and the next turn replays. */
   session?: string;
   config?: string;
-  /** Codex: the effort last sent; the thread keeps it until sent another, and no turn can clear one. */
-  effort?: string | null;
   /** The newest context message left out of the session's starting history: it and everything before were never received. */
   omitted?: string;
   /** Received: everything after `omitted` through this, plus `ids`; a message withdrawn by stopping its turn counts too. */
@@ -142,7 +140,7 @@ export function recordHanded(state: HandedState, order: readonly string[], recei
   return {
     ...(state.session === undefined ? {} : { session: state.session }),
     ...(state.config === undefined ? {} : { config: state.config }),
-    ...(state.effort === undefined ? {} : { effort: state.effort }),
+
     ...(state.omitted === undefined ? {} : { omitted: state.omitted }),
     ...(through === undefined ? {} : { through }),
     ids: sorted,
@@ -174,7 +172,6 @@ export interface Handoff {
   /** Undefined when the turn starts a session; always present, so a handoff decided again at dispatch replaces it. */
   resumeCursor: string | undefined;
   config: string;
-  effort?: string | null;
   started: SessionStart;
   recovery: SessionStart;
   resumed: SessionStart;
@@ -320,15 +317,11 @@ export class Handoffs {
       ? pending.resumeCursor === undefined ? pending.started : pending.recovery
       : existing === undefined ? pending.resumed : undefined;
     if (!start) {
-      if (typeof pending.effort === "string" && existing?.session === session && existing.effort !== pending.effort) {
-        this.store.write(pending.botId, threadId, pending.instanceId, { ...existing, effort: pending.effort });
-      }
       this.add(threadId, pending, [...pending.placed, ...pending.carried]);
       return;
     }
     this.store.write(pending.botId, threadId, pending.instanceId, recordHanded(
-      { session, config: pending.config, ...(pending.effort === undefined ? {} : { effort: pending.effort }),
-        ...(start.omitted === undefined ? {} : { omitted: start.omitted }), ids: [] },
+      { session, config: pending.config, ...(start.omitted === undefined ? {} : { omitted: start.omitted }), ids: [] },
       this.store.order(threadId), start.sent));
   }
 
