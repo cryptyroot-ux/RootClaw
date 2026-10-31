@@ -18,8 +18,7 @@ export interface DefaultSelectionContext {
   answered?: (instance: SelectableInstance) => boolean | undefined;
 }
 
-/** The shared ranking (shared/ai-ranking.ts), with an AI that answered its test ahead of one that didn't or wasn't tested.
- * OpenCode's free backup comes in only once every other AI didn't answer. */
+/** A provider that answered its test precedes an untested one; a free-only fallback is used only after other providers fail. */
 const best = (instances: readonly SelectableInstance[], context: DefaultSelectionContext) => {
   const ranked = rankAis(instances);
   const usable = (list: readonly SelectableInstance[]) => list.find((instance) => context.answered?.(instance) === true)

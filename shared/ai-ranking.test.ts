@@ -12,8 +12,9 @@ const compat = row("compat", "openai-compat");
 const freeCompat = row("free", "openai-compat", { freeFallback: true });
 
 describe("one ranking of the AIs a new person has", () => {
-  it("puts xAI first, then the rest in config order, and free-only fallbacks last", () => {
-    expect(ids(rankAis([groq, freeCompat, compat, xai]))).toEqual(["xai", "groq", "compat", "free"]);
+  it("keeps configured provider order, with free-only fallbacks last", () => {
+    expect(ids(rankAis([groq, freeCompat, compat, xai]))).toEqual(["groq", "compat", "xai", "free"]);
+    expect(ids(rankAis([compat, xai, groq]))).toEqual(["compat", "xai", "groq"]);
     expect(ids(rankAis([freeCompat]))).toEqual(["free"]);
   });
 

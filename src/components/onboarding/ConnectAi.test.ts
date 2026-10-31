@@ -56,7 +56,7 @@ beforeEach(() => {
   setLocale("en");
   f.check = () => Promise.resolve({ ok: true });
   f.checks = [];
-  f.instances = [engine("grok", "grokAgent", "Grok", false), engine("claude", "claudeAgent", "Claude", false), engine("codex", "codex", "Codex", false)];
+  f.instances = [engine("xaiApi", "grok", "xAI", false), engine("anthropicApi", "anthropic", "Anthropic (API)", false), engine("openaiResponses", "openai-responses", "OpenAI Responses (API)", false)];
   f.dispatch.mockReset();
   f.fail = false;
   vi.stubGlobal("ogb", undefined);
@@ -91,11 +91,11 @@ describe("connecting an AI on the first screen", () => {
 
   it("leads with one recommended way, then lists every other way, with no status list and no engine talk", async () => {
     await show();
-    expect([...host.querySelectorAll("[data-engine-setup]")].map((node) => node.getAttribute("data-engine-setup"))).toEqual(["claude"]);
-    expect(host.querySelector("[data-ai-recommended]")?.getAttribute("data-ai-recommended")).toBe("claude");
+    expect([...host.querySelectorAll("[data-engine-setup]")].map((node) => node.getAttribute("data-engine-setup"))).toEqual(["xaiApi"]);
+    expect(host.querySelector("[data-ai-recommended]")?.getAttribute("data-ai-recommended")).toBe("xaiApi");
     const rows = [...host.querySelectorAll("button[aria-expanded]")].map((node) => node.textContent);
     expect(rows).toHaveLength(2);
-    expect(rows).toContain("Codex");
+    expect(rows.some((row) => row?.includes("Anthropic"))).toBe(true);
     expect(text()).not.toContain("Other ways");
     for (const word of [/\bengines?\b/i, /\bReady\b/, /Needs setup/i, /to set up/i, /provider/i]) expect(text()).not.toMatch(word);
   });
@@ -144,13 +144,13 @@ describe("connecting an AI on the first screen", () => {
   it("says Connected only after the AI answered a test message, and plainly while it checks", async () => {
     let answer!: (value: object) => void;
     f.check = () => new Promise((resolve) => { answer = resolve; });
-    f.instances = [engine("grok", "grokAgent", "Grok", true), engine("claude", "claudeAgent", "Claude", true)];
+    f.instances = [engine("anthropicApi", "anthropic", "Anthropic", true), engine("xaiApi", "grok", "xAI", true)];
     await show();
-    expect(f.checks).toEqual(["/api/instances/claude/check"]);
+    expect(f.checks).toEqual(["/api/instances/anthropicApi/check"]);
     expect(host.querySelector("[data-ai-connected]")).toBeNull();
-    expect(host.querySelector("[data-ai-checking]")?.textContent).toBe("Checking that Claude answers…");
+    expect(host.querySelector("[data-ai-checking]")?.textContent).toBe("Checking that Anthropic answers…");
     await act(async () => { answer({ ok: true }); });
-    expect(host.querySelector("[data-ai-connected]")?.textContent).toBe("Connected · Claude");
+    expect(host.querySelector("[data-ai-connected]")?.textContent).toBe("Connected · Anthropic");
     expect(host.querySelector("[data-ai-checking]")).toBeNull();
   });
 

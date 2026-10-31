@@ -77,7 +77,8 @@ describe("testing an AI with one tiny message before a new bot's default trusts 
   const engineFor = (instanceId: string): CheckableEngine => {
     let engine = engines.get(instanceId);
     if (!engine) {
-      engine = { instanceId, displayName: instanceId, driverKind: instanceId, generateText: vi.fn(() => answers[instanceId]!()) };
+      engine = { instanceId, displayName: instanceId === "anthropicApi" ? "Anthropic" : instanceId,
+        driverKind: instances.find((instance) => instance.instanceId === instanceId)?.driverKind ?? "openai-compat", generateText: vi.fn(() => answers[instanceId]!()) };
       engines.set(instanceId, engine);
     }
     return engine;
@@ -125,10 +126,11 @@ describe("testing an AI with one tiny message before a new bot's default trusts 
     await settled();
   };
   const chief = () => store.bot("chief")!;
+  const provider = (instanceId: string) => instances.find((instance) => instance.instanceId === instanceId)!;
 
   beforeEach(() => {
-    instances = [ready("grok", "grokAgent"), ready("claude", "claudeAgent")];
-    answers = { claude: async () => "OK", grok: async () => "OK", opencodeGo: async () => "OK" };
+    instances = [ready("anthropicApi", "anthropic"), ready("xaiApi", "grok")];
+    answers = { anthropicApi: async () => "OK", xaiApi: async () => "OK", freeApi: async () => "OK", openaiResponses: async () => "OK" };
     engines = new Map();
     saved = undefined;
     profile = undefined;
@@ -147,170 +149,170 @@ describe("testing an AI with one tiny message before a new bot's default trusts 
 
   it("picks by ranking at once, tests the pick in the background, and keeps it when it answers", async () => {
     refresh();
-    expect(pick).toEqual(on("claude"));
-    expect(tested.state(instances[1]!)).toBe("testing");
+    expect(pick).toEqual(on("anthropicApi"));
+    expect(tested.state(provider("anthropicApi"))).toBe("testing");
     tested.seed();
     await settled();
-    expect(tested.state(instances[1]!)).toBe("passed");
-    expect(sent("claude")).toBe(1);
-    expect(sent("grok")).toBe(0);
-    expect(pick).toEqual(on("claude"));
-    expect(chief().modelSelection).toEqual(on("claude"));
+    expect(tested.state(provider("anthropicApi"))).toBe("passed");
+    expect(sent("anthropicApi")).toBe(1);
+    expect(sent("xaiApi")).toBe(0);
+    expect(pick).toEqual(on("anthropicApi"));
+    expect(chief().modelSelection).toEqual(on("anthropicApi"));
   });
 
   it("doesn't demote an AI for one missed test: it tries again in two minutes and keeps its place", async () => {
-    answers.claude = silent;
+    answers.anthropicApi = silent;
     await boot();
-    expect(tested.state(instances[1]!)).toBe("failed");
-    expect(tested.answered(instances[1]!)).toBeUndefined();
-    expect(pick).toEqual(on("claude"));
-    expect(sent("grok")).toBe(0);
-    answers.claude = async () => "OK";
+    expect(tested.state(provider("anthropicApi"))).toBe("failed");
+    expect(tested.answered(provider("anthropicApi"))).toBeUndefined();
+    expect(pick).toEqual(on("anthropicApi"));
+    expect(sent("xaiApi")).toBe(0);
+    answers.anthropicApi = async () => "OK";
     await wait(2 * MINUTE);
-    expect(sent("claude")).toBe(2);
-    expect(tested.state(instances[1]!)).toBe("passed");
-    expect(pick).toEqual(on("claude"));
-    expect(chief().modelSelection).toEqual(on("claude"));
+    expect(sent("anthropicApi")).toBe(2);
+    expect(tested.state(provider("anthropicApi"))).toBe("passed");
+    expect(pick).toEqual(on("anthropicApi"));
+    expect(chief().modelSelection).toEqual(on("anthropicApi"));
     expect(store.applyModelDefault).not.toHaveBeenCalled();
   });
 
   it("after two misses in a row moves the default, and the first bot only once the next AI answered", async () => {
-    answers.claude = silent;
-    let grokAnswers!: (text: string) => void;
-    answers.grok = () => new Promise<string>((resolve) => { grokAnswers = resolve; });
+    answers.anthropicApi = silent;
+    let xaiAnswers!: (text: string) => void;
+    answers.xaiApi = () => new Promise<string>((resolve) => { xaiAnswers = resolve; });
     await boot();
     clock += 2 * MINUTE;
     for (const timer of timers.splice(0)) timer.run();
-    await vi.waitFor(() => expect(tested.answered(instances[1]!)).toBe(false));
-    expect(tested.state(instances[1]!)).toBe("failed");
+    await vi.waitFor(() => expect(tested.answered(provider("anthropicApi"))).toBe(false));
+    expect(tested.state(provider("anthropicApi"))).toBe("failed");
     // The default goes to the next AI at once, but the first bot waits for that AI's own answer.
-    await vi.waitFor(() => expect(tested.state(instances[0]!)).toBe("testing"));
-    expect(pick).toEqual(on("grok"));
-    expect(chief().modelSelection).toEqual(on("claude"));
-    grokAnswers("OK");
+    await vi.waitFor(() => expect(tested.state(provider("xaiApi"))).toBe("testing"));
+    expect(pick).toEqual(on("xaiApi"));
+    expect(chief().modelSelection).toEqual(on("anthropicApi"));
+    xaiAnswers("OK");
     await settled();
-    expect(chief().modelSelection).toEqual({ ...on("grok"), effort: "high" });
+    expect(chief().modelSelection).toEqual({ ...on("xaiApi"), effort: "high" });
   });
 
   it("keeps the default on the AI that answered while one that didn't is being tried again", async () => {
-    instances = [ready("claude", "claudeAgent"), ready("opencodeGo", "opencodeGo", { freeFallback: true })];
-    answers.claude = silent;
+    instances = [ready("anthropicApi", "anthropic"), ready("freeApi", "openai-compat", { freeFallback: true })];
+    answers.anthropicApi = silent;
     await boot();
     await wait(2 * MINUTE);
-    expect(pick).toEqual(on("opencodeGo"));
-    let claudeAnswers!: (text: string) => void;
-    answers.claude = () => new Promise<string>((resolve) => { claudeAnswers = resolve; });
+    expect(pick).toEqual(on("freeApi"));
+    let anthropicAnswers!: (text: string) => void;
+    answers.anthropicApi = () => new Promise<string>((resolve) => { anthropicAnswers = resolve; });
     clock += 10 * MINUTE;
     for (const timer of timers.splice(0)) timer.run();
-    await vi.waitFor(() => expect(tested.state(instances[0]!)).toBe("testing"));
-    expect(refresh()).toEqual(on("opencodeGo"));
-    claudeAnswers("OK");
+    await vi.waitFor(() => expect(tested.state(provider("anthropicApi"))).toBe("testing"));
+    expect(refresh()).toEqual(on("freeApi"));
+    anthropicAnswers("OK");
     await settled();
-    expect(pick).toEqual(on("claude"));
-    expect(chief().modelSelection.instanceId).toBe("claude");
+    expect(pick).toEqual(on("anthropicApi"));
+    expect(chief().modelSelection.instanceId).toBe("anthropicApi");
   });
 
   it("moves the first bot back once the person's own AI answers again, even after a restart", async () => {
-    instances = [ready("claude", "claudeAgent"), ready("opencodeGo", "opencodeGo", { freeFallback: true })];
-    answers.claude = silent;
+    instances = [ready("anthropicApi", "anthropic"), ready("freeApi", "openai-compat", { freeFallback: true })];
+    answers.anthropicApi = silent;
     await boot();
     await wait(2 * MINUTE);
-    expect(chief().modelSelection.instanceId).toBe("opencodeGo");
-    // The app restarts before Claude's next try; Claude answers then.
-    answers.claude = async () => "OK";
+    expect(chief().modelSelection.instanceId).toBe("freeApi");
+    // The app restarts before Anthropic's next try; Anthropic answers then.
+    answers.anthropicApi = async () => "OK";
     engines = new Map();
     timers = [];
     tested = make();
     refresh();
     tested.seed();
     await settled();
-    expect(sent("claude")).toBe(0);
+    expect(sent("anthropicApi")).toBe(0);
     await wait(10 * MINUTE);
-    expect(sent("claude")).toBe(1);
-    expect(pick).toEqual(on("claude"));
-    expect(chief().modelSelection.instanceId).toBe("claude");
+    expect(sent("anthropicApi")).toBe(1);
+    expect(pick).toEqual(on("anthropicApi"));
+    expect(chief().modelSelection.instanceId).toBe("anthropicApi");
   });
 
   it("moves the first bot off an AI whose latest test missed, to the default that answered, as the welcome says", async () => {
-    answers.claude = silent;
+    answers.anthropicApi = silent;
     await boot();
-    expect(chief().modelSelection).toEqual(on("claude"));
-    // The welcome checks the next AI while Claude waits for its retry; that AI answers, and new bots get it.
-    await tested.check({ ...engineFor("grok"), snapshot: async () => instances[0]!.snapshot });
+    expect(chief().modelSelection).toEqual(on("anthropicApi"));
+    // The welcome checks the next AI while Anthropic waits for its retry; that AI answers, and new bots get it.
+    await tested.check({ ...engineFor("xaiApi"), snapshot: async () => provider("xaiApi").snapshot });
     await settled();
-    expect(pick).toEqual(on("grok"));
-    expect(chief().modelSelection, "the first bot goes where the welcome said").toEqual({ ...on("grok"), effort: "high" });
-    // Claude answers its retry: the first bot, still following, moves back up.
-    answers.claude = async () => "OK";
+    expect(pick).toEqual(on("xaiApi"));
+    expect(chief().modelSelection, "the first bot goes where the welcome said").toEqual({ ...on("xaiApi"), effort: "high" });
+    // Anthropic answers its retry: the first bot, still following, moves back up.
+    answers.anthropicApi = async () => "OK";
     await wait(2 * MINUTE);
-    expect(pick).toEqual(on("claude"));
-    expect(chief().modelSelection.instanceId).toBe("claude");
+    expect(pick).toEqual(on("anthropicApi"));
+    expect(chief().modelSelection.instanceId).toBe("anthropicApi");
   });
 
   it("moves the first bot on a result that lands while a later start still reads the engines, once that read settles", async () => {
-    answers.claude = silent;
+    answers.anthropicApi = silent;
     await boot();
-    expect(chief().modelSelection).toEqual(on("claude"));
+    expect(chief().modelSelection).toEqual(on("anthropicApi"));
     // The app restarts mid-welcome; the engines are read one at a time, and nothing settles until that read ends.
     engines = new Map();
     timers = [];
     let reading = true;
     tested = make({ changed: async () => { if (!reading) refresh(); } });
     tested.seed();
-    await tested.check({ ...engineFor("grok"), snapshot: async () => instances[0]!.snapshot });
+    await tested.check({ ...engineFor("xaiApi"), snapshot: async () => provider("xaiApi").snapshot });
     await settled();
-    expect(chief().modelSelection, "nothing moves on the last run's status").toEqual(on("claude"));
+    expect(chief().modelSelection, "nothing moves on the last run's status").toEqual(on("anthropicApi"));
     reading = false;
     refresh();
     await settled();
-    expect(pick).toEqual(on("grok"));
-    expect(chief().modelSelection).toEqual({ ...on("grok"), effort: "high" });
-    expect(sent("claude"), "Claude's retry is still two minutes off").toBe(0);
+    expect(pick).toEqual(on("xaiApi"));
+    expect(chief().modelSelection).toEqual({ ...on("xaiApi"), effort: "high" });
+    expect(sent("anthropicApi"), "Anthropic's retry is still two minutes off").toBe(0);
   });
 
   it("moves the first bot off an AI that can't run once one that can has answered", async () => {
-    instances = [ready("claude", "claudeAgent", { authenticated: false })];
+    instances = [ready("anthropicApi", "anthropic", { authenticated: false })];
     await boot();
-    expect(chief().modelSelection.instanceId, "nothing could run: the first bot got what was there").toBe("claude");
-    answers.codex = async () => "OK";
-    instances = [ready("claude", "claudeAgent", { authenticated: false }), ready("codex", "codex")];
+    expect(chief().modelSelection.instanceId, "nothing could run: the first bot got what was there").toBe("anthropicApi");
+    answers.openaiResponses = async () => "OK";
+    instances = [ready("anthropicApi", "anthropic", { authenticated: false }), ready("openaiResponses", "openai-responses")];
     refresh();
     await settled();
-    expect(pick).toEqual(on("codex"));
-    expect(chief().modelSelection.instanceId).toBe("codex");
+    expect(pick).toEqual(on("openaiResponses"));
+    expect(chief().modelSelection.instanceId).toBe("openaiResponses");
   });
 
   it("keeps trying an AI that missed three times, once an hour", async () => {
-    answers.claude = silent;
+    answers.anthropicApi = silent;
     await boot();
     await wait(2 * MINUTE);
     await wait(10 * MINUTE);
-    expect(sent("claude")).toBe(3);
+    expect(sent("anthropicApi")).toBe(3);
     await wait(59 * MINUTE);
-    expect(sent("claude"), "not before the hour").toBe(3);
+    expect(sent("anthropicApi"), "not before the hour").toBe(3);
     await wait(MINUTE);
-    expect(sent("claude")).toBe(4);
-    answers.claude = async () => "OK";
+    expect(sent("anthropicApi")).toBe(4);
+    answers.anthropicApi = async () => "OK";
     await wait(60 * MINUTE);
-    expect(sent("claude")).toBe(5);
-    expect(pick).toEqual(on("claude"));
+    expect(sent("anthropicApi")).toBe(5);
+    expect(pick).toEqual(on("anthropicApi"));
   });
 
   it("keeps a passing result across a restart for a day, so a start sends no test message", async () => {
     await boot();
-    expect(sent("claude")).toBe(1);
+    expect(sent("anthropicApi")).toBe(1);
     engines = new Map();
     tested = make();
     refresh();
     await settled();
-    expect(sent("claude")).toBe(0);
-    expect(tested.state(instances[1]!)).toBe("passed");
+    expect(sent("anthropicApi")).toBe(0);
+    expect(tested.state(provider("anthropicApi"))).toBe("passed");
     clock += 24 * 60 * MINUTE;
     engines = new Map();
     tested = make();
     refresh();
     await settled();
-    expect(sent("claude")).toBe(1);
+    expect(sent("anthropicApi")).toBe(1);
   });
 
   it("tests again when the engine's own settings change, as a new key would", async () => {
@@ -321,66 +323,68 @@ describe("testing an AI with one tiny message before a new bot's default trusts 
     clock += 6 * MINUTE;
     refresh();
     await settled();
-    expect(sent("claude")).toBe(2);
-    expect(configIdentity({ driver: "claudeAgent", environment: { KEY: "a" } })).not.toBe(configIdentity({ driver: "claudeAgent", environment: { KEY: "b" } }));
-    const named = (displayName: string) => ({ driver: "claudeAgent", displayName });
+    expect(sent("anthropicApi")).toBe(2);
+    expect(configIdentity({ driver: "anthropic", environment: { KEY: "a" } })).not.toBe(configIdentity({ driver: "anthropic", environment: { KEY: "b" } }));
+    const named = (displayName: string) => ({ driver: "anthropic", displayName });
     expect(configIdentity(named("One"))).toBe(configIdentity(named("Two")));
   });
 
   it("never moves a first bot the person chose a model for, wrote to, or set a conversation's AI on", async () => {
     for (const touch of [
       // The same model at another effort is a choice too (the very same choice again can't be told apart from none).
-      () => store.choose("chief", { ...on("claude"), effort: "low" }),
-      () => store.choose("chief", on("grok")),
-      () => { chief().tasks[0]!.modelSelection = on("claude"); store.emit({ type: "bot", botId: "chief" }); },
+      () => store.choose("chief", { ...on("anthropicApi"), effort: "low" }),
+      () => store.choose("chief", on("xaiApi")),
+      () => { chief().tasks[0]!.modelSelection = on("anthropicApi"); store.emit({ type: "bot", botId: "chief" }); },
       () => store.say("chief-main", "user"),
     ]) {
       rmSync(join(data, "ai-checks.json"), { force: true });
       store = new FakeStore(() => pick);
       engines = new Map();
       timers = [];
-      answers.claude = silent;
+      answers.anthropicApi = silent;
       tested = make();
       await boot();
       // The app's own greeting is not the person's.
       store.say("chief-main", "bot");
       touch();
       await wait(2 * MINUTE);
-      expect(pick).toEqual(on("grok"));
+      expect(pick).toEqual(on("xaiApi"));
       expect(store.applyModelDefault).not.toHaveBeenCalled();
     }
   });
 
   it("moves only the first bot the app made: never a Chief someone promoted, one a team setup made, or a busy one", async () => {
-    answers.claude = silent;
+    answers.anthropicApi = silent;
     await boot();
-    store.bots.push({ id: "promoted", chiefOfStaff: true, modelSelection: on("claude"), tasks: [{ threadId: "promoted-main" }] });
+    store.bots.push({ id: "promoted", chiefOfStaff: true, modelSelection: on("anthropicApi"), tasks: [{ threadId: "promoted-main" }] });
     busy.add("chief/chief-main");
     await wait(2 * MINUTE);
-    expect(pick).toEqual(on("grok"));
-    expect(store.bot("promoted")!.modelSelection).toEqual(on("claude"));
-    expect(chief().modelSelection).toEqual(on("claude"));
+    expect(pick).toEqual(on("xaiApi"));
+    expect(store.bot("promoted")!.modelSelection).toEqual(on("anthropicApi"));
+    expect(chief().modelSelection).toEqual(on("anthropicApi"));
   });
 
   it("never moves anything on a status read alone, such as one that timed out", async () => {
+    tested = make({ background: false });
     await boot();
-    // Claude's status read fails once: the default for new bots reads Grok for that moment, nothing follows it.
-    instances = [ready("grok", "grokAgent"), { ...ready("claude", "claudeAgent"), snapshot: { state: "unavailable", reason: "timed out" } }];
+    // Anthropic's status read fails once: the default for new bots reads xAI for that moment, nothing follows it.
+    instances = [ready("xaiApi", "grok"), { ...ready("anthropicApi", "anthropic"), snapshot: { state: "unavailable", reason: "timed out" } }];
     clock += 6 * MINUTE;
     refresh();
     await settled();
-    expect(pick).toEqual(on("grok"));
-    expect(chief().modelSelection).toEqual(on("claude"));
+    expect(engines.size).toBe(0);
+    expect(pick).toEqual(on("xaiApi"));
+    expect(chief().modelSelection).toEqual(on("anthropicApi"));
     expect(store.applyModelDefault).not.toHaveBeenCalled();
   });
 
   it("never tests or moves a default the person saved, in Settings or as the New Bot defaults' model", async () => {
-    for (const keep of [() => { saved = on("claude"); }, () => { profile = on("claude"); }]) {
+    for (const keep of [() => { saved = on("anthropicApi"); }, () => { profile = on("anthropicApi"); }]) {
       saved = undefined;
       profile = undefined;
       keep();
       engines = new Map();
-      answers.claude = silent;
+      answers.anthropicApi = silent;
       tested = make();
       await boot();
       await wait(10 * MINUTE);
@@ -390,28 +394,28 @@ describe("testing an AI with one tiny message before a new bot's default trusts 
   });
 
   it("tests the person's own AIs in the order the default picks them, and never an organization's or the trial credit", async () => {
-    company = (instanceId) => instanceId === "company.claude";
-    instances = [ready("company.claude", "claudeAgent"), ready("grok", "grokAgent")];
+    company = (instanceId) => instanceId === "company.anthropic";
+    instances = [ready("company.anthropic", "anthropic"), ready("xaiApi", "grok")];
     await boot();
-    expect(sent("grok")).toBe(1);
-    expect(sent("company.claude")).toBe(0);
-    instances = [ready("company.claude", "claudeAgent")];
+    expect(sent("xaiApi")).toBe(1);
+    expect(sent("company.anthropic")).toBe(0);
+    instances = [ready("company.anthropic", "anthropic")];
     clock += 6 * MINUTE;
     refresh();
     await settled();
-    expect(sent("company.claude")).toBe(0);
+    expect(sent("company.anthropic")).toBe(0);
   });
 
   it("lets only the latest read of the engines settle anything", async () => {
     await boot();
     const older = tested.read();
-    instances = [ready("grok", "grokAgent")];
-    expect(refresh()).toEqual(on("grok"));
+    instances = [ready("xaiApi", "grok")];
+    expect(refresh()).toEqual(on("xaiApi"));
     await settled();
     const before = engines.size;
     // A slow read that started first finishes last, with an AI nobody has tested: it neither changes the pick nor tests it.
-    instances = [ready("claude-work", "claudeAgent"), ready("grok", "grokAgent"), ready("claude", "claudeAgent")];
-    expect(refresh(older)).toEqual(on("grok"));
+    instances = [ready("anthropic-work", "anthropic"), ready("xaiApi", "grok"), ready("anthropicApi", "anthropic")];
+    expect(refresh(older)).toEqual(on("xaiApi"));
     expect(tested.testing()).toBe(false);
     expect(engines.size).toBe(before);
   });
@@ -419,50 +423,50 @@ describe("testing an AI with one tiny message before a new bot's default trusts 
   it("counts a test that hangs past its time as a miss, and holds nothing open", async () => {
     vi.useFakeTimers();
     tested = make({ timeoutMs: 30_000, after: undefined });
-    answers.claude = () => new Promise<string>(() => {});
+    answers.anthropicApi = () => new Promise<string>(() => {});
     refresh();
-    expect(tested.state(instances[1]!)).toBe("testing");
+    expect(tested.state(provider("anthropicApi"))).toBe("testing");
     await vi.advanceTimersByTimeAsync(30_000);
-    expect(tested.state(instances[1]!)).toBe("failed");
+    expect(tested.state(provider("anthropicApi"))).toBe("failed");
     expect(tested.testing()).toBe(false);
     // Only the retry in two minutes is left, and it doesn't keep the process alive.
     expect(vi.getTimerCount()).toBe(1);
   });
 
   it("tests an AI whose status keeps changing at most once in five minutes in the background", async () => {
-    instances = [ready("claude", "claudeAgent")];
+    instances = [ready("anthropicApi", "anthropic")];
     await boot();
     for (const account of [undefined, { email: "person@example.test" }, undefined]) {
       clock += MINUTE;
-      instances = [ready("claude", "claudeAgent", account ? { account } : { authenticated: undefined })];
+      instances = [ready("anthropicApi", "anthropic", account ? { account } : { authenticated: undefined })];
       refresh();
       await settled();
     }
-    expect(sent("claude")).toBe(1);
+    expect(sent("anthropicApi")).toBe(1);
     clock += 5 * MINUTE;
     refresh();
     await settled();
-    expect(sent("claude")).toBe(2);
+    expect(sent("anthropicApi")).toBe(2);
   });
 
   it("checks one AI on request, sharing a test already under way, and live every other time", async () => {
-    const live = { ...engineFor("claude"), snapshot: async () => instances[1]!.snapshot };
+    const live = { ...engineFor("anthropicApi"), snapshot: async () => provider("anthropicApi").snapshot };
     refresh();
     await expect(tested.check(live)).resolves.toEqual({ ok: true });
-    expect(sent("claude")).toBe(1);
-    expect(tested.info(instances[1]!)).toEqual({ aiTest: "passed" });
-    expect(tested.info(instances[0]!)).toEqual({});
+    expect(sent("anthropicApi")).toBe(1);
+    expect(tested.info(provider("anthropicApi"))).toEqual({ aiTest: "passed" });
+    expect(tested.info(provider("xaiApi"))).toEqual({});
     // Check again: a sign-out the last status read hasn't seen yet still shows, with the reason.
-    answers.claude = async () => { throw new Error("Not logged in · Please run /login"); };
+    answers.anthropicApi = async () => { throw new Error("Not logged in · Please run /login"); };
     await expect(tested.check(live)).resolves.toMatchObject({ ok: false });
-    expect(tested.info(instances[1]!)).toEqual({ aiTest: "failed", aiTestError: "claude isn't signed in on this computer anymore. Sign in again, then check again." });
+    expect(tested.info(provider("anthropicApi"))).toEqual({ aiTest: "failed", aiTestError: "Anthropic isn't signed in on this computer anymore. Sign in again, then check again." });
   });
 
   it("sends nothing in the background where it is switched off, and still checks on request", async () => {
     tested = make({ background: false });
     await boot();
     expect(engines.size).toBe(0);
-    await expect(tested.check({ ...engineFor("grok"), snapshot: async () => instances[0]!.snapshot })).resolves.toEqual({ ok: true });
+    await expect(tested.check({ ...engineFor("xaiApi"), snapshot: async () => provider("xaiApi").snapshot })).resolves.toEqual({ ok: true });
   });
 
   it("lets the first bot follow while the app fills in its model, when nothing could run at first", async () => {
@@ -470,13 +474,13 @@ describe("testing an AI with one tiny message before a new bot's default trusts 
     await boot();
     expect(chief().modelSelection).toEqual({ instanceId: "", model: "" });
     // The app gives the waiting bot the default once an AI turns up (refreshUnsetModelSelections).
-    instances = [ready("claude", "claudeAgent"), ready("grok", "grokAgent")];
-    answers.claude = silent;
+    instances = [ready("anthropicApi", "anthropic"), ready("xaiApi", "grok")];
+    answers.anthropicApi = silent;
     refresh();
     store.choose("chief", pick);
     await settled();
     await wait(2 * MINUTE);
-    expect(chief().modelSelection.instanceId).toBe("grok");
+    expect(chief().modelSelection.instanceId).toBe("xaiApi");
   });
 
   it("writes its record where it was told, and starts clean from a broken one", async () => {
@@ -487,7 +491,7 @@ describe("testing an AI with one tiny message before a new bot's default trusts 
     tested = make();
     refresh();
     await settled();
-    expect(sent("claude")).toBe(1);
+    expect(sent("anthropicApi")).toBe(1);
   });
 });
 

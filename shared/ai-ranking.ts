@@ -1,7 +1,3 @@
-// Which of a person's AIs a new bot uses, and which one the welcome offers first: one ranking for the server's new-bot
-// default and the welcome. Grok first, then every other AI in the order the app lists them; an AI ready only through
-// free no-login models comes last, as a backup.
-
 export interface RankableAi {
   driverKind: string;
   snapshot?: { freeFallback?: boolean };
@@ -10,19 +6,13 @@ export interface RankableAi {
 /** What a test message through an AI showed: `untestable` is an AI with no one-off call to send one, trusted as before. */
 export type AiTestState = "testing" | "passed" | "failed" | "untestable";
 
-const TIERS: Readonly<Record<string, number>> = {
-  grok: 0,
-};
-const OTHER = 1;
-const FREE_FALLBACK = 2;
-
 /** Ready only through free models: no login, no subscription, no key of the person's own. */
 export function freeFallback(instance: RankableAi): boolean {
   return instance.snapshot?.freeFallback === true;
 }
 
 function tier(instance: RankableAi): number {
-  return freeFallback(instance) ? FREE_FALLBACK : TIERS[instance.driverKind] ?? OTHER;
+  return freeFallback(instance) ? 1 : 0;
 }
 
 /** A new list, best first; AIs of one kind keep the order they came in. */
