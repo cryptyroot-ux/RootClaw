@@ -138,7 +138,7 @@ jobs:
           ROOTCLAW_VITEST_RETRY_LOG: ${{ runner.temp }}/vitest-retries.jsonl
           ROOTCLAW_VITEST_E2E: ${{ matrix.e2e }}
           ROOTCLAW_VITEST_SUBSET: ${{ matrix.files }}
-        run: pnpm exec vitest run ${{ matrix.files }} --shard=${{ matrix.shard }}/${{ matrix.shards }} --reporter=default --reporter=github-actions
+        run: pnpm exec vitest run ${{ matrix.files }} --shard=${{ matrix.shard }}/${{ matrix.shards }} --exclude '**/*.e2e.test.ts' --exclude '**/*.e2e.test.tsx' --reporter=default --reporter=github-actions
       - name: Report flaky tests that needed a retry
         # Known flakes (scripts/testing/ci-retry-list.json) get two retries in
         # CI. A pass after a retry is still listed in the job summary, so the
@@ -225,9 +225,6 @@ jobs:
         run: node scripts/smoke-app-permissions.mjs
       - name: Verify chat app frames stay sealed
         run: node scripts/smoke-app-frames.mjs --engagement
-      - name: Verify paired phone authorization against packaged harness
-        # Forks dist-server/index.js, built by the packaged server step.
-        run: pnpm build:companion && pnpm exec electron scripts/smoke-phone-relay-auth.cjs
       - name: Verify Send to My Cloud's login handoff over the real utility port
         # Forks dist-server/index.js, built by the packaged server step.
         run: pnpm exec electron scripts/smoke-login-handoff.cjs

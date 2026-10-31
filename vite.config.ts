@@ -36,7 +36,7 @@ export default defineConfig({
     environment: "node",
     include,
     // ROOTCLAW_VITEST_E2E=host (CI's Windows and macOS shards) leaves the e2e files that run on Linux only.
-    exclude: [...configDefaults.exclude, "**/*.e2e.test.ts", "**/*.e2e.test.tsx", ...(hostE2eOnly() ? portableE2eFiles(root, include) : [])],
+    exclude: [...configDefaults.exclude, ...(hostE2eOnly() ? portableE2eFiles(root, include) : [])],
     setupFiles: ["server/testing/setup.ts"],
     // the suite spawns fake provider CLIs and a real harness server;
     // parallel files introduce load-sensitive flakes for no win
