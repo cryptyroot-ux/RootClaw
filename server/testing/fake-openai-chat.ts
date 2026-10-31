@@ -7,7 +7,8 @@
 // read from the environment given at start (FAKE_CHAT_* names; the old FAKE_CLAUDE_* names are accepted for the knobs
 // below), then from the JSON file at FAKE_CHAT_SCRIPT on every request, then from `set()`; later sources win.
 //   mode         happy (default) | slow (holds the reply until `gate` exists; a gate body of "fail" answers HTTP 500)
-//                | hang (never answers until the request is aborted) | error (HTTP 500 on every call)
+//                | hang (never answers until the request is aborted) | error (HTTP errorStatus, default 500,
+//                with errorMessage, on every streamed call)
 //   gate         file path for `slow` (FAKE_CHAT_GATE / FAKE_CLAUDE_SLOW_FINISH_GATE)
 //   replies      replies used in order, one per turn's final answer; past the end, the default reply
 //   toolCalls    [{name, input?, round?}] asked for in tool round `round` (default 0) of every turn, before its answer
@@ -35,6 +36,7 @@ export type FakeMode = "happy" | "slow" | "hang" | "error";
 export interface FakeScript {
   mode?: FakeMode; gate?: string; replies?: string[]; toolCalls?: FakeToolCall[]; sequence?: FakeToolCall[][]; routes?: FakeRoute[];
   models?: string[]; dump?: string; prompts?: string; cost?: number;
+  errorStatus?: number; errorMessage?: string;
   release?: string; finishGate?: string; setupFile?: string; setupDump?: string; textFile?: string; textDump?: string;
 }
 
@@ -140,7 +142,11 @@ export async function startFakeOpenAiChat(env: NodeJS.ProcessEnv = {}): Promise<
     if (newTurn && script.prompts && body.stream === true) appendFileSync(script.prompts, `${JSON.stringify(prompt)}\n`);
     const route = script.routes?.find((entry) => { try { return new RegExp(entry.match).test(prompt); } catch { return false; } });
     const mode = route?.mode ?? script.mode ?? "happy";
-    if (mode === "error") { res.writeHead(500, { "content-type": "application/json" }); res.end(JSON.stringify({ error: { message: "fixture provider error" } })); return; }
+    if (mode === "error") {
+      res.writeHead(script.errorStatus ?? 500, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: { message: script.errorMessage ?? "fixture provider error" } }));
+      return;
+    }
     let released: string | undefined;
     if (mode === "hang") {
       for (;;) {
