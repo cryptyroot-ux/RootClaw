@@ -2520,7 +2520,7 @@ describe("harness HTTP API", () => {
           }),
         }),
       }).parse(await readJsonFileWhenReady(fakeClaudeDump));
-      expect(dump.mcpConfig.mcpServers.agents.env.ROOTCLAW_COMMS_TOKEN).toMatch(/^[a-f0-9]{48}$/);
+      expect(dump.mcpConfig.mcpServers.agents).toBeDefined(); // native engine: agents tools mounted in-process
       expect((await api("POST", `/api/bots/${chief.id}/interrupt`)).status).toBe(200);
 
       const createOperator = async (fromThreadId: string, name: string, fromBotId = chief.id) => {
@@ -5991,7 +5991,8 @@ describe("harness HTTP API", () => {
       const dump = await readJsonFileWhenReady<{
         mcpConfig: { mcpServers: { agents: { env: { ROOTCLAW_COMMS_TOKEN: string } } } };
       }>(fakeClaudeDump);
-      const token = dump.mcpConfig.mcpServers.agents.env.ROOTCLAW_COMMS_TOKEN;
+      expect(dump.mcpConfig.mcpServers.agents).toBeDefined();
+      const token = await mintTestCapability(BASE, bot.id, bot.threadId);
       const requested = await fetch(`${BASE}/api/internal/request-credential`, {
         method: "POST",
         headers: {
@@ -10461,7 +10462,7 @@ describe("harness HTTP API", () => {
         pid: number;
         mcpConfig: { mcpServers: { agents: { env: { ROOTCLAW_COMMS_TOKEN: string } } } };
       }>(fakeClaudeDump);
-      expect(firstDump.mcpConfig.mcpServers.agents.env.ROOTCLAW_COMMS_TOKEN).toMatch(/^[a-f0-9]{48}$/);
+      expect(firstDump.mcpConfig.mcpServers.agents).toBeDefined(); // native engine: agents tools mounted in-process
       const token = await mintTestCapability(BASE, second.id, room.threadId);
 
       const requested = await fetch(`${BASE}/api/internal/request-credential`, {
@@ -10581,7 +10582,7 @@ describe("harness HTTP API", () => {
       const dump = await readJsonFileWhenReady<{
         mcpConfig: { mcpServers: { agents: { env: { ROOTCLAW_COMMS_TOKEN: string } } } };
       }>(fakeClaudeDump);
-      expect(dump.mcpConfig.mcpServers.agents.env.ROOTCLAW_COMMS_TOKEN).toMatch(/^[a-f0-9]{48}$/);
+      expect(dump.mcpConfig.mcpServers.agents).toBeDefined(); // native engine: agents tools mounted in-process
       expect((await api("POST", `/api/bots/${bot.id}/interrupt`)).status).toBe(200);
       await expect.poll(async () => {
         const state = (await api("GET", "/api/bots")).body;
@@ -11334,7 +11335,7 @@ describe("harness HTTP API", () => {
       const dump = await readJsonFileWhenReady<{
         mcpConfig: { mcpServers: { agents: { env: { ROOTCLAW_COMMS_TOKEN: string } } } };
       }>(fakeClaudeDump);
-      expect(dump.mcpConfig.mcpServers.agents.env.ROOTCLAW_COMMS_TOKEN).toMatch(/^[a-f0-9]{48}$/);
+      expect(dump.mcpConfig.mcpServers.agents).toBeDefined(); // native engine: agents tools mounted in-process
       const token = await mintTestCapability(BASE, bot.id, bot.threadId, { skillAuthoring: true });
       const internalHeaders = {
         authorization: `Bearer ${token}`,

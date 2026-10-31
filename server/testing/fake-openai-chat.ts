@@ -133,7 +133,7 @@ export async function startFakeOpenAiChat(env: NodeJS.ProcessEnv = {}): Promise<
       return;
     }
     if (script.dump) writeFileSync(script.dump, JSON.stringify({ model, prompt, systemPrompt: textOf(messages.find((message) => message.role === "system")?.content),
-      messages, tools: body.tools ?? [] }, null, 2));
+      messages, tools: body.tools ?? [], mcpConfig: { mcpServers: mountedServers(Array.isArray(body.tools) ? body.tools : []) } }, null, 2));
     if (newTurn && script.prompts && body.stream === true) appendFileSync(script.prompts, `${JSON.stringify(prompt)}\n`);
     const route = script.routes?.find((entry) => { try { return new RegExp(entry.match).test(prompt); } catch { return false; } });
     const mode = route?.mode ?? script.mode ?? "happy";
@@ -195,4 +195,23 @@ export async function startFakeOpenAiChat(env: NodeJS.ProcessEnv = {}): Promise<
     set: (script) => { live = { ...live, ...script }; },
     stop: () => new Promise<void>((resolve) => { server.closeAllConnections(); server.close(() => resolve()); }),
   };
+}
+
+/** The MCP servers a request's tools came from, keyed like the old CLI dump's mcpConfig.mcpServers (server_tool names;
+ * tools held back behind load_tools count too). Native workspace tools are not servers. */
+const NATIVE_TOOLS = /^(shell|read_file|write_file|edit_file|apply_patch|grep|glob|list_dir|git_\w+|web_fetch|web_search|ask_user|read_tool_output|update_plan|load_tools)$/;
+function mountedServers(tools: unknown[]): Record<string, { tools: string[] }> {
+  const servers: Record<string, { tools: string[] }> = {};
+  const names: string[] = [];
+  for (const tool of tools as { function?: { name?: string; description?: string } }[]) {
+    const name = tool.function?.name ?? "";
+    if (name === "load_tools") for (const line of (tool.function?.description ?? "").split("\n").slice(1)) names.push(line.split(":")[0]!.trim());
+    else names.push(name);
+  }
+  for (const name of names) {
+    if (!name || NATIVE_TOOLS.test(name) || !name.includes("_")) continue;
+    const server = name.slice(0, name.indexOf("_"));
+    (servers[server] ??= { tools: [] }).tools.push(name.slice(server.length + 1));
+  }
+  return servers;
 }
