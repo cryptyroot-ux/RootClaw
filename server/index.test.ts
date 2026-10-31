@@ -4,8 +4,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { createServer, request, type Server } from "node:http";
-import { connect, type Socket } from "node:net";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, truncateSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -346,8 +345,6 @@ const claudePrompts = (file = fakeClaudePrompts): string[] =>
  * system message and its volatile half (skills, availability, recall) in front of the person's words. */
 const modelSaw = (seen: { systemPrompt?: string; prompt?: string }): string => [seen.systemPrompt ?? "", seen.prompt ?? ""].join("\n\n");
 /** The MCP servers a dumped native request offered tools from: each tool is named `<server>_<tool>`. */
-const offeredServers = (seen: { tools?: Array<{ function?: { name?: string } }> }): string[] =>
-  [...new Set((seen.tools ?? []).map((tool) => tool.function?.name?.split("_")[0] ?? ""))];
 const COMPUTER_FREE_NOTE = "RootClaw computer update: the computer this conversation waited for is free again. Continue the task that parked waiting for it.";
 
 const readJsonFileWhenReady = async <T = unknown>(file: string, timeout = 5_000): Promise<T> => {
