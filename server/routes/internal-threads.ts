@@ -2,6 +2,7 @@ import { chiefTidies } from "../chief-of-staff.ts";
 import type { Coordinator } from "../coordinator.ts";
 import { reachablePeers } from "../peer-roster.ts";
 import type { BotRecord, Store, TaskRecord } from "../store.ts";
+import { stopBackgroundJobs } from "../drivers/workspace-tools.ts";
 import { PASS, type RouteHandler } from "./table.ts";
 
 type ThreadState = "running" | "waiting-on-you" | "queued" | "idle" | "closed";
@@ -98,6 +99,8 @@ export function createInternalThreadRoutes(deps: {
     });
     if (task.unread) store.patchTask(owner.id, threadId, { unread: false });
     store.setTaskClosedBy(owner.id, threadId, { botId: from.id, name: from.name, at: Date.now() });
+    // A closed thread's background commands (servers, watchers) end with it.
+    stopBackgroundJobs(threadId);
     return json(res, 200, { closed: true, threadId, title: task.title, botName: owner.name });
   };
 }

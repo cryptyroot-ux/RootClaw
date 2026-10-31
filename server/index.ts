@@ -204,6 +204,7 @@ import {
   newId,
 } from "./contracts.ts";
 import { RETRY_MAX_ATTEMPTS } from "./drivers/retry.ts";
+import { stopBackgroundJobs } from "./drivers/workspace-tools.ts";
 import { recoveryCapabilityError, startupBackups } from "./automatic-recovery.ts";
 import { createQuotaSwitchHost } from "./host/quota-switch.ts"; import { quotaSwitchEnabled } from "./quota-switch.ts";
 import { decodeGeneratedImage } from "./generated-image.ts";
@@ -9146,7 +9147,9 @@ async function deleteBotWithLifecycle(botId: string, revalidate: () => void = ()
           localVmIdles.delete(target.key);
           // Re-check the reviewed receipt at the final durable mutation, so a concurrent profile edit cannot be erased under a stale approval.
           revalidate();
+          const deletedThreads = store.tasks(bot.id).map((task) => task.threadId);
           store.deleteBot(bot.id, setupRequest);
+          for (const threadId of deletedThreads) stopBackgroundJobs(threadId); // a deleted bot leaves nothing running
           skillReview.dropBot(bot.id);
           memoryUpkeep.forgetBot(bot.id);
           calendarCalls!.removeBot(bot.id);

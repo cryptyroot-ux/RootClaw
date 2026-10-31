@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createWorkspacePaths, executeWorkspaceTool, globToRegExp, parseUnifiedDiff, shellEnvironment, workspaceToolReadOnly, workspaceToolView, type WorkspaceToolsConfig } from "./workspace-tools.ts";
+import { backgroundJobs, stopBackgroundJobs, createWorkspacePaths, executeWorkspaceTool, globToRegExp, parseUnifiedDiff, shellEnvironment, workspaceToolReadOnly, workspaceToolView, type WorkspaceToolsConfig } from "./workspace-tools.ts";
 
 let base: string;
 let root: string;
@@ -151,6 +151,33 @@ describe("shell", () => {
     const log = /Output goes to (\S+)/.exec(result.text)![1]!;
     await new Promise((r) => setTimeout(r, 300));
     expect(readFileSync(join(root, log), "utf8")).toContain("bg-out");
+  });
+  it("tracks background commands per conversation and stops their whole process groups", async () => {
+    const scope = `thread-${Date.now()}`;
+    config = { ...config, jobScope: scope };
+    // The shell starts a grandchild and exits; the grandchild stays in the group, so it is still tracked and stopped.
+    const started = await run("shell", { command: "sleep 60 & echo $! > child.pid; wait", background: true });
+    const pid = Number(/pid (\d+)/.exec(started.text)![1]);
+    await expect.poll(() => existsSync(join(root, "child.pid")) && readFileSync(join(root, "child.pid"), "utf8").trim() !== "").toBe(true);
+    const grandchild = Number(readFileSync(join(root, "child.pid"), "utf8"));
+    expect(backgroundJobs(scope)).toEqual([pid]);
+    expect(stopBackgroundJobs(scope, 100)).toBe(1);
+    const gone = (target: number) => { try { process.kill(target, 0); return false; } catch { return true; } };
+    await expect.poll(() => gone(grandchild), { timeout: 5_000 }).toBe(true);
+    await expect.poll(() => gone(pid), { timeout: 5_000 }).toBe(true);
+    expect(backgroundJobs(scope)).toEqual([]);
+  });
+  it("caps background commands per conversation", async () => {
+    const scope = `capped-${Date.now()}`;
+    config = { ...config, jobScope: scope };
+    try {
+      for (let index = 0; index < 8; index++) expect((await run("shell", { command: "sleep 60", background: true })).ok).toBe(true);
+      const refused = await run("shell", { command: "sleep 60", background: true });
+      expect(refused).toMatchObject({ ok: false });
+      expect(refused.text).toMatch(/Too many background commands/);
+    } finally {
+      stopBackgroundJobs(scope, 100);
+    }
   });
   it("keeps the server's secrets out of the environment", () => {
     const env = shellEnvironment(root, { PATH: "/bin", GH_TOKEN: "x", OPENAI_API_KEY: "y" });

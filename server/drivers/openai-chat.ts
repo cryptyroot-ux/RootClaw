@@ -34,7 +34,7 @@ import { refusesRequestSize, RequestTooLargeError, sizeChange, smallerResend } f
 import { compactTurnMessages, DEFAULT_KEEP_EXCHANGES, estimateRequestTokens, offloadToolOutput, READ_TOOL_OUTPUT_DEFINITION,
   READ_TOOL_OUTPUT_TOOL, readToolOutput, refusesContextLength, TokenCalibration, turnCompactBudget, type TurnContextSettings } from "./turn-context.ts";
 import { contextWindowFor } from "../context-budget.ts";
-import { executeWorkspaceTool, skillReadRoots, validateWorkspaceArgs, WORKSPACE_TOOL_DEFINITIONS, WORKSPACE_TOOLS_PROMPT, workspaceToolReadOnly, workspaceToolView, shellCommandScope, SHELL_TOOL, type WorkspaceToolsConfig } from "./workspace-tools.ts";
+import { executeWorkspaceTool, skillReadRoots, validateWorkspaceArgs, WORKSPACE_TOOL_DEFINITIONS, WORKSPACE_TOOLS_PROMPT, workspaceToolReadOnly, workspaceToolView, shellCommandScope, SHELL_TOOL, stopBackgroundJobs, type WorkspaceToolsConfig } from "./workspace-tools.ts";
 import { runToolBatch } from "./tool-batch.ts";
 import { requestTooLargeMessage } from "../../shared/request-too-large.ts";
 import { toolSchemaProfileFor } from "../tool-schema-profile.ts";
@@ -712,6 +712,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           readRoots: [...turn.workspaceTools?.readRoots ?? [], ...skillReadRoots(turn.system, turn.systemStable, turn.text)],
           writeRoots: turn.workspaceTools?.writeRoots,
           unrestricted: turn.workspaceTools?.unrestricted === true || process.env.ROOTCLAW_WORKSPACE_UNRESTRICTED === "1",
+          jobScope: turn.threadId,
         } : undefined;
         const workspaceNames = new Set<string>();
         if (workspace) {
@@ -1292,6 +1293,8 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         const turn = active.get(threadId);
         if (!turn || (turnId && turn.turnId !== turnId)) return;
         turn.abort.abort();
+        // A Stop ends what the turn left running in the background too, whole process groups.
+        stopBackgroundJobs(threadId);
         await turn.done;
       },
       respondToRequest: async (threadId, requestId, decision) =>

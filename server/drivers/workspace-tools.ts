@@ -22,6 +22,8 @@ export interface WorkspaceToolsConfig {
   web?: boolean;
   /** Tests only. */
   webOptions?: WebOptions;
+  /** Whose background processes these are (the thread id): stopBackgroundJobs(scope) ends them all. */
+  jobScope?: string;
 }
 
 export const SHELL_TOOL = "shell";
@@ -235,13 +237,58 @@ function killGroup(pid: number | undefined, signal: NodeJS.Signals) {
   try { process.kill(-pid, signal); } catch { try { process.kill(pid, signal); } catch {} }
 }
 
-async function runShell(args: Record<string, unknown>, paths: Paths, signal: AbortSignal): Promise<ChatToolResult> {
+// ---------- background jobs ----------
+// A background command runs in its own process group (detached), so stopping it stops everything it started. Each one
+// is kept under its scope until it exits; a stopped turn, a closed thread or the server going down ends the group.
+const MAX_JOBS_PER_SCOPE = 8;
+const MAX_JOBS = 32;
+const UNSCOPED = "";
+const jobs = new Map<string, Set<number>>();
+/** Whether any process of the group is left: the shell itself may exit while what it started runs on. */
+const groupAlive = (pid: number) => { try { process.kill(-pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === "EPERM"; } };
+const prune = () => {
+  for (const [scope, set] of jobs) {
+    for (const pid of set) if (!groupAlive(pid)) set.delete(pid);
+    if (!set.size) jobs.delete(scope);
+  }
+};
+const jobCount = () => [...jobs.values()].reduce((sum, set) => sum + set.size, 0);
+
+/** The process-group ids of a scope's running background commands. */
+export function backgroundJobs(scope: string): number[] {
+  prune();
+  return [...jobs.get(scope) ?? []];
+}
+
+/** Ends every background command of a scope, whole process groups: SIGTERM, then SIGKILL after `graceMs`. */
+export function stopBackgroundJobs(scope: string, graceMs = 2_000): number {
+  const pids = backgroundJobs(scope);
+  jobs.delete(scope);
+  for (const pid of pids) {
+    killGroup(pid, "SIGTERM");
+    setTimeout(() => killGroup(pid, "SIGKILL"), graceMs).unref();
+  }
+  return pids.length;
+}
+
+/** Ends every background command at once; for the server going down, when there is no time for a grace period. */
+export function stopAllBackgroundJobs(): void {
+  for (const set of jobs.values()) for (const pid of set) killGroup(pid, "SIGKILL");
+  jobs.clear();
+}
+process.once("exit", stopAllBackgroundJobs);
+
+async function runShell(args: Record<string, unknown>, paths: Paths, signal: AbortSignal, scope = UNSCOPED): Promise<ChatToolResult> {
   const command = String(args.command ?? "");
   if (!command.trim()) return fail("shell needs a non-empty command.");
   const cwd = paths.resolve(args.cwd, "read", paths.root);
   if (!existsSync(cwd) || !statSync(cwd).isDirectory()) return fail(`cwd ${paths.display(cwd)} is not a folder.`);
   const env = shellEnvironment(paths.root);
   if (args.background === true) {
+    prune();
+    if ((jobs.get(scope)?.size ?? 0) >= MAX_JOBS_PER_SCOPE || jobCount() >= MAX_JOBS) {
+      return fail(`Too many background commands are running (at most ${MAX_JOBS_PER_SCOPE} per conversation, ${MAX_JOBS} in all): stop one with kill first.`);
+    }
     const dir = join(paths.root, ".rootclaw", "bg");
     mkdirSync(dir, { recursive: true });
     const log = join(dir, `${Date.now()}-${randomBytes(3).toString("hex")}.log`);
@@ -249,6 +296,7 @@ async function runShell(args: Record<string, unknown>, paths: Paths, signal: Abo
     const child = spawn("/bin/bash", ["-c", command], { cwd, env, detached: true, stdio: ["ignore", out, out] });
     closeSync(out);
     child.unref();
+    if (child.pid) jobs.set(scope, (jobs.get(scope) ?? new Set()).add(child.pid));
     return ok(`Started in the background: pid ${child.pid}. Output goes to ${paths.display(log)} (read it with read_file); stop it with \`kill ${child.pid}\`.`);
   }
   const timeoutMs = Math.min(MAX_SHELL_MS, Math.max(1_000, Number(args.timeout_ms) || DEFAULT_SHELL_MS));
@@ -619,7 +667,7 @@ export async function executeWorkspaceTool(name: string, args: Record<string, un
     if (!existsSync(paths.root)) mkdirSync(paths.root, { recursive: true });
     if (GIT_TOOLS.has(name)) return await executeGitTool(name, args, (input, mode) => paths.resolve(input, mode), paths.root, signal);
     switch (name) {
-      case SHELL_TOOL: return await runShell(args, paths, signal);
+      case SHELL_TOOL: return await runShell(args, paths, signal, config.jobScope);
       case "read_file": return readFileTool(args, paths);
       case "write_file": return writeFileTool(args, paths);
       case "edit_file": return editFileTool(args, paths);
