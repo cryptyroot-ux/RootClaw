@@ -146,3 +146,14 @@ describe("classifyError — usage limits", () => {
     }
   });
 });
+
+describe("interruptibleDelay keeps the process alive", () => {
+  it("a process whose only work is a backoff wait runs it to the end instead of exiting", async () => {
+    const { execFileSync } = await import("node:child_process");
+    const url = new URL("./retry.ts", import.meta.url).pathname;
+    const out = execFileSync(process.execPath, ["--experimental-strip-types", "--no-warnings", "--input-type=module", "-e",
+      `const { interruptibleDelay } = await import(${JSON.stringify(url)}); interruptibleDelay(150).promise.then((r) => console.log("waited:" + r));`],
+    { encoding: "utf8", timeout: 10_000 });
+    expect(out.trim()).toBe("waited:elapsed");
+  });
+});

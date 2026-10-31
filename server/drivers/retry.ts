@@ -185,8 +185,9 @@ export function interruptibleDelay(ms: number, signal?: AbortSignal): BackoffWai
   let timer: ReturnType<typeof setTimeout> | null = null;
   let onCancel: (() => void) | null = null;
   const promise = new Promise<"elapsed" | "cancelled">((resolve) => {
+    // Not unref'd: a retry waiting out a 429 is the work in progress, and in a process with nothing else on the event
+    // loop (the CLI, an eval run) an unref'd timer let Node exit mid-turn, silently. Stopping the turn cancels it.
     timer = setTimeout(() => resolve("elapsed"), Math.max(1, ms));
-    timer.unref?.();
     if (signal?.aborted) return resolve("cancelled");
     onCancel = () => {
       clearTimeout(timer!);
