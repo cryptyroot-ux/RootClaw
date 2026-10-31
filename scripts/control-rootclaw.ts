@@ -164,6 +164,7 @@ export function verificationServerEnvironment(parentEnv: NodeJS.ProcessEnv, data
     // Without it the server also scans /opt/homebrew/bin, /usr/local/bin and the
     // login shell's PATH, finding a developer's own engine CLIs that CI lacks.
     ROOTCLAW_TEST_SEALED_PATH: "1",
+    ...(parentEnv.ROOTCLAW_SHELL_SANDBOX === "off" ? { ROOTCLAW_SHELL_SANDBOX: "off" } : {}),
   });
   // The fake engines' knobs are the one thing a caller may script into the child.
   for (const [key, value] of Object.entries(parentEnv)) {

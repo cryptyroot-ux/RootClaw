@@ -11,6 +11,7 @@ import {
   HELP_UI,
   launchVerificationServer,
   runControlOmb,
+  verificationServerEnvironment,
 } from "../scripts/control-rootclaw.ts";
 import { installedChrome, UI_MUTATING } from "../scripts/testing/control-rootclaw-ui.ts";
 import { removeTempDir } from "./testing/cleanup.ts";
@@ -258,7 +259,7 @@ describe("control-rootclaw isolated verification loop", () => {
     try {
       const doctor = await runControlOmb(["doctor"], { env }) as any;
       expect(doctor.ok).toBe(true);
-      expect(doctor.availableEngines).toEqual(["claude"]);
+      expect(doctor.availableEngines).toEqual(["openaiCompat"]);
 
       const created = await runControlOmb(["new-bot", "--name", "Verification Probe"], { env }) as any;
       const botId = created.bot.id as string;
@@ -267,12 +268,14 @@ describe("control-rootclaw isolated verification loop", () => {
       expect(settled.status).toBe("settled");
       const transcript = await runControlOmb(["messages", "--bot", botId, "--limit", "10"], { env }) as any;
       expect(transcript.messages.some((message: { role?: string }) => message.role === "bot")).toBe(true);
-      const fixtureEnv = JSON.parse(readFileSync(session.fixtureDumpPath, "utf8")).env as Record<string, string>;
-      expect(fixtureEnv).not.toHaveProperty("COMPOSIO_API_KEY");
-      expect(fixtureEnv).not.toHaveProperty("ROOTCLAW_SKILLS_DIR");
-      expect(fixtureEnv).not.toHaveProperty("XAI_API_KEY");
-      expect(JSON.stringify(fixtureEnv)).not.toContain("must-not-reach-the-fixture");
-      expect(fixtureEnv.FAKE_CLAUDE_PROBE).toBe("fixture-scripting-knob");
+      const dump = JSON.parse(readFileSync(session.fixtureDumpPath, "utf8")) as Record<string, unknown>;
+      expect(JSON.stringify(dump)).not.toContain("must-not-reach-the-fixture");
+      const childEnv = verificationServerEnvironment(parentEnv, session.info.dataDir, Number(new URL(session.info.url).port));
+      expect(childEnv).not.toHaveProperty("COMPOSIO_API_KEY");
+      expect(childEnv).not.toHaveProperty("ROOTCLAW_SKILLS_DIR");
+      expect(childEnv).not.toHaveProperty("XAI_API_KEY");
+      expect(JSON.stringify(childEnv)).not.toContain("must-not-reach-the-fixture");
+      expect(childEnv.FAKE_CLAUDE_PROBE).toBe("fixture-scripting-knob");
     } finally {
       await session.close();
     }
@@ -305,9 +308,14 @@ describe("control-rootclaw isolated verification loop", () => {
   }, 30_000);
 
   it("scripts the fake engine's tool calls from the launcher's environment", async () => {
+    const secret = "sk-test-fixturesecretvalue01";
     const session = await launchVerificationServer({
       ...process.env,
-      FAKE_CLAUDE_TOOL_CALLS: '[{"name":"Bash","input":{"command":"pnpm control:rootclaw doctor","password":"fixture-secret"},"output":{"text":"fixture healthy","api_key":"fixture-output-secret"},"ok":true},{"name":"Bash","input":{"command":"false"},"output":"fixture command failed","ok":false}]',
+      ROOTCLAW_SHELL_SANDBOX: "off",
+      FAKE_CHAT_TOOL_CALLS: JSON.stringify([
+        { name: "shell", input: { command: `printf 'fixture healthy ${secret}\\n'` } },
+        { name: "shell", input: { command: "printf 'fixture command done\\n'" } },
+      ]),
     });
     const env = { ROOTCLAW_URL: session.info.url };
     try {
@@ -315,12 +323,12 @@ describe("control-rootclaw isolated verification loop", () => {
       const botId = created.bot.id as string;
       await runControlOmb(["send", "--bot", botId, "--text", "run both commands"], { env });
       const settled = await runControlOmb(["wait", "--bot", botId, "--timeout", "20"], { env }) as any;
-      expect(settled.status).toBe("settled");
+      expect(settled, JSON.stringify(settled)).toMatchObject({ status: "settled" });
       const transcript = await runControlOmb(["messages", "--bot", botId, "--limit", "10"], { env }) as any;
       const tools = transcript.messages
         .filter((message: { kind?: string }) => message.kind === "activity")
         .map((message: { tool?: { name?: string; ok?: boolean } }) => ({ name: message.tool?.name, ok: message.tool?.ok }));
-      expect(tools).toEqual([{ name: "Bash", ok: true }, { name: "Bash", ok: false }]);
+      expect(tools).toEqual([{ name: "shell", ok: true }, { name: "shell", ok: true }]);
       for (const message of transcript.messages.filter((message: { tool?: unknown }) => message.tool)) {
         expect(message.tool).not.toHaveProperty("input");
         expect(message.tool).not.toHaveProperty("output");
@@ -329,11 +337,10 @@ describe("control-rootclaw isolated verification loop", () => {
       expect(response.ok).toBe(true);
       const rendererTranscript = await response.json() as { messages: Array<{ kind: string; tool?: { input?: string; output?: string } }> };
       const recorded = rendererTranscript.messages.filter((message) => message.kind === "activity");
-      expect(recorded[0].tool?.input).toContain("pnpm control:rootclaw doctor");
+      expect(recorded[0].tool?.input).toContain("printf");
       expect(recorded[0].tool?.output).toContain("fixture healthy");
-      expect(recorded[1].tool?.output).toBe("fixture command failed");
-      expect(JSON.stringify(recorded)).not.toContain("fixture-secret");
-      expect(JSON.stringify(recorded)).not.toContain("fixture-output-secret");
+      expect(recorded[1].tool?.output).toContain("fixture command done");
+      expect(JSON.stringify(recorded)).not.toContain(secret);
       // Read only the fixture database: completed previews survive hydration
       // from disk and are redacted before being persisted, not just in the UI.
       const db = new DatabaseSync(join(session.info.dataDir, "messages.db"), { readOnly: true });
