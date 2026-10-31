@@ -16,8 +16,11 @@ function seed(task: EngineTask, overlay: Record<string, string> = {}) {
 }
 
 describe("engine eval tasks", () => {
-  it("has five tasks with unique ids", () => {
-    expect(ENGINE_TASKS.map((task) => task.id)).toEqual(["fix-function", "bug-from-log", "rename-symbol", "create-file", "csv-transform"]);
+  it("has the five basic and ten hard tasks, with unique ids", () => {
+    expect(ENGINE_TASKS.filter((task) => (task.suite ?? "basic") === "basic").map((task) => task.id)).toEqual(["fix-function", "bug-from-log", "rename-symbol", "create-file", "csv-transform"]);
+    expect(ENGINE_TASKS.filter((task) => task.suite === "hard").map((task) => task.id)).toEqual(["multi-refactor", "failing-test", "apply-diff",
+      "long-context", "parallel-reads", "web-lookup", "skill-use", "async-bug", "cli-flag", "ini-to-json"]);
+    expect(new Set(ENGINE_TASKS.map((task) => task.id)).size).toBe(ENGINE_TASKS.length);
   });
 
   for (const task of ENGINE_TASKS) {

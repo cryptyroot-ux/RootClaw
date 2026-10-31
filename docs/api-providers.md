@@ -37,6 +37,22 @@ API-key mode always works. RootClaw adds only these official OAuth flows. It has
 - **OpenRouter (PKCE key exchange):** `POST /api/oauth/openrouter/start` returns `{url}`. Open that URL and approve. OpenRouter redirects to `/api/oauth/openrouter/callback?state=…&code=…`. RootClaw exchanges the code at `https://openrouter.ai/api/v1/auth/keys` and saves the resulting key as `openrouter.key`.
 - **Google / Gemini:** Register your own OAuth client in Google Cloud Console (type "Web application"). Add the redirect URI `http(s)://<your RootClaw host>/api/oauth/google/callback`. Then set `gemini.oauth.clientId` and `clientSecret` in config, or use `ROOTCLAW_GOOGLE_OAUTH_CLIENT_ID` and `ROOTCLAW_GOOGLE_OAUTH_CLIENT_SECRET`. Optionally set `gemini.oauth.projectId`, which is sent as `x-goog-user-project` for quota and billing. `POST /api/oauth/google/start` returns the consent URL, and the callback stores a refresh token. When no `gemini.key` is set, the Gemini driver mints access tokens from that refresh token. The start route returns 409 until a client id is configured.
 
+### OAuth audit (checked 2026-10-31)
+
+Only a provider's own public OAuth that grants **API access billed as API usage** qualifies. Subscription sign-ins are
+excluded on purpose, and the API key stays available for every provider.
+
+| Provider | Official third-party OAuth for API access? | RootClaw |
+|---|---|---|
+| OpenRouter | Yes: PKCE flow that mints a user API key | Implemented (above) |
+| Google Gemini | Yes: Google OAuth with your own Cloud client (generative-language scope) | Implemented (above) |
+| Anthropic | No public flow for third parties (Console sign-in is first-party; Claude Pro/Max OAuth is a subscription and banned in third-party tools since Feb 2026) | API key only |
+| OpenAI | No: "Sign in with ChatGPT" is identity-only (limited partner trial) or bills the user's ChatGPT plan (Codex-style); no Platform API OAuth | API key only |
+| xAI | No: only Grok subscription sign-in (SuperGrok / X Premium) | API key only |
+| Meta (Muse) | No: device sign-in mints a Muse Code subscription key under Meta's own client | API key only |
+| Ollama Cloud, Groq, Mistral, Cerebras, DeepSeek | No OAuth offered | API key only |
+| OpenAI-compatible (custom) | Depends on the server; RootClaw sends a bearer key | API key only |
+
 Pending sign-ins expire after 10 minutes, and each `state` can be used only once.
 
 ## Default models
