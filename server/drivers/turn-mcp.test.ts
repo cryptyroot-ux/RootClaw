@@ -4,7 +4,6 @@ import type { SendTurnInput } from "../contracts.ts";
 import { SPAWNED_PROXIES } from "../proxy-paths.ts";
 import { AGENTS_ENV_HEADER } from "../routes/own-mcp-http-path.ts";
 import { TOOL_LIMIT_ENV, TOOL_LIMIT_HEADER } from "../tool-count-limit.ts";
-import { TOOL_SCHEMA_PROFILE_ENV } from "../tool-schema-profile.ts";
 import { agentsToolList } from "./agents-mcp.ts";
 import { acpMcpServers, ownMcpOverHttp } from "./turn-mcp.ts";
 
