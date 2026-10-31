@@ -28,6 +28,9 @@ export async function postJson(label: string, url: string, headers: Record<strin
   return response;
 }
 
+/** The most one server-sent event (or an unfinished line) may hold. */
+const MAX_SSE_EVENT_CHARS = 4_000_000;
+
 export interface SseEvent { event: string; data: string }
 
 /** Parses a text/event-stream body into events; `data:` lines of one event are joined with "\n". */
@@ -38,9 +41,10 @@ export async function* sseEvents(response: Response, signal?: AbortSignal): Asyn
   let buffer = "";
   let event = "";
   let data: string[] = [];
+  let eventChars = 0;
   const flush = (): SseEvent | null => {
     const out = data.length ? { event: event || "message", data: data.join("\n") } : null;
-    event = ""; data = [];
+    event = ""; data = []; eventChars = 0;
     return out;
   };
   try {
@@ -48,18 +52,25 @@ export async function* sseEvents(response: Response, signal?: AbortSignal): Asyn
       signal?.throwIfAborted();
       const { done, value } = await reader.read();
       buffer += done ? decoder.decode() : decoder.decode(value, { stream: true });
-      if (buffer.length > 4_000_000) throw new ChatProtocolError("provider stream frame exceeded the size limit");
-      let newline: number;
-      while ((newline = buffer.indexOf("\n")) !== -1) {
-        const line = buffer.slice(0, newline).replace(/\r$/, "");
-        buffer = buffer.slice(newline + 1);
+      if (buffer.length > MAX_SSE_EVENT_CHARS) throw new ChatProtocolError("provider stream frame exceeded the size limit");
+      // Lines end in \r\n, \n or a lone \r (the SSE spec, audit N09); a \r last in the buffer waits for what follows.
+      for (;;) {
+        const match = /\r\n|\n|\r/.exec(buffer);
+        if (!match || (match[0] === "\r" && match.index === buffer.length - 1 && !done)) break;
+        const line = buffer.slice(0, match.index);
+        buffer = buffer.slice(match.index + match[0].length);
         if (line === "") { const out = flush(); if (out) yield out; continue; }
         if (line.startsWith(":")) continue;
         const colon = line.indexOf(":");
         const field = colon === -1 ? line : line.slice(0, colon);
         const value = colon === -1 ? "" : line.slice(colon + 1).replace(/^ /, "");
         if (field === "event") event = value;
-        else if (field === "data") data.push(value);
+        else if (field === "data") {
+          // The limit is on the whole event, not one line: many small data: lines add up (audit N10).
+          eventChars += value.length + 1;
+          if (eventChars > MAX_SSE_EVENT_CHARS) throw new ChatProtocolError("provider stream event exceeded the size limit");
+          data.push(value);
+        }
       }
       if (done) {
         if (buffer.trim()) { const line = buffer.trim(); if (line.startsWith("data:")) data.push(line.slice(5).trim()); }

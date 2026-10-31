@@ -1,7 +1,8 @@
 // Gemini API adapter: POST {base}/models/{model}:streamGenerateContent?alt=sse (or :generateContent), function calling.
 // Auth: an API key (x-goog-api-key) or an OAuth access token (Authorization: Bearer) from Google sign-in.
 import type { ChatToolCall } from "../openai-chat-protocol.ts";
-import { ChatProtocolError } from "../openai-chat-protocol.ts";
+import { ChatProtocolError, MalformedToolCallError } from "../openai-chat-protocol.ts";
+import { toolFailed } from "./anthropic.ts";
 import type { Completion, ModelAdapter, OpenAIChatMessage, Usage } from "../model-adapter.ts";
 import { tokenCount } from "../model-adapter.ts";
 import { dataUrl, parseJson, postJson, sseEvents, textOf } from "./http.ts";
@@ -52,7 +53,9 @@ export function geminiRequest(messages: OpenAIChatMessage[]): { systemInstructio
     }
     if (message.role === "tool") {
       const id = message.tool_call_id ?? "";
-      push("user", [{ functionResponse: { id, name: names.get(id) ?? "tool", response: { result: textOf(message.content) } } }]);
+      // A failed result goes as "error", the field Gemini reads as a failed call (audit N08); a success as "result".
+      const content = textOf(message.content);
+      push("user", [{ functionResponse: { id, name: names.get(id) ?? "tool", response: toolFailed(content) ? { error: content } : { result: content } } }]);
       continue;
     }
     const parts: Part[] = typeof message.content === "string" || message.content === null ? [{ text: message.content ?? "" }]
@@ -106,9 +109,11 @@ export function createGeminiAdapter(options: { url: string; apiKey?: string; acc
       if (request.stream) for await (const { data } of sseEvents(response, request.signal)) take(parseJson(data));
       else take(parseJson(await response.text()));
       request.signal?.throwIfAborted();
-      if (!state.finish && !state.calls.length && !state.text) throw new ChatProtocolError("Stream ended before completion");
+      // A stream that stops without a finishReason was cut off, however much text came first (audit N07).
+      if (!state.finish) throw new ChatProtocolError("Stream ended before completion");
+      if (state.calls.length && state.finish === "MAX_TOKENS") throw new MalformedToolCallError("provider tool calls were truncated (MAX_TOKENS)");
       if (state.usage) request.onUsage?.({ model: request.model, input: state.usage.input, output: state.usage.output });
-      const finishReason = state.calls.length ? "tool_calls" : state.finish === "STOP" || state.finish === null ? "stop" : state.finish === "MAX_TOKENS" ? "length" : state.finish.toLowerCase();
+      const finishReason = state.calls.length ? "tool_calls" : state.finish === "STOP" ? "stop" : state.finish === "MAX_TOKENS" ? "length" : state.finish.toLowerCase();
       return { text: state.text, reasoning: state.reasoning, usage: state.usage, toolCalls: state.calls, finishReason, protocolReasoning: "", protocolReasoningDetails: [] };
     },
   };

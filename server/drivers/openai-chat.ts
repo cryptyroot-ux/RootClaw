@@ -855,6 +855,9 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
               } });
               delta("", "assistant_text", true);
               delta("", "reasoning_text", true);
+              // Tool calls from a reply cut at the token limit may hold cut-short arguments that still parse: they
+              // never run; the round is asked for again like any malformed call (audit N06).
+              if (completion.toolCalls.length && completion.finishReason === "length") throw new MalformedToolCallError("provider tool calls were truncated (finish_reason length)");
               break;
             } catch (value) {
               const error = asError(value);

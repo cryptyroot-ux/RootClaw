@@ -1,7 +1,7 @@
 // OpenAI Responses API adapter: POST {base}/responses (stream), function tools, `store: false` (stateless: the loop
 // resends the whole conversation each round, as with Chat Completions).
 import type { ChatToolCall } from "../openai-chat-protocol.ts";
-import { ChatProtocolError } from "../openai-chat-protocol.ts";
+import { ChatProtocolError, MalformedToolCallError } from "../openai-chat-protocol.ts";
 import type { Completion, ModelAdapter, OpenAIChatMessage, Usage } from "../model-adapter.ts";
 import { tokenCount } from "../model-adapter.ts";
 import { HttpStatusError } from "../retry.ts";
@@ -85,6 +85,8 @@ export function createOpenAIResponsesAdapter(options: { url: string; apiKey: str
       if (!status) throw new ChatProtocolError("Stream ended before completion");
       if (usage) request.onUsage?.({ model: request.model, input: (usage as Usage).input, output: (usage as Usage).output });
       const toolCalls = [...calls.values()];
+      // An incomplete response (max_output_tokens…) may carry a cut-short function call: never run it (audit N06).
+      if (toolCalls.length && status !== "completed") throw new MalformedToolCallError(`provider tool calls were truncated (${status})`);
       return { text, reasoning, usage, toolCalls, finishReason: toolCalls.length ? "tool_calls" : status === "completed" ? "stop" : "length", protocolReasoning: "", protocolReasoningDetails: [] };
     },
   };

@@ -1,7 +1,7 @@
 // Anthropic Messages API adapter: POST {base}/messages, SSE streaming, tool_use / tool_result, prompt caching.
 // Caching marks the system prompt and the tool list with cache_control (generally available; no beta header).
 import type { ChatToolCall } from "../openai-chat-protocol.ts";
-import { ChatProtocolError } from "../openai-chat-protocol.ts";
+import { ChatProtocolError, MalformedToolCallError } from "../openai-chat-protocol.ts";
 import type { Completion, ModelAdapter, OpenAIChatMessage, Usage } from "../model-adapter.ts";
 import { tokenCount } from "../model-adapter.ts";
 import { dataUrl, parseJson, postJson, sseEvents, textOf } from "./http.ts";
@@ -84,6 +84,8 @@ export function createAnthropicAdapter(options: { url: string; apiKey: string; m
 }
 
 function finish(text: string, reasoning: string, usage: Usage | null, calls: ChatToolCall[], stop: string | null): Completion {
+  // A reply cut at max_tokens may hold tool input that is cut short yet still parses: it never runs (audit N06).
+  if (stop === "max_tokens" && calls.length) throw new MalformedToolCallError("provider tool calls were truncated (max_tokens)");
   return { text, reasoning, usage, toolCalls: calls, finishReason: stop === "end_turn" || stop === "stop_sequence" ? "stop" : stop === "tool_use" ? "tool_calls" : stop === "max_tokens" ? "length" : stop, protocolReasoning: "", protocolReasoningDetails: [] };
 }
 
