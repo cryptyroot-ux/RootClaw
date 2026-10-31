@@ -47,13 +47,11 @@ prompt or dialog: visibility is access control and the log is a record.
 ## Driving it
 
 ```sh
-pnpm exec vitest run server/bot-visibility.test.ts server/bot-visibility.e2e.test.ts \
   server/admin-activity.test.ts server/admin-activity.e2e.test.ts server/peer-roster.test.ts \
   server/cli.test.ts src/components/ActivitySection.test.ts \
   src/components/bot-settings/VisibilitySection.test.ts
 ```
 
-- `server/bot-visibility.e2e.test.ts` boots a server with an admin (Boss) and
   two members (Ada, Bob) on the sign-in list and the fake ACP engine. Boss
   restricts "Payroll" to Ada and "Board" to admins, puts Payroll in a room
   with an everyone-visible bot, gives it a routine, a webhook, an image in
@@ -111,7 +109,6 @@ A review of #1717 reproduced eight problems; each is now covered.
   `session_search`). Rooms whose bots have a narrower audience than the
   recalling bot are now left out (`roomFeeds` in `server/bot-visibility.ts`),
   and creating a room or adding a member with a different audience is
-  refused. `server/bot-visibility.e2e.test.ts` ("keeps a room fewer people
   can see out of a visible bot's recall…") checks Bob's real reply and the
   real `/api/internal/session-search`.
 - **Restricted at creation.** `POST /api/bots` and `POST /api/teams/import`

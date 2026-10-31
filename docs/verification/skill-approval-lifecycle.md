@@ -3,7 +3,6 @@
 Run the existing disposable Electron/server harness with its skill UI recipe:
 
 ```sh
-pnpm exec electron scripts/smoke-approval-modes.cjs --skill-ui-only
 ```
 
 The harness creates a temporary home, runs the real server with fake provider

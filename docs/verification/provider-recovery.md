@@ -63,7 +63,6 @@ persistently invalid account or provider configuration.
 ## Isolated server and real UI
 
 ```sh
-pnpm exec electron scripts/smoke-approval-modes.cjs --ui
 ```
 
 The real server runs under Electron's private utility-process channel with

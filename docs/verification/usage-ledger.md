@@ -35,7 +35,6 @@ CSV** stays one line per turn.
 ## Driving it
 
 ```sh
-pnpm exec vitest run --no-file-parallelism server/usage-ledger-api.test.ts server/usage-attribution.e2e.test.ts
 ```
 
 The test launches a fresh `control-rootclaw` fixture with the repository's fake
@@ -47,7 +46,6 @@ engine's `0.01` per turn, that `GET /api/usage.csv` returns three lines, and
 that a client-scoped device is refused. It prints the fixture's server log
 path as evidence and removes its temporary home.
 
-`server/usage-attribution.e2e.test.ts` boots the server against the fake Claude, ACP
 and Codex engines in a disposable home and reads the month file back: an ACP
 turn on `grok-4.7` is booked at xAI's list price and marked estimated while an
 unlisted model stays unpriced; a paired person's queued message, a live steer

@@ -17,7 +17,6 @@ densities, so the popover anchors to the attention button itself:
 `left-0` on the button's left edge and `top-full` plus `mt-1` directly
 below it.
 
-`pnpm exec electron scripts/smoke-approval-modes.cjs --sidebar-attention-only`
 runs the leg (`scripts/testing/sidebar-attention-ui-smoke.cjs`) against a
 disposable fake-engine server: one bot whose settled reply is never read is
 exactly the unread state the cross-bot attention list collects

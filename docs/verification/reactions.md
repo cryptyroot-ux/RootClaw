@@ -48,7 +48,6 @@ Evidence is written beside the fixture's server log as
 On a workspace several people share, each person reacts as their own key:
 
 ```sh
-pnpm exec vitest run server/bot-visibility.e2e.test.ts -t "reaction their own"
 ```
 
 Ada's and Bob's 👍 sit side by side with their names, Ada's 👎 replaces only

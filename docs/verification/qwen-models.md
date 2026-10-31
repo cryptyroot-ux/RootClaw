@@ -13,7 +13,6 @@ prompting; update Qwen Code using its official installer and refresh models.
 Offline verification (no provider login or paid calls):
 
 ```sh
-node --experimental-strip-types scripts/verify-qwen-models.ts
 ```
 
 The script owns a disposable server through the standard launcher, installs a

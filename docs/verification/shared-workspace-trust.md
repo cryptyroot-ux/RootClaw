@@ -62,7 +62,6 @@ description is in [self-hosting](../self-hosting.md#loopback-trust-owner-or-serv
 
 ```sh
 pnpm exec vitest run server/request-auth.test.ts server/decision-log.test.ts \
-  server/card-answerers.e2e.test.ts server/cli-service-trust.e2e.test.ts \
   src/components/PeopleSection.test.ts src/components/ServerPairingCard.test.ts src/lib/session.test.ts
 ```
 
@@ -78,7 +77,6 @@ pnpm exec vitest run server/request-auth.test.ts server/decision-log.test.ts \
   with nothing changed afterwards; then an admin portal session saves the
   retention window and reads `membership`. The other cases in that file keep
   `ROOTCLAW_LOOPBACK_TRUST=owner` because they set fixtures up over loopback.
-- `server/card-answerers.e2e.test.ts` boots a server with one admin and two
   members on the sign-in list and the fake ACP engine asking permission every
   turn: another member is refused on both respond routes, the requester
   approves, the thread's opener declines someone else's request, a thread a
@@ -113,7 +111,6 @@ pnpm exec vitest run server/request-auth.test.ts server/decision-log.test.ts \
 On a disposable worktree rebased onto RootClaw main `0bb37982`:
 `pnpm typecheck`, `pnpm lint`, `pnpm i18n:check`, `pnpm test:packaged-server`,
 and the files above plus `server/index.test.ts`,
-`server/chat-followups-restart.test.ts`, `server/steer-e2e.test.ts`,
 `server/routines-startup.test.ts`, `server/enterprise.test.ts`,
 `server/store.test.ts`, `server/cli-lifecycle.test.ts`,
 `server/cli-pair.test.ts`, `server/cli.test.ts` and
