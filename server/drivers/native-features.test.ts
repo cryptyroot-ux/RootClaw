@@ -244,7 +244,9 @@ describe("compaction far over budget", () => {
     // folding one small batch per pass left the request stuck over budget round after round.
     const f = await fixture([], files.map((k) => [{ name: "read_file", input: { path: `${k}.log` } }]));
     for (const k of files) writeFileSync(join(f.cwd, `${k}.log`), Array.from({ length: 120 }, (_, i) => `${k} line ${i} INFO worker handled request req-${i} ok`).join("\n"));
-    const budget = 6_000;
+    // Above the floor compaction cannot go under: the tool definitions (~3.3k estimated tokens) plus the one kept
+    // exchange (a ~2.3k-token log read).
+    const budget = 7_000;
     await f.start({ approvalMode: "full", turnContext: { compactAt: budget } } as Partial<SendTurnInput>);
     await f.completed();
     const all = f.fake.requests;

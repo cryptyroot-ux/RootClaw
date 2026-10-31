@@ -25,15 +25,30 @@ describe("tokenizer", () => {
     expect(countTokens("hello world", "gpt-4o")).toBe(2);
     expect(countTokens("say <|endoftext|> now", "gpt-4o")).toBeGreaterThan(3);
     const code = "export function add(a: number, b: number) { return a + b; }\n".repeat(50);
-    // Code is denser than the chars/3.5 guess: the exact count is what keeps compaction honest.
     expect(countTokens(code, "gpt-4o")).toBe(900);
-    expect(estimateTokensByChars(code)).toBe(858);
+    // The estimate weighs punctuation, so code no longer comes in under the BPE count.
+    expect(estimateTokensByChars(code)).toBeGreaterThanOrEqual(900);
+  });
+
+  it("does not under-count JSON or code for models without a known encoding (audit T01)", async () => {
+    await prepareTokenizer("gpt-4o");
+    const samples = {
+      english: "The quick brown fox jumps over the lazy dog. ".repeat(50),
+      json: JSON.stringify(Array.from({ length: 80 }, (_, i) => ({ id: i, ok: true, path: `/src/f${i}.ts` }))),
+      typescript: "export async function runToolBatch<Call, Result>(calls: readonly Call[]): Promise<void> { for (let i = 0; i < calls.length; i++) {} }\n".repeat(30),
+      toolResult: JSON.stringify({ ok: true, result: "  12\tconst x = { a: [1, 2, 3], b: \"c\" };\n".repeat(40) }),
+    };
+    for (const [kind, text] of Object.entries(samples)) {
+      const ratio = countTokens(text, "claude-sonnet-4") / countTokens(text, "gpt-4o");
+      expect(ratio, kind).toBeGreaterThanOrEqual(1);
+      expect(ratio, kind).toBeLessThan(1.5); // still an estimate, not a 2x overshoot
+    }
   });
 
   it("feeds request estimates", async () => {
     await prepareTokenizer("gpt-4o");
     const messages = [{ role: "user" as const, content: "hello world" }];
     expect(estimateRequestTokens(messages, [], "gpt-4o")).toBe(3 + 4 + 2);
-    expect(estimateRequestTokens(messages, [], "MyCombo")).toBe(3 + 4 + Math.ceil(11 / 3.5));
+    expect(estimateRequestTokens(messages, [], "MyCombo")).toBe(3 + 4 + estimateTokensByChars("hello world"));
   });
 });

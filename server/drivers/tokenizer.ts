@@ -13,7 +13,22 @@ const NO_SPECIAL = { allowedSpecial: new Set<string>(), disallowedSpecial: new S
 const loaded = new Map<EncodingName, Count>();
 const loading = new Map<EncodingName, Promise<Count | null>>();
 
-export const estimateTokensByChars = (text: string) => Math.ceil(text.length / FALLBACK_CHARS_PER_TOKEN);
+/** The fallback estimate. A flat chars/3.5 suits prose but came out ~27% under a BPE count on JSON (audit T01): short
+ * words, punctuation and digits are each a token of their own. So the text is split the way BPE pre-tokenizers split it
+ * (letter runs, digit runs, punctuation runs, whitespace) and each run is costed: a word ~4.5 chars a token (non-ASCII
+ * letters dearer), digits 3 a token, punctuation 2 a token, a single space free (it joins the next word). With a 15%
+ * margin, and never below chars/3.5, so prose keeps its old margin. */
+export function estimateTokensByChars(text: string): number {
+  let tokens = 0;
+  for (const [run] of text.matchAll(/\p{L}+|\p{N}+|\s+|[^\s\p{L}\p{N}]+/gu)) {
+    const first = run[0]!;
+    if (/\p{L}/u.test(first)) tokens += Math.max(1, run.length / 4.5) + (/[^\p{ASCII}]/u.test(run) ? run.length * 0.4 : 0);
+    else if (/\p{N}/u.test(first)) tokens += Math.ceil(run.length / 3);
+    else if (/\s/.test(first)) tokens += run === " " ? 0 : Math.max(1, run.length / 8);
+    else tokens += Math.ceil(run.length / 2);
+  }
+  return Math.ceil(Math.max(text.length / FALLBACK_CHARS_PER_TOKEN, tokens * 1.15));
+}
 
 /** The BPE encoding for a model id (provider prefixes like "openai/" are ignored); null when unknown. */
 export function encodingForModel(model: string | undefined): EncodingName | null {

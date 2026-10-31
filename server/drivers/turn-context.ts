@@ -306,6 +306,14 @@ export async function compactTurnMessages(
   }
   // A summary over its cap is cut like a long tool result: head, tail, and the finding lines in between.
   if (summaryCapBytes && Buffer.byteLength(summary) > summaryCapBytes) summary = elide(summary, summaryCapBytes);
+  // The plan reserved the cap as plain prose (bytes / 3.5 tokens); dense text (digits, punctuation) costs more tokens
+  // per byte, so cut it further until it fits that token reservation.
+  const capTokens = summaryCapBytes ? Math.ceil(summaryCapBytes / 3.5) : 0;
+  for (let i = 0; summaryCapBytes && i < 4; i++) {
+    const tokens = countTokens(summary, input.model);
+    if (tokens <= capTokens) break;
+    summary = elide(summary, Math.floor(Buffer.byteLength(summary) * capTokens / tokens * 0.95));
+  }
   const next = plan.build(summary);
   return { messages: next, folded: plan.folded.length, beforeTokens, afterTokens: estimateRequestTokens(next, input.tools, input.model), summarizer };
 }
