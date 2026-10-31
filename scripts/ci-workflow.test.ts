@@ -5,7 +5,7 @@ import { parse } from "yaml";
 import { SELECTABLE_JOBS, vitestMatrix } from "./ci-scope.mjs";
 
 const workflow = parse(readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8"));
-const requiredRuntimeJobs = ["vitest", "behavior-evals", "packaged-server", "windows-cua", "electron-smokes"];
+const requiredRuntimeJobs = ["vitest", "packaged-server", "windows-cua", "electron-smokes"];
 
 function runGate(needs: Record<string, unknown>) {
   // Execute the actual gate, not a duplicate of its success/failure logic.

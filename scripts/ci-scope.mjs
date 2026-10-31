@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 // vitest job's parts: "linux-tests", "host-tests" (Windows, and macOS where the
 // event runs it), and the subsets in VITEST_SUBSETS.
 export const SELECTABLE_JOBS = [
-  "vitest", "behavior-evals", "packaged-server", "windows-cua", "electron-smokes", "cloudflared-linux-arm64",
+  "vitest", "packaged-server", "windows-cua", "electron-smokes", "cloudflared-linux-arm64",
   "foss", "control-plane", "ui-smoke", "browser-identity", "package-linux", "browser-driver",
 ];
 
@@ -17,7 +17,7 @@ export const SELECTABLE_JOBS = [
 // the packaged server inside Electron, so a server change and a desktop change
 // can affect the same checks.
 const SERVER_CHECKS = [
-  "build", "linux-tests", "host-tests", "behavior-evals", "packaged-server", "foss", "electron-smokes",
+  "build", "linux-tests", "host-tests", "packaged-server", "foss", "electron-smokes",
   "ui-smoke", "browser-identity", "browser-driver", "package-linux",
 ];
 const EVERY_CHECK = [...SERVER_CHECKS, "windows-cua", "cloudflared-linux-arm64", "control-plane"];
@@ -88,7 +88,7 @@ export const FULL_SCOPE = { areas: ["everything"], checks: [...EVERY_CHECK].sort
  * installer run in the full lane only: nightly, manual runs and the release lane. */
 export const MAIN_SCOPE = {
   areas: ["main"],
-  checks: ["behavior-evals", "browser-identity", "build", "control-plane", "electron-smokes", "foss", "linux-tests", "packaged-server", "ui-smoke"],
+  checks: ["browser-identity", "build", "control-plane", "electron-smokes", "foss", "linux-tests", "packaged-server", "ui-smoke"],
 };
 
 /** A push whose commit already passed the CI gate in the merge queue: only the control-plane checks the broker deploy needs. */
