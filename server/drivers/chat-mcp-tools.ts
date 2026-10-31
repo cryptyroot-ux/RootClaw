@@ -368,7 +368,11 @@ export async function mountChatTools(integrations: SendTurnInput["integrations"]
       try {
         const originalNames = new Set<string>();
         for (const tool of tools) {
-          if (!object(tool) || typeof tool.name !== "string" || !tool.name.trim() || originalNames.has(tool.name)) throw new Error("MCP server advertised an invalid or duplicate tool name");
+          // A nameless tool or a repeat of a name drops alone (the first of a name stays), as an unusable schema does below.
+          if (!object(tool) || typeof tool.name !== "string" || !tool.name.trim() || originalNames.has(tool.name)) {
+            console.warn(`chat-mcp: ${server}: leaving out a tool with an invalid or repeated name${object(tool) && typeof tool.name === "string" ? ` ("${tool.name.slice(0, 80)}")` : ""}`);
+            continue;
+          }
           originalNames.add(tool.name);
           if (definitions.length + staged.length >= MCP_TOOL_COUNT) throw new Error("MCP tool count exceeds the 128-tool limit");
           // One tool the model cannot be offered drops alone: the rest of its server, and the turn, carry on.

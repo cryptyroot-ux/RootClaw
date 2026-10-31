@@ -270,7 +270,6 @@ describe("Chat MCP session", () => {
   it.each([
     ["repeated cursor", `reply(message, {tools:[],nextCursor:"same"});`],
     ["too many tools", `reply(message, {tools:Array.from({length:129},(_,i)=>({name:"tool"+i,inputSchema:schema}))});`],
-    ["duplicate tool", `reply(message, {tools:[{name:"same",inputSchema:schema},{name:"same",inputSchema:schema}]});`],
     ["invalid RPC", `process.stdout.write('{"result":1}\\n');`],
     ["oversized incomplete frame", `process.stdout.write("x".repeat(2*1024*1024+1));`],
     ["oversized complete frame", `process.stdout.write("x".repeat(2*1024*1024+1) + "\\n");`],
@@ -350,6 +349,18 @@ describe("Chat MCP session", () => {
     expect(alive(ready.read().pid)).toBe(true);
     await expect(session.execute("ready_write", { value: "still works" }, ready.controller.signal)).resolves.toMatchObject({ ok: true, text: "recorded:still works" });
     warn.mockRestore();
+  });
+
+  it("keeps the first of a repeated tool name and drops nameless tools, with the server still mounted", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const f = fixture(`if (message.method === "tools/list") { reply(message, {tools:[{name:"same",inputSchema:schema,description:"first"},{name:"same",inputSchema:schema,description:"second"},{inputSchema:schema},{name:"",inputSchema:schema}]}); continue; }`);
+      const session = await f.mount();
+      sessions.push(session);
+      expect(session.definitions.map((tool) => [tool.function.name, tool.function.description])).toEqual([["audit_same", "first"]]);
+      expect(session.skipped).toEqual([]);
+      expect(warn).toHaveBeenCalledTimes(3);
+    } finally { warn.mockRestore(); }
   });
 
   it("skips servers that refuse sign-in or fail to start, and mounts the rest", async () => {

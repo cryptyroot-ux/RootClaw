@@ -342,6 +342,12 @@ const delayedJsonBody = async (
 
 const claudePrompts = (file = fakeClaudePrompts): string[] =>
   existsSync(file) ? readFileSync(file, "utf8").split("\n").filter(Boolean) : [];
+/** Everything a turn's dumped request put before the model: the native engine sends the prompt's stable half as the
+ * system message and its volatile half (skills, availability, recall) in front of the person's words. */
+const modelSaw = (seen: { systemPrompt?: string; prompt?: string }): string => [seen.systemPrompt ?? "", seen.prompt ?? ""].join("\n\n");
+/** The MCP servers a dumped native request offered tools from: each tool is named `<server>_<tool>`. */
+const offeredServers = (seen: { tools?: Array<{ function?: { name?: string } }> }): string[] =>
+  [...new Set((seen.tools ?? []).map((tool) => tool.function?.name?.split("_")[0] ?? ""))];
 const COMPUTER_FREE_NOTE = "RootClaw computer update: the computer this conversation waited for is free again. Continue the task that parked waiting for it.";
 
 const readJsonFileWhenReady = async <T = unknown>(file: string, timeout = 5_000): Promise<T> => {
@@ -8714,7 +8720,7 @@ describe("harness HTTP API", () => {
         text: "/create-verification-skill for my notes app",
       })).status).toBe(202);
       const seen = await readJsonFileWhenReady<{ systemPrompt?: string }>(fakeClaudeDump, 15_000);
-      const system = seen.systemPrompt ?? "";
+      const system = modelSaw(seen);
       expect(system).toContain('<rootclaw-skill id="create-verification-skill"');
       expect(system).toContain("skill_manage");
     } finally {
@@ -8723,7 +8729,7 @@ describe("harness HTTP API", () => {
     }
   });
 
-  it("mounts the data-dashboards skill, with the folder that holds its template, when the person asks for a dashboard", async () => {
+  it("mounts the data-dashboards skill when the person asks for a dashboard", async () => {
     const bot = (await api("POST", "/api/bots", {})).body.bot;
     try {
       expect((await api("PATCH", `/api/bots/${bot.id}`, {
@@ -8734,10 +8740,9 @@ describe("harness HTTP API", () => {
         text: "Build me a sales dashboard from orders.csv",
       })).status).toBe(202);
       const seen = await readJsonFileWhenReady<{ systemPrompt?: string }>(fakeClaudeDump, 15_000);
-      const system = seen.systemPrompt ?? "";
-      const root = /<rootclaw-skill id="data-dashboards" version="[^"]+" root="([^"]+)">/.exec(system)?.[1];
-      expect(root).toBeTruthy();
-      expect(existsSync(join(root!, "dashboard.html"))).toBe(true);
+      const system = modelSaw(seen);
+      // The native engine has no workspace folder, so the skill comes without a root to read its template from.
+      expect(system).toMatch(/<rootclaw-skill id="data-dashboards" version="[^"]+">/);
       expect(system).toContain("publish_page");
       expect(system).not.toContain('<rootclaw-skill id="create-verification-skill"');
     } finally {
@@ -8756,7 +8761,7 @@ describe("harness HTTP API", () => {
       rmSync(fakeClaudeDump, { force: true });
       expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "hello" })).status).toBe(202);
       const seen = await readJsonFileWhenReady<{ systemPrompt?: string }>(fakeClaudeDump, 15_000);
-      const system: string = seen.systemPrompt ?? "";
+      const system: string = modelSaw(seen);
       expect(system.startsWith("You are Kiwi, a personal bot in RootClaw. Role: Tracker.")).toBe(true);
       const persona = "You are Kiwi, a personal bot in RootClaw. Role: Tracker.";
       const afterPersona = system.slice(persona.length);
@@ -8886,9 +8891,9 @@ describe("harness HTTP API", () => {
       for (const [text, instructed] of [["hello", false], ["open the Uber app on my Android", true], ["thanks", false]] as const) {
         rmSync(fakeClaudeDump, { force: true });
         expect((await api("POST", `/api/bots/${bot.id}/messages`, { text })).status).toBe(202);
-        const seen = await readJsonFileWhenReady<{ systemPrompt: string; mcpConfig: { mcpServers: Record<string, unknown> } }>(fakeClaudeDump, 15_000);
-        expect(seen.mcpConfig.mcpServers.phone, text).toBeDefined();
-        expect(seen.systemPrompt.includes('<rootclaw-skill id="phone-harness"'), text).toBe(instructed);
+        const seen = await readJsonFileWhenReady<{ systemPrompt?: string; prompt?: string; tools?: Array<{ function?: { name?: string } }> }>(fakeClaudeDump, 15_000);
+        expect(offeredServers(seen), text).toContain("phone");
+        expect(modelSaw(seen).includes('<rootclaw-skill id="phone-harness"'), text).toBe(instructed);
         expect((await api("POST", `/api/bots/${bot.id}/interrupt`)).status).toBe(200);
         await expect.poll(async () => (await api("GET", "/api/bots?messages=0")).body.bots
           .find((candidate: { id: string }) => candidate.id === bot.id)?.busy, { timeout: 5_000 }).toBe(false);
@@ -8909,7 +8914,7 @@ describe("harness HTTP API", () => {
       rmSync(fakeClaudeDump, { force: true });
       expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "/setup watch Discord too" })).status).toBe(202);
       const seen = await readJsonFileWhenReady<{ systemPrompt?: string; prompt?: { message?: { content?: unknown } } }>(fakeClaudeDump, 15_000);
-      const system: string = seen.systemPrompt ?? "";
+      const system: string = modelSaw(seen);
       const soulEnd = system.indexOf("--- END STANDING INSTRUCTIONS ---") + "--- END STANDING INSTRUCTIONS ---".length;
       expect(soulEnd).toBeGreaterThan(0);
       expect(system.slice(soulEnd).startsWith("\n\nThe user explicitly asked you to set yourself up")).toBe(true);
@@ -9152,7 +9157,7 @@ describe("harness HTTP API", () => {
       rmSync(fakeClaudeDump, { force: true });
       expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "hello" })).status).toBe(202);
       const seen = await readJsonFileWhenReady<{ systemPrompt?: string }>(fakeClaudeDump, 15_000);
-      const systemPrompt: string = seen.systemPrompt ?? "";
+      const systemPrompt: string = modelSaw(seen);
       expect(systemPrompt).toContain("Record text.");
       expect(systemPrompt).not.toContain("File text.");
       const bots = (await api("GET", "/api/bots")).body.bots;
@@ -9181,7 +9186,7 @@ describe("harness HTTP API", () => {
         text: "/create-verification-skill for my mobile app",
       })).status).toBe(202);
       let seen = await readJsonFileWhenReady<{ systemPrompt?: string }>(fakeClaudeDump);
-      let system = seen.systemPrompt ?? "";
+      let system = modelSaw(seen);
       expect(system).toContain('<rootclaw-skill id="create-verification-skill"');
       expect(system).toContain('<rootclaw-skill id="phone-harness"');
       expect((await api("POST", `/api/groups/${room.id}/interrupt`, {})).status).toBe(200);
@@ -9195,7 +9200,7 @@ describe("harness HTTP API", () => {
         text: "now give me a short status update",
       })).status).toBe(202);
       seen = await readJsonFileWhenReady<{ systemPrompt?: string }>(fakeClaudeDump);
-      system = seen.systemPrompt ?? "";
+      system = modelSaw(seen);
       expect(system).not.toContain('<rootclaw-skill id="create-verification-skill"');
       expect(system).toContain('<rootclaw-skill id="phone-harness"');
     } finally {
@@ -13054,7 +13059,7 @@ describe("bot memory API", () => {
         id: "persona",
         label: "Identity",
         text: "You are Kiwi, a personal bot in RootClaw. Role: Tracker. About: Files bugs.",
-        bytes: 78,
+        bytes: 75,
       });
       expect(before.body.sections.map((s: { id: string }) => s.id)).not.toContain("soul");
       expect(before.body.sections.map((s: { id: string }) => s.id)).toContain("memory");
