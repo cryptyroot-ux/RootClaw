@@ -73,6 +73,7 @@ describe("what a saved key's check said", () => {
 describe("what reaches PostHog", () => {
   it("is exactly provider, via and result for a key save, with app_version and surface registered beside it", async () => {
     vi.resetModules();
+    vi.stubEnv("VITE_POSTHOG_TOKEN", "phc_test");
     vi.doMock("posthog-js", () => ph.module());
     const analytics = await import("./analytics");
     const events = await import("./product-events");
@@ -89,6 +90,7 @@ describe("what reaches PostHog", () => {
 
   it("names a starting role only from the built-in list, and never a preset", async () => {
     vi.resetModules();
+    vi.stubEnv("VITE_POSTHOG_TOKEN", "phc_test");
     vi.doMock("posthog-js", () => ph.module());
     const analytics = await import("./analytics");
     const events = await import("./product-events");

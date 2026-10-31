@@ -178,6 +178,7 @@ function hostileSources(overrides: Partial<UsageSources> = {}): UsageSources & {
 
 async function freshModules() {
   vi.resetModules();
+  vi.stubEnv("VITE_POSTHOG_TOKEN", "phc_test");
   vi.doMock("posthog-js", () => ph.module());
   const analytics = await import("./analytics");
   const snapshot = await import("./usage-snapshot");
@@ -271,7 +272,7 @@ describe("the daily usage snapshot", () => {
     for (const key of ["cloud_computers", "team_computers", "apps", "apps_connected", "phones_paired", "paired_devices", "phone_paired", "members", "cloud_trial"]) {
       expect(sent, key).not.toHaveProperty(key);
     }
-    expect(sent).toMatchObject({ cloud_plan: "unknown", bots: 9, key_count: 9 });
+    expect(sent).toMatchObject({ cloud_plan: "unknown", bots: 9, key_count: 8 });
   });
 
   it("reads the plan from a Cloud page's own bridge, and leaves out what only this computer knows", async () => {

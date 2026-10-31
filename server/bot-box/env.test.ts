@@ -15,7 +15,7 @@ describe("the box's environment allow-list", () => {
     });
     expect(Object.keys(kept).sort()).toEqual([
       "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "ELECTRON_RUN_AS_NODE", "HOME", "HTTPS_PROXY", "LANG", "LC_ALL",
-      "NO_PROXY", "NPM_CONFIG_LOGLEVEL", "ROOTCLAW_COMMS_TOKEN", "ROOTCLAW_HOOK_URL", "OPENAI_API_KEY", "PATH", "TERM", "TZ",
+      "NO_PROXY", "NPM_CONFIG_LOGLEVEL", "OPENAI_API_KEY", "PATH", "ROOTCLAW_COMMS_TOKEN", "ROOTCLAW_HOOK_URL", "TERM", "TZ",
     ]);
   });
 
