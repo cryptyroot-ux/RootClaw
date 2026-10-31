@@ -2,7 +2,7 @@
 // list_dir. Paths are confined to the turn's workspace root (plus named extra roots) unless the turn allows more.
 // Engine-level and provider-agnostic: a driver only hands over the turn's folder.
 import { spawn, spawnSync } from "node:child_process";
-import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, constants as fsConstants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { randomBytes } from "node:crypto";
 import { homedir, tmpdir } from "node:os";
@@ -161,6 +161,10 @@ export function createWorkspacePaths(config: WorkspaceToolsConfig) {
       }
       return absolute;
     },
+    /** Whether a real (symlink-free) path sits inside an allowed root: the check on a file after it is opened (audit N01). */
+    containsReal(real: string, mode: "read" | "write"): boolean {
+      return config.unrestricted === true || realRoots(mode === "write").some((dir) => within(dir, real));
+    },
     display(path: string): string {
       const rel = relative(root, path);
       if (rel === "") return ".";
@@ -249,11 +253,14 @@ function killGroup(pid: number | undefined, signal: NodeJS.Signals) {
 // shell runs under the OS sandbox where there is one: bubblewrap on Linux, sandbox-exec on macOS. Under bubblewrap the
 // command sees only the system toolchain (read-only), the workspace and its writable folders, the read-only skill
 // folders, a private empty /tmp and an empty $HOME, and it has no network unless the call asked for it (`network`,
-// shown on the approval card). sandbox-exec confines writes only. Without a sandbox the command still runs, and its
-// result says so. ROOTCLAW_SHELL_SANDBOX=off turns it off.
+// shown on the approval card). sandbox-exec confines writes only. Without a sandbox the
+// shell refuses to run (fail closed); ROOTCLAW_SHELL_SANDBOX=off turns the sandbox off on purpose, and then each result
+// says the command ran unsandboxed.
 type Sandbox = "bwrap" | "sandbox-exec" | null;
 let sandboxKind: Sandbox | undefined;
 let warned = false;
+/** The operator's explicit opt-out of the OS sandbox. */
+export const shellSandboxDisabled = () => process.env.ROOTCLAW_SHELL_SANDBOX === "off";
 export function shellSandbox(): Sandbox {
   if (process.env.ROOTCLAW_SHELL_SANDBOX === "off") return null;
   if (sandboxKind !== undefined) return sandboxKind;
@@ -264,7 +271,7 @@ export function shellSandbox(): Sandbox {
     : process.platform === "darwin" && works("/usr/bin/sandbox-exec", ["-p", "(version 1)(allow default)", "/usr/bin/true"]) ? "sandbox-exec" : null;
   if (!sandboxKind && !warned) {
     warned = true;
-    console.warn("workspace-tools: no OS sandbox (bubblewrap on Linux, sandbox-exec on macOS) is available: shell commands are confined by folder only");
+    console.warn("workspace-tools: no OS sandbox (bubblewrap on Linux, sandbox-exec on macOS) is available: shell commands are refused (set ROOTCLAW_SHELL_SANDBOX=off to run them confined by folder only)");
   }
   return sandboxKind;
 }
@@ -291,8 +298,13 @@ export function sandboxedShell(command: string, cwd: string, writable: readonly 
   if (kind === "bwrap") {
     const env = options.env ?? process.env;
     const home = env.HOME || homedir();
+    // A toolchain folder is a specific folder, never "/" or a top-level folder, nor one that holds $HOME: a PATH entry
+    // such as "/" (or a link to it) would otherwise mount the whole filesystem read-only into the sandbox (audit N03).
     const toolchain = [dirname(process.execPath), ...(env.PATH ?? "").split(":"), ...TOOLCHAIN_ENV.map((key) => env[key] ?? "")]
-      .filter((dir) => dir && isAbsolute(dir) && existsSync(dir) && !SYSTEM_DIRS.some((system) => within(system, dir)));
+      .filter((dir) => dir && isAbsolute(dir) && existsSync(dir))
+      .map((dir) => realOrSelf(resolve(dir)))
+      .filter((dir) => dir.split(sep).filter(Boolean).length >= 2 && !within(dir, resolve(home)) && !within(dir, "/tmp")
+        && !SYSTEM_DIRS.some((system) => within(system, dir)));
     // Merged-/usr systems make /bin, /lib… symlinks into /usr: those stay symlinks inside the sandbox.
     const links = SYSTEM_DIRS.filter((dir) => { try { return lstatSync(dir).isSymbolicLink(); } catch { return false; } });
     const readOnly = [...new Set([...SYSTEM_DIRS.filter((dir) => existsSync(dir) && !links.includes(dir)), ...toolchain,
@@ -367,7 +379,12 @@ async function runShell(args: Record<string, unknown>, paths: Paths, signal: Abo
   if (!existsSync(cwd) || !statSync(cwd).isDirectory()) return fail(`cwd ${paths.display(cwd)} is not a folder.`);
   const env = shellEnvironment(paths.root);
   const kind = paths.unrestricted ? null : shellSandbox();
-  const unsandboxed = !paths.unrestricted && !kind ? "; no OS sandbox: writes outside the workspace are not blocked" : "";
+  // Fail closed (audit N02): a confined workspace runs no shell without an OS sandbox, unless the operator turned the
+  // sandbox off on purpose with ROOTCLAW_SHELL_SANDBOX=off.
+  if (!paths.unrestricted && !kind && !shellSandboxDisabled()) {
+    return fail("shell is unavailable: an OS sandbox is required (bubblewrap on Linux, sandbox-exec on macOS) and none could start. Install bubblewrap (bwrap), or set ROOTCLAW_SHELL_SANDBOX=off to run commands confined by folder only. Use read_file, grep, glob and the file tools meanwhile.");
+  }
+  const unsandboxed = !paths.unrestricted && !kind ? "; no OS sandbox (ROOTCLAW_SHELL_SANDBOX=off): writes outside the workspace are not blocked" : "";
   // A private temp folder per workspace (audit R07): bubblewrap mounts an empty /tmp; elsewhere TMPDIR points into the
   // workspace instead of the shared system temp folder.
   if (kind !== "bwrap") {
@@ -445,19 +462,43 @@ function isBinary(buffer: Buffer): boolean {
   return false;
 }
 
-function readText(path: string): string {
-  const stat = statSync(path);
-  if (stat.isDirectory()) throw new Error("is a folder; use list_dir");
-  if (stat.size > READ_MAX_BYTES) throw new Error(`is ${stat.size} bytes, over the ${READ_MAX_BYTES}-byte limit; use grep or shell (head/sed) instead`);
-  const buffer = readFileSync(path);
-  if (isBinary(buffer)) throw new Error("looks binary; inspect it with shell (file, xxd) instead");
-  return buffer.toString("utf8");
+/** The real location of an open file: /proc/self/fd on Linux; elsewhere the path's real target, accepted only when it
+ * is the very file the descriptor holds (same device and inode). */
+function fdRealPath(fd: number, path: string): string {
+  if (process.platform === "linux") { try { return readlinkSync(`/proc/self/fd/${fd}`); } catch {} }
+  const real = realpathSync(path);
+  const held = fstatSync(fd), named = statSync(real);
+  if (held.dev !== named.dev || held.ino !== named.ino) throw new WorkspacePathError(`${path} changed while it was being opened.`);
+  return real;
+}
+
+/** Opens a file and checks where the opened file really is (audit N01): a path checked by resolve() can be swapped for a
+ * symbolic link out of the workspace before it is opened, so the check that counts is on the descriptor. */
+function openConfined(path: string, flags: number, paths: Paths, mode: "read" | "write", createMode?: number): number {
+  const fd = openSync(path, flags, createMode);
+  try {
+    if (!paths.containsReal(fdRealPath(fd, path), mode)) throw new WorkspacePathError(`${paths.display(path)} leads outside the workspace through a symbolic link.`);
+    return fd;
+  } catch (error) { closeSync(fd); throw error; }
+}
+
+function readText(path: string, paths: Paths): string {
+  const fd = openConfined(path, fsConstants.O_RDONLY | (fsConstants.O_NONBLOCK ?? 0), paths, "read");
+  try {
+    const stat = fstatSync(fd);
+    if (stat.isDirectory()) throw new Error("is a folder; use list_dir");
+    if (!stat.isFile()) throw new Error("is not a regular file");
+    if (stat.size > READ_MAX_BYTES) throw new Error(`is ${stat.size} bytes, over the ${READ_MAX_BYTES}-byte limit; use grep or shell (head/sed) instead`);
+    const buffer = readFileSync(fd);
+    if (isBinary(buffer)) throw new Error("looks binary; inspect it with shell (file, xxd) instead");
+    return buffer.toString("utf8");
+  } finally { closeSync(fd); }
 }
 
 function readFileTool(args: Record<string, unknown>, paths: Paths): ChatToolResult {
   const path = paths.resolve(args.path, "read");
   if (!existsSync(path)) return fail(`${paths.display(path)} does not exist.`);
-  const text = readText(path);
+  const text = readText(path, paths);
   const lines = text.split("\n");
   if (lines.at(-1) === "") lines.pop();
   const offset = Math.max(1, Math.floor(Number(args.offset) || 1));
@@ -470,17 +511,27 @@ function readFileTool(args: Record<string, unknown>, paths: Paths): ChatToolResu
   return ok(lines.length ? `${header}\n${body}` : `${header}\n(empty file)`);
 }
 
-function writeAtomic(path: string, content: string) {
+/** Writes through a fresh temp file created with O_EXCL (which never follows a link) and checked on its descriptor, then
+ * renamed over the target (a rename replaces a link, never follows it). A symbolic link inside the workspace is written
+ * at its checked real target, never through the link itself (audit N01). */
+function writeAtomic(path: string, content: string, paths: Paths) {
   mkdirSync(dirname(path), { recursive: true });
+  let target = path;
   let mode: number | undefined;
   try {
-    const stat = lstatSync(path);
-    if (stat.isSymbolicLink()) { writeFileSync(path, content); return; }
+    let stat = lstatSync(path);
+    if (stat.isSymbolicLink()) {
+      target = realTarget(path);
+      if (!paths.containsReal(target, "write")) throw new WorkspacePathError(`${paths.display(path)} leads outside the workspace through a symbolic link.`);
+      stat = lstatSync(target);
+    }
     mode = stat.mode & 0o777;
-  } catch {}
-  const temp = `${path}.rootclaw-${randomBytes(4).toString("hex")}.tmp`;
-  writeFileSync(temp, content, mode !== undefined ? { mode } : undefined);
-  renameSync(temp, path);
+  } catch (error) { if (error instanceof WorkspacePathError) throw error; }
+  const temp = `${target}.rootclaw-${randomBytes(4).toString("hex")}.tmp`;
+  const fd = openConfined(temp, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | (fsConstants.O_NOFOLLOW ?? 0), paths, "write", mode ?? 0o666);
+  try { writeFileSync(fd, content); } catch (error) { closeSync(fd); try { unlinkSync(temp); } catch {} throw error; }
+  closeSync(fd);
+  try { renameSync(temp, target); } catch (error) { try { unlinkSync(temp); } catch {} throw error; }
 }
 
 function writeFileTool(args: Record<string, unknown>, paths: Paths): ChatToolResult {
@@ -488,7 +539,7 @@ function writeFileTool(args: Record<string, unknown>, paths: Paths): ChatToolRes
   if (existsSync(path) && statSync(path).isDirectory()) return fail(`${paths.display(path)} is a folder.`);
   const content = String(args.content ?? "");
   const existed = existsSync(path);
-  writeAtomic(path, content);
+  writeAtomic(path, content, paths);
   return ok(`${existed ? "Overwrote" : "Created"} ${paths.display(path)} (${Buffer.byteLength(content)} bytes, ${content.split("\n").length} lines).`);
 }
 
@@ -505,7 +556,7 @@ function editFileTool(args: Record<string, unknown>, paths: Paths): ChatToolResu
   const newString = String(args.new_string ?? "");
   if (!oldString) return fail("old_string must not be empty.");
   if (oldString === newString) return fail("old_string and new_string are the same; nothing to change.");
-  const text = readText(path);
+  const text = readText(path, paths);
   const count = countOf(text, oldString);
   if (count === 0) {
     const trimmed = oldString.trim();
@@ -514,7 +565,7 @@ function editFileTool(args: Record<string, unknown>, paths: Paths): ChatToolResu
   }
   if (count > 1 && args.replace_all !== true) return fail(`old_string occurs ${count} times in ${paths.display(path)}; add surrounding lines to make it unique, or set replace_all.`);
   const next = args.replace_all === true ? text.split(oldString).join(newString) : text.replace(oldString, () => newString);
-  writeAtomic(path, next);
+  writeAtomic(path, next, paths);
   return ok(`Edited ${paths.display(path)}: replaced ${args.replace_all === true ? count : 1} occurrence${count === 1 || args.replace_all !== true ? "" : "s"}.`);
 }
 
@@ -598,14 +649,14 @@ function applyPatchTool(args: Record<string, unknown>, paths: Paths): ChatToolRe
     const source = paths.resolve(file.oldPath, "write");
     if (!existsSync(source)) throw new Error(`${file.oldPath} does not exist`);
     if (file.newPath === null) { writes.push({ path: source, content: null, action: "deleted" }); continue; }
-    const next = applyHunks(readText(source), file.hunks, file.oldPath);
+    const next = applyHunks(readText(source, paths), file.hunks, file.oldPath);
     if (source !== path) writes.push({ path: source, content: null, action: "moved" });
     writes.push({ path, content: next, action: source !== path ? `moved from ${paths.display(source)}` : "updated" });
   }
   // Everything validated first: nothing is written unless every hunk applies.
   for (const write of writes) {
     if (write.content === null) unlinkSync(write.path);
-    else writeAtomic(write.path, write.content);
+    else writeAtomic(write.path, write.content, paths);
   }
   return ok(`Patch applied:\n${writes.filter((write) => write.action !== "moved").map((write) => `- ${paths.display(write.path)} (${write.action})`).join("\n")}`);
 }

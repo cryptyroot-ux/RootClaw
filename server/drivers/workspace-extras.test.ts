@@ -5,7 +5,11 @@ import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { executeWorkspaceTool, skillReadRoots, workspaceToolReadOnly, workspaceToolView, validateWorkspaceArgs, type WorkspaceToolsConfig } from "./workspace-tools.ts";
+import { shellSandbox } from "./workspace-tools.ts";
 import { htmlToText, privateAddress } from "./web-tools.ts";
+
+// CI runners may lack bubblewrap; the shell fails closed there (audit N02), so these tests opt out explicitly.
+if (shellSandbox() === null) process.env.ROOTCLAW_SHELL_SANDBOX = "off";
 
 let base: string;
 let root: string;

@@ -4,6 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { backgroundJobs, sandboxedShell, shellSandbox, stopBackgroundJobs, createWorkspacePaths, executeWorkspaceTool, globToRegExp, parseUnifiedDiff, shellEnvironment, workspaceToolReadOnly, workspaceToolView, type WorkspaceToolsConfig } from "./workspace-tools.ts";
 
+// CI runners may lack bubblewrap; the shell fails closed there (audit N02), so these tests opt out explicitly.
+if (shellSandbox() === null) process.env.ROOTCLAW_SHELL_SANDBOX = "off";
+
 let base: string;
 let root: string;
 let config: WorkspaceToolsConfig;
