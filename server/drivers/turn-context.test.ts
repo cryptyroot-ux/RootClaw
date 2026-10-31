@@ -53,6 +53,14 @@ test("calibration only scales up", () => {
   expect(c.apply(100)).toBe(150);
 });
 
+test("carries a model's calibration into its next turn, and keeps models apart", () => {
+  const model = `calibrated-${Date.now()}`;
+  new TokenCalibration(model).observe(100, 240);
+  expect(new TokenCalibration(model).apply(100)).toBe(240);
+  expect(new TokenCalibration(`${model}-other`).apply(100)).toBe(100);
+  expect(new TokenCalibration().apply(100)).toBe(100);
+});
+
 test("offload saves the full output and pages it back by handle", () => {
   const dir = tmp();
   const text = Array.from({ length: 3000 }, (_, i) => `line ${i}`).join("\n");

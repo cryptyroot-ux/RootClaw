@@ -68,12 +68,28 @@ export function turnCompactBudget(window: number, compactAt?: number): number {
   return Math.max(1, Math.floor(Math.min(at < 1 ? window * at : at, window * 0.9)));
 }
 
-/** Learns how far the cheap estimate is from the provider's own prompt_tokens, never scaling it below 1. */
+/** What each model's last provider count said about the estimate, kept across turns (and threads) so a turn's first
+ * request is already calibrated: for Claude, Gemini and other models without a local tokenizer the character estimate
+ * can be off by 2-3x on code or non-Latin text, and only the provider's prompt_tokens knows by how much. */
+const learnedRatios = new Map<string, number>();
+const MAX_LEARNED_MODELS = 64;
+
+/** Learns how far the cheap estimate is from the provider's own prompt_tokens, never scaling it below 1 (an
+ * over-count only compacts early; an under-count overflows the window). Costs nothing: no extra request. */
 export class TokenCalibration {
-  private ratio = 1;
+  private ratio: number;
+  private readonly model: string | undefined;
+  constructor(model?: string) {
+    this.model = model;
+    this.ratio = (model && learnedRatios.get(model)) || 1;
+  }
   observe(estimated: number, reported: number | undefined) {
     if (!reported || reported <= 0 || estimated <= 0) return;
     this.ratio = Math.min(3, Math.max(1, reported / estimated));
+    if (!this.model) return;
+    learnedRatios.delete(this.model);
+    learnedRatios.set(this.model, this.ratio);
+    if (learnedRatios.size > MAX_LEARNED_MODELS) learnedRatios.delete(learnedRatios.keys().next().value!);
   }
   apply(estimated: number) { return Math.ceil(estimated * this.ratio); }
 }
