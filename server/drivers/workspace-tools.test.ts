@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { backgroundJobs, stopBackgroundJobs, createWorkspacePaths, executeWorkspaceTool, globToRegExp, parseUnifiedDiff, shellEnvironment, workspaceToolReadOnly, workspaceToolView, type WorkspaceToolsConfig } from "./workspace-tools.ts";
+import { backgroundJobs, sandboxedShell, shellSandbox, stopBackgroundJobs, createWorkspacePaths, executeWorkspaceTool, globToRegExp, parseUnifiedDiff, shellEnvironment, workspaceToolReadOnly, workspaceToolView, type WorkspaceToolsConfig } from "./workspace-tools.ts";
 
 let base: string;
 let root: string;
@@ -178,6 +178,40 @@ describe("shell", () => {
     } finally {
       stopBackgroundJobs(scope, 100);
     }
+  });
+  it("keeps code-loading variables out of the shell's environment", () => {
+    const env = shellEnvironment(root, { PATH: "/bin", NODE_OPTIONS: "--require /tmp/x.js", LD_PRELOAD: "/tmp/x.so", DYLD_INSERT_LIBRARIES: "/tmp/x.dylib", BASH_ENV: "/tmp/x.sh" });
+    expect(Object.keys(env).filter((key) => /NODE_OPTIONS|LD_|DYLD_|BASH_ENV/.test(key))).toEqual([]);
+  });
+  it("refuses to run a command in a read-only folder", async () => {
+    const skills = mkdtempSync(join(tmpdir(), "ws-skills-"));
+    config = { ...config, readRoots: [skills] };
+    const result = await run("shell", { command: "touch planted", cwd: skills });
+    expect(result).toMatchObject({ ok: false });
+    expect(result.text).toMatch(/does not run in a read-only folder/);
+    expect(existsSync(join(skills, "planted"))).toBe(false);
+  });
+  it.runIf(shellSandbox() !== null)("confines a confined shell's writes to the workspace under the OS sandbox", async () => {
+    // Outside both the workspace and the temp folder (a test HOME may sit under the temp folder).
+    const outside = mkdtempSync(join(process.cwd(), ".ws-outside-"));
+    try {
+      const inside = await run("shell", { command: "echo hi > inside.txt && cat inside.txt" });
+      expect(inside).toMatchObject({ ok: true });
+      expect(inside.text).not.toContain("no OS sandbox");
+      const escaped = await run("shell", { command: `cd / && echo x > ${JSON.stringify(join(outside, "escaped.txt"))}` });
+      expect(escaped, escaped.text).toMatchObject({ ok: false });
+      expect(existsSync(join(outside, "escaped.txt"))).toBe(false);
+      // Full, unrestricted access is not sandboxed.
+      config = { ...config, unrestricted: true };
+      expect(await run("shell", { command: `echo x > ${JSON.stringify(join(outside, "allowed.txt"))}` })).toMatchObject({ ok: true });
+    } finally { rmSync(outside, { recursive: true, force: true }); }
+  });
+  it("runs plainly, and says so, without an OS sandbox", () => {
+    expect(sandboxedShell("ls", "/w", ["/w"], null)).toEqual({ file: "/bin/bash", args: ["-c", "ls"] });
+    const bwrap = sandboxedShell("ls", root, [root], "bwrap");
+    expect(bwrap.file).toBe("bwrap");
+    expect(bwrap.args).toEqual(expect.arrayContaining(["--ro-bind", "/", "--die-with-parent", "--", "/bin/bash", "-c", "ls"]));
+    expect(sandboxedShell("ls", root, [root], "sandbox-exec").args[1]).toContain("(deny file-write*)");
   });
   it("keeps the server's secrets out of the environment", () => {
     const env = shellEnvironment(root, { PATH: "/bin", GH_TOKEN: "x", OPENAI_API_KEY: "y" });

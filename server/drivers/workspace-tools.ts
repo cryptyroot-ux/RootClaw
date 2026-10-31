@@ -5,6 +5,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { randomBytes } from "node:crypto";
+import { tmpdir } from "node:os";
 import type { ChatToolCallView, ChatToolDefinition, ChatToolResult } from "./chat-mcp-tools.ts";
 import { executeGitTool, GIT_COMMIT_TOOL, GIT_READ_TOOLS, GIT_TOOL_DEFINITIONS } from "./workspace-git.ts";
 import { executeWebTool, WEB_TOOL_DEFINITIONS, type WebOptions } from "./web-tools.ts";
@@ -138,6 +139,8 @@ export function createWorkspacePaths(config: WorkspaceToolsConfig) {
   const realRoots = (write: boolean) => lexicalRoots(write).map(realOrSelf);
   return {
     root,
+    unrestricted: config.unrestricted === true,
+    writeRoots: (config.writeRoots ?? []).map((dir) => resolve(dir)),
     /** An absolute path the tool may touch, or a WorkspacePathError. Both the spelled path and its real target
      * (after symlinks) must sit inside an allowed root, so neither `..` nor a symlink leads out. */
     resolve(input: unknown, mode: "read" | "write", fallback?: string): string {
@@ -219,8 +222,9 @@ export function validateWorkspaceArgs(name: string, args: Record<string, unknown
 
 // ---------- shell ----------
 
-const SHELL_ENV_KEYS = ["PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TMPDIR", "TZ", "NODE_OPTIONS", "FNM_DIR", "NVM_DIR", "PNPM_HOME", "COREPACK_HOME", "GOPATH", "CARGO_HOME", "RUSTUP_HOME", "VIRTUAL_ENV", "JAVA_HOME"];
-/** The server's own secrets never reach a bot's shell: only ordinary environment passes through. */
+const SHELL_ENV_KEYS = ["PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TMPDIR", "TZ", "FNM_DIR", "NVM_DIR", "PNPM_HOME", "COREPACK_HOME", "GOPATH", "CARGO_HOME", "RUSTUP_HOME", "VIRTUAL_ENV", "JAVA_HOME"];
+/** The server's own secrets never reach a bot's shell: only ordinary environment passes through. Variables that load
+ * code into every process (NODE_OPTIONS, LD_PRELOAD, DYLD_*, BASH_ENV…) are never on that list. */
 export function shellEnvironment(root: string, source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const key of SHELL_ENV_KEYS) if (source[key] !== undefined) env[key] = source[key];
@@ -235,6 +239,45 @@ export function shellEnvironment(root: string, source: NodeJS.ProcessEnv = proce
 function killGroup(pid: number | undefined, signal: NodeJS.Signals) {
   if (!pid) return;
   try { process.kill(-pid, signal); } catch { try { process.kill(pid, signal); } catch {} }
+}
+
+// ---------- OS sandbox ----------
+// Confinement of paths covers the file tools; a shell command can name any path. When the workspace is confined, the
+// shell runs under the OS sandbox where there is one: bubblewrap on Linux, sandbox-exec on macOS. The whole filesystem
+// stays readable (toolchains, caches), but only the workspace, its extra writable folders and the temp folder take
+// writes. Without a sandbox the command still runs, and its result says so. ROOTCLAW_SHELL_SANDBOX=off turns it off.
+type Sandbox = "bwrap" | "sandbox-exec" | null;
+let sandboxKind: Sandbox | undefined;
+let warned = false;
+export function shellSandbox(): Sandbox {
+  if (process.env.ROOTCLAW_SHELL_SANDBOX === "off") return null;
+  if (sandboxKind !== undefined) return sandboxKind;
+  const works = (command: string, args: string[]) => {
+    try { return spawnSync(command, args, { stdio: "ignore", timeout: 5_000 }).status === 0; } catch { return false; }
+  };
+  sandboxKind = process.platform === "linux" && works("bwrap", ["--ro-bind", "/", "/", "--dev", "/dev", "--die-with-parent", "--", "/bin/true"]) ? "bwrap"
+    : process.platform === "darwin" && works("/usr/bin/sandbox-exec", ["-p", "(version 1)(allow default)", "/usr/bin/true"]) ? "sandbox-exec" : null;
+  if (!sandboxKind && !warned) {
+    warned = true;
+    console.warn("workspace-tools: no OS sandbox (bubblewrap on Linux, sandbox-exec on macOS) is available: shell commands are confined by folder only");
+  }
+  return sandboxKind;
+}
+
+const sbString = (path: string) => JSON.stringify(path);
+
+/** The program and arguments that run `command` in `cwd`, writing only to `writable`. */
+export function sandboxedShell(command: string, cwd: string, writable: readonly string[], kind: Sandbox): { file: string; args: string[] } {
+  const dirs = [...new Set(writable.filter((dir) => existsSync(dir)).map((dir) => realOrSelf(dir)))];
+  if (kind === "bwrap") {
+    return { file: "bwrap", args: ["--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc",
+      ...dirs.flatMap((dir) => ["--bind", dir, dir]), "--die-with-parent", "--chdir", realOrSelf(cwd), "--", "/bin/bash", "-c", command] };
+  }
+  if (kind === "sandbox-exec") {
+    const profile = `(version 1)(allow default)(deny file-write*)(allow file-write* ${dirs.map((dir) => `(subpath ${sbString(dir)})`).join(" ")} (literal "/dev/null") (literal "/dev/tty") (regex #"^/dev/fd/"))`;
+    return { file: "/usr/bin/sandbox-exec", args: ["-p", profile, "/bin/bash", "-c", command] };
+  }
+  return { file: "/bin/bash", args: ["-c", command] };
 }
 
 // ---------- background jobs ----------
@@ -281,9 +324,17 @@ process.once("exit", stopAllBackgroundJobs);
 async function runShell(args: Record<string, unknown>, paths: Paths, signal: AbortSignal, scope = UNSCOPED): Promise<ChatToolResult> {
   const command = String(args.command ?? "");
   if (!command.trim()) return fail("shell needs a non-empty command.");
-  const cwd = paths.resolve(args.cwd, "read", paths.root);
+  // A command may write wherever it runs, so it runs only in a folder the bot may write: never a read-only one.
+  let cwd: string;
+  try { cwd = paths.resolve(args.cwd, "write", paths.root); } catch (error) {
+    if (error instanceof WorkspacePathError && /read-only/.test(error.message)) return fail(`shell does not run in a read-only folder: ${error.message} Read it with read_file, grep or glob instead.`);
+    throw error;
+  }
   if (!existsSync(cwd) || !statSync(cwd).isDirectory()) return fail(`cwd ${paths.display(cwd)} is not a folder.`);
   const env = shellEnvironment(paths.root);
+  const kind = paths.unrestricted ? null : shellSandbox();
+  const unsandboxed = !paths.unrestricted && !kind ? "; no OS sandbox: writes outside the workspace are not blocked" : "";
+  const program = sandboxedShell(command, cwd, [paths.root, ...paths.writeRoots, tmpdir()], kind);
   if (args.background === true) {
     prune();
     if ((jobs.get(scope)?.size ?? 0) >= MAX_JOBS_PER_SCOPE || jobCount() >= MAX_JOBS) {
@@ -293,16 +344,16 @@ async function runShell(args: Record<string, unknown>, paths: Paths, signal: Abo
     mkdirSync(dir, { recursive: true });
     const log = join(dir, `${Date.now()}-${randomBytes(3).toString("hex")}.log`);
     const out = openSync(log, "a");
-    const child = spawn("/bin/bash", ["-c", command], { cwd, env, detached: true, stdio: ["ignore", out, out] });
+    const child = spawn(program.file, program.args, { cwd, env, detached: true, stdio: ["ignore", out, out] });
     closeSync(out);
     child.unref();
     if (child.pid) jobs.set(scope, (jobs.get(scope) ?? new Set()).add(child.pid));
-    return ok(`Started in the background: pid ${child.pid}. Output goes to ${paths.display(log)} (read it with read_file); stop it with \`kill ${child.pid}\`.`);
+    return ok(`Started in the background${unsandboxed ? ` (${unsandboxed.slice(2)})` : ""}: pid ${child.pid}. Output goes to ${paths.display(log)} (read it with read_file); stop it with \`kill ${child.pid}\`.`);
   }
   const timeoutMs = Math.min(MAX_SHELL_MS, Math.max(1_000, Number(args.timeout_ms) || DEFAULT_SHELL_MS));
   return new Promise<ChatToolResult>((done) => {
     const started = Date.now();
-    const child = spawn("/bin/bash", ["-c", command], { cwd, env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(program.file, program.args, { cwd, env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
     const chunks: Buffer[] = [];
     let captured = 0;
     let dropped = 0;
@@ -336,7 +387,7 @@ async function runShell(args: Record<string, unknown>, paths: Paths, signal: Abo
         : why === "timeout" ? `killed after the ${timeoutMs} ms timeout`
         : why === "aborted" ? "killed: the turn was stopped"
         : sig ? `killed by ${sig}` : `exit code ${code}`;
-      const text = `[${status}; ${seconds}s; cwd ${paths.display(cwd) || "."}]\n${output}`;
+      const text = `[${status}; ${seconds}s; cwd ${paths.display(cwd) || "."}${unsandboxed}]\n${output}`;
       done({ ok: !error && !why && code === 0, text });
     };
     child.once("error", (error) => finish(null, null, error));
