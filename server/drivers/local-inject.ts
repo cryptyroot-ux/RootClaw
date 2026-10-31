@@ -108,29 +108,6 @@ export function hostApiKey(host: LocalHost, env: Record<string, string | undefin
   return "local";
 }
 
-const CODEX_RESERVED_PROVIDERS = new Set(["openai", "ollama", "lmstudio"]);
-
-/** Codex local providers without rewriting config.toml: secrets ride the child env, argv names the key only. */
-export function codexLocalProviderArgs(
-  env: Record<string, string | undefined>,
-  modelId: string | null | undefined,
-): string[] {
-  const inject = decodeInjectId(modelId);
-  if (!inject || CODEX_RESERVED_PROVIDERS.has(inject.host)) return [];
-  const host = localHost(inject.host);
-  if (!host) return [];
-  const envKey = `ROOTCLAW_LOCAL_${host.id.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_API_KEY`;
-  env[envKey] = hostApiKey(host, env);
-  return [
-    "-c",
-    `model_providers.${host.id}.name=${JSON.stringify(host.label)}`,
-    "-c",
-    `model_providers.${host.id}.base_url=${JSON.stringify(host.baseUrl)}`,
-    "-c",
-    `model_providers.${host.id}.env_key=${JSON.stringify(envKey)}`,
-  ];
-}
-
 function firstUnslothToken(row: unknown): string | null {
   if (!row || typeof row !== "object") return null;
   const rec = row as { minted?: unknown; saved?: unknown; api_key?: unknown };
