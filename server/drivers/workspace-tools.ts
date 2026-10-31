@@ -5,7 +5,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { randomBytes } from "node:crypto";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import type { ChatToolCallView, ChatToolDefinition, ChatToolResult } from "./chat-mcp-tools.ts";
 import { executeGitTool, GIT_COMMIT_TOOL, GIT_READ_TOOLS, GIT_TOOL_DEFINITIONS } from "./workspace-git.ts";
 import { executeWebTool, WEB_TOOL_DEFINITIONS, type WebOptions } from "./web-tools.ts";
@@ -63,6 +63,7 @@ export const WORKSPACE_TOOL_DEFINITIONS: readonly ChatToolDefinition[] = [
     cwd: str("Folder to run in, relative to the workspace (default: the workspace root)."),
     timeout_ms: int("Kill the command after this many milliseconds (default 120000, max 1800000).", { minimum: 1000, maximum: MAX_SHELL_MS }),
     background: { type: "boolean", description: "Start without waiting; output goes to a log file in .rootclaw/bg/." },
+    network: { type: "boolean", description: "The command needs the network (npm install, git clone, curl…). Off by default: a sandboxed shell has no network unless this is set, and the approval card says so." },
   }, ["command"]),
   fn("read_file", "Read a text file from the workspace with line numbers (\"  12\\tcontent\"). Reads up to 2000 lines from offset; " +
     "page through big files with offset/limit. Line numbers are for reference only, never part of the file.", {
@@ -141,6 +142,7 @@ export function createWorkspacePaths(config: WorkspaceToolsConfig) {
     root,
     unrestricted: config.unrestricted === true,
     writeRoots: (config.writeRoots ?? []).map((dir) => resolve(dir)),
+    readRoots: (config.readRoots ?? []).map((dir) => resolve(dir)),
     /** An absolute path the tool may touch, or a WorkspacePathError. Both the spelled path and its real target
      * (after symlinks) must sit inside an allowed root, so neither `..` nor a symlink leads out. */
     resolve(input: unknown, mode: "read" | "write", fallback?: string): string {
@@ -184,8 +186,9 @@ export function workspaceToolView(name: string, args: Record<string, unknown>): 
   if (name === "web_search") return { title: name, input: args, ask: true, grant: JSON.stringify(["web", name]) };
   if (READ_ONLY.has(name)) return { title: name, input: args, ask: false };
   // A session grant covers the tool, never "every command": shell grants stay per exact command line.
-  const grant = name === SHELL_TOOL ? JSON.stringify(["workspace", name, String(args.command ?? "")]) : JSON.stringify(["workspace", name]);
-  return { title: name, input: args, ask: true, grant };
+  // A network shell is its own grant: "always allow" on a command without network never covers it with network.
+  const grant = name === SHELL_TOOL ? JSON.stringify(["workspace", name, String(args.command ?? ""), ...(args.network === true ? ["network"] : [])]) : JSON.stringify(["workspace", name]);
+  return { title: name === SHELL_TOOL && args.network === true ? `${name} (with network access)` : name, input: args, ask: true, grant };
 }
 
 /** The exact command and the real folder it would run in, the scope a saved-command allowlist rule matches.
@@ -243,9 +246,11 @@ function killGroup(pid: number | undefined, signal: NodeJS.Signals) {
 
 // ---------- OS sandbox ----------
 // Confinement of paths covers the file tools; a shell command can name any path. When the workspace is confined, the
-// shell runs under the OS sandbox where there is one: bubblewrap on Linux, sandbox-exec on macOS. The whole filesystem
-// stays readable (toolchains, caches), but only the workspace, its extra writable folders and the temp folder take
-// writes. Without a sandbox the command still runs, and its result says so. ROOTCLAW_SHELL_SANDBOX=off turns it off.
+// shell runs under the OS sandbox where there is one: bubblewrap on Linux, sandbox-exec on macOS. Under bubblewrap the
+// command sees only the system toolchain (read-only), the workspace and its writable folders, the read-only skill
+// folders, a private empty /tmp and an empty $HOME, and it has no network unless the call asked for it (`network`,
+// shown on the approval card). sandbox-exec confines writes only. Without a sandbox the command still runs, and its
+// result says so. ROOTCLAW_SHELL_SANDBOX=off turns it off.
 type Sandbox = "bwrap" | "sandbox-exec" | null;
 let sandboxKind: Sandbox | undefined;
 let warned = false;
@@ -255,7 +260,7 @@ export function shellSandbox(): Sandbox {
   const works = (command: string, args: string[]) => {
     try { return spawnSync(command, args, { stdio: "ignore", timeout: 5_000 }).status === 0; } catch { return false; }
   };
-  sandboxKind = process.platform === "linux" && works("bwrap", ["--ro-bind", "/", "/", "--dev", "/dev", "--die-with-parent", "--", "/bin/true"]) ? "bwrap"
+  sandboxKind = process.platform === "linux" && works("bwrap", ["--ro-bind", "/", "/", "--dev", "/dev", "--tmpfs", "/tmp", "--unshare-pid", "--unshare-net", "--die-with-parent", "--", "/bin/true"]) ? "bwrap"
     : process.platform === "darwin" && works("/usr/bin/sandbox-exec", ["-p", "(version 1)(allow default)", "/usr/bin/true"]) ? "sandbox-exec" : null;
   if (!sandboxKind && !warned) {
     warned = true;
@@ -266,12 +271,41 @@ export function shellSandbox(): Sandbox {
 
 const sbString = (path: string) => JSON.stringify(path);
 
+/** System folders a command needs to run tools, mounted read-only when present. */
+const SYSTEM_DIRS = ["/usr", "/bin", "/sbin", "/lib", "/lib32", "/lib64", "/libx32", "/etc", "/opt", "/nix", "/snap", "/run/systemd/resolve"];
+/** Toolchain folders that may live under $HOME (named by these variables or on PATH), mounted read-only over the empty
+ * $HOME so node, pnpm, cargo… still resolve. */
+const TOOLCHAIN_ENV = ["NVM_DIR", "FNM_DIR", "PNPM_HOME", "COREPACK_HOME", "CARGO_HOME", "RUSTUP_HOME", "GOPATH", "VIRTUAL_ENV", "JAVA_HOME"];
+
+export interface SandboxOptions {
+  /** Folders the command may read but not write (skills). */
+  readable?: readonly string[];
+  /** Let the command reach the network (bubblewrap only; it has none otherwise). */
+  network?: boolean;
+  env?: NodeJS.ProcessEnv;
+}
+
 /** The program and arguments that run `command` in `cwd`, writing only to `writable`. */
-export function sandboxedShell(command: string, cwd: string, writable: readonly string[], kind: Sandbox): { file: string; args: string[] } {
+export function sandboxedShell(command: string, cwd: string, writable: readonly string[], kind: Sandbox, options: SandboxOptions = {}): { file: string; args: string[] } {
   const dirs = [...new Set(writable.filter((dir) => existsSync(dir)).map((dir) => realOrSelf(dir)))];
   if (kind === "bwrap") {
-    return { file: "bwrap", args: ["--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc",
-      ...dirs.flatMap((dir) => ["--bind", dir, dir]), "--die-with-parent", "--chdir", realOrSelf(cwd), "--", "/bin/bash", "-c", command] };
+    const env = options.env ?? process.env;
+    const home = env.HOME || homedir();
+    const toolchain = [dirname(process.execPath), ...(env.PATH ?? "").split(":"), ...TOOLCHAIN_ENV.map((key) => env[key] ?? "")]
+      .filter((dir) => dir && isAbsolute(dir) && existsSync(dir) && !SYSTEM_DIRS.some((system) => within(system, dir)));
+    // Merged-/usr systems make /bin, /lib… symlinks into /usr: those stay symlinks inside the sandbox.
+    const links = SYSTEM_DIRS.filter((dir) => { try { return lstatSync(dir).isSymbolicLink(); } catch { return false; } });
+    const readOnly = [...new Set([...SYSTEM_DIRS.filter((dir) => existsSync(dir) && !links.includes(dir)), ...toolchain,
+      ...(options.readable ?? []).filter((dir) => existsSync(dir))].map((dir) => realOrSelf(dir)))];
+    // Shorter paths first, so a nested mount lands on top of the folder that holds it; writable binds last.
+    readOnly.sort((a, b) => a.length - b.length);
+    return { file: "bwrap", args: ["--unshare-pid", ...(options.network ? [] : ["--unshare-net"]), "--die-with-parent", "--new-session",
+      "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp", "--dir", "/var/tmp", "--tmpfs", home,
+      ...readOnly.flatMap((dir) => ["--ro-bind", dir, dir]),
+      ...links.flatMap((dir) => ["--symlink", readlinkSync(dir), dir]),
+      ...dirs.flatMap((dir) => ["--bind", dir, dir]),
+      "--setenv", "TMPDIR", "/tmp", "--setenv", "HOME", home,
+      "--chdir", realOrSelf(cwd), "--", "/bin/bash", "-c", command] };
   }
   if (kind === "sandbox-exec") {
     const profile = `(version 1)(allow default)(deny file-write*)(allow file-write* ${dirs.map((dir) => `(subpath ${sbString(dir)})`).join(" ")} (literal "/dev/null") (literal "/dev/tty") (regex #"^/dev/fd/"))`;
@@ -334,7 +368,15 @@ async function runShell(args: Record<string, unknown>, paths: Paths, signal: Abo
   const env = shellEnvironment(paths.root);
   const kind = paths.unrestricted ? null : shellSandbox();
   const unsandboxed = !paths.unrestricted && !kind ? "; no OS sandbox: writes outside the workspace are not blocked" : "";
-  const program = sandboxedShell(command, cwd, [paths.root, ...paths.writeRoots, tmpdir()], kind);
+  // A private temp folder per workspace (audit R07): bubblewrap mounts an empty /tmp; elsewhere TMPDIR points into the
+  // workspace instead of the shared system temp folder.
+  if (kind !== "bwrap") {
+    const privateTmp = join(paths.root, ".rootclaw", "tmp");
+    mkdirSync(privateTmp, { recursive: true });
+    env.TMPDIR = privateTmp;
+  }
+  const program = sandboxedShell(command, cwd, [paths.root, ...paths.writeRoots, ...(kind === "sandbox-exec" ? [tmpdir()] : [])], kind,
+    { readable: paths.readRoots, network: args.network === true, env: process.env });
   if (args.background === true) {
     prune();
     if ((jobs.get(scope)?.size ?? 0) >= MAX_JOBS_PER_SCOPE || jobCount() >= MAX_JOBS) {
@@ -753,7 +795,7 @@ export function skillReadRoots(...texts: Array<string | undefined>): string[] {
 
 export const WORKSPACE_TOOLS_PROMPT = "\n\nYou have workspace tools that run directly on this computer: shell, read_file, write_file, edit_file, apply_patch, grep, glob, list_dir, " +
   "git_status, git_diff, git_log, git_commit (never pushes), web_fetch and web_search. They are confined to your workspace folder (plus the skill folders named here, read-only); " +
-  "this is path confinement, not an OS sandbox: shell commands run as the server's user. " +
+  "where the OS allows, shell runs sandboxed: it sees only the workspace, the skill folders and the system tools, and has no network unless you set network=true on that call (installs, clones, downloads). " +
   "Relative paths resolve against your workspace folder. Read before you edit, prefer edit_file/apply_patch over rewriting whole files, " +
   "and check your work (run the tests or the command) before you report it done. Independent reads can go in one response as several tool calls; they run in parallel.";
 

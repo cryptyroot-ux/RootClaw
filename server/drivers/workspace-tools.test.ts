@@ -201,6 +201,16 @@ describe("shell", () => {
       const escaped = await run("shell", { command: `cd / && echo x > ${JSON.stringify(join(outside, "escaped.txt"))}` });
       expect(escaped, escaped.text).toMatchObject({ ok: false });
       expect(existsSync(join(outside, "escaped.txt"))).toBe(false);
+      // Nothing outside the workspace is readable, and there is no network unless the call asks for it.
+      writeFileSync(join(outside, "secret.txt"), "OUTSIDE-SECRET");
+      const read = await run("shell", { command: `cat ${JSON.stringify(join(outside, "secret.txt"))}; ls ~` });
+      expect(read.text).not.toContain("OUTSIDE-SECRET");
+      if (shellSandbox() === "bwrap") {
+        const net = await run("shell", { command: "cat /sys/class/net/*/operstate 2>/dev/null | sort -u; ls /sys/class/net" });
+        expect(net.text.trim().split(/\s+/)).not.toContain("eth0");
+        const view = workspaceToolView("shell", { command: "npm i", network: true });
+        expect(view?.title).toMatch(/network/);
+      }
       // Full, unrestricted access is not sandboxed.
       config = { ...config, unrestricted: true };
       expect(await run("shell", { command: `echo x > ${JSON.stringify(join(outside, "allowed.txt"))}` })).toMatchObject({ ok: true });
@@ -210,7 +220,10 @@ describe("shell", () => {
     expect(sandboxedShell("ls", "/w", ["/w"], null)).toEqual({ file: "/bin/bash", args: ["-c", "ls"] });
     const bwrap = sandboxedShell("ls", root, [root], "bwrap");
     expect(bwrap.file).toBe("bwrap");
-    expect(bwrap.args).toEqual(expect.arrayContaining(["--ro-bind", "/", "--die-with-parent", "--", "/bin/bash", "-c", "ls"]));
+    expect(bwrap.args).toEqual(expect.arrayContaining(["--unshare-net", "--die-with-parent", "--tmpfs", "/tmp", "--", "/bin/bash", "-c", "ls"]));
+    // Never the whole filesystem (audit R06b); the network only when the call asks for it (R06c).
+    expect(bwrap.args.join(" ")).not.toContain("--ro-bind / /");
+    expect(sandboxedShell("ls", root, [root], "bwrap", { network: true }).args).not.toContain("--unshare-net");
     expect(sandboxedShell("ls", root, [root], "sandbox-exec").args[1]).toContain("(deny file-write*)");
   });
   it("keeps the server's secrets out of the environment", () => {
