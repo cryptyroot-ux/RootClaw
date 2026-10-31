@@ -48,7 +48,6 @@ path. The scripts configure their own loopback synthetic provider:
 node --experimental-strip-types scripts/verify-pi-tool-scope.ts /absolute/path/to/pi
 node --experimental-strip-types scripts/verify-tool-scope.ts /absolute/path/to/grok
 pnpm build:server
-node --experimental-strip-types scripts/verify-pi-tool-scope.ts /absolute/path/to/pi dist-server/drivers/pi-mcp-extension.ts
 ```
 
 Verified contracts: **Pi 0.99.1**, **Grok 1.0.41**. Pi checks late package tool

@@ -127,7 +127,7 @@ async function runScenario(s: Scenario) {
       plan = { turn, round: 0 };
       const before = events.length;
       await instance.adapter.sendTurn({ threadId: `ctx-${s.advertisedWindow}`, text: `Run ${s.roundsPerTurn} dump steps for batch ${turn}, then list every FACT you saw.`,
-        approvalMode: "full", integrations: { custom: { fx: { command: tools, args: [] } } }, turnContext: { offloadDir, offloadBytes: 4_000 } });
+        approvalMode: "full", integrations: { custom: { fx: { command: tools, args: [], env: {} } } }, turnContext: { offloadDir, offloadBytes: 4_000 } });
       const started = Date.now();
       while (!events.slice(before).some((e) => e.type === "turn.completed")) {
         if (Date.now() - started > 120_000) throw new Error("turn timed out");

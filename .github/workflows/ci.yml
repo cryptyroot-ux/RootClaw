@@ -339,6 +339,8 @@ jobs:
     # tests, and a boot that reports "oss" even with a key set.
     name: open-source edition builds without enterprise/
     runs-on: ubuntu-latest
+    env:
+      NODE_OPTIONS: --max-old-space-size=6144
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -472,6 +474,8 @@ jobs:
     if: contains(needs.static.outputs.jobs, '"package-linux"')
     name: package + smoke (Ubuntu 24.04 x64)
     runs-on: ubuntu-24.04
+    env:
+      NODE_OPTIONS: --max-old-space-size=6144
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
