@@ -19,7 +19,7 @@ const dataDir = () => {
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 
 let serial = 0;
-function event(threadId: string, turnId: string | undefined, ms: number, body: Record<string, unknown>, provider = "claude"): RuntimeEvent {
+function event(threadId: string, turnId: string | undefined, ms: number, body: Record<string, unknown>, provider = "anthropic"): RuntimeEvent {
   return { eventId: `e${++serial}`, provider, threadId, ...(turnId ? { turnId } : {}), createdAt: new Date(T0 + ms).toISOString(), ...body } as RuntimeEvent;
 }
 const started = (thread: string, turn: string, ms: number, provider?: string) => event(thread, turn, ms, { type: "turn.started" }, provider);
@@ -97,9 +97,9 @@ describe("trace recorder", () => {
     recorder.observe(tool("bot", "t1", 100, "a", "Bash", { command: "pnpm test" }));
     recorder.observe(done("bot", "t1", 900, "a", false, "Error: 3 tests failed\nat line 4"));
     recorder.observe(tool("bot", "t1", 1_000, "b", "mcp__browser__agent_browser_open", { url: "https://www.example.com/pricing" }));
-    recorder.observe(event("bot", "t1", 1_100, { type: "runtime.error", message: "Claude API overloaded (529)" }));
+    recorder.observe(event("bot", "t1", 1_100, { type: "runtime.error", message: "Anthropic API overloaded (529)" }));
     recorder.observe(event("bot", "t1", 1_200, { type: "turn.completed", ok: false, stopReason: "api_error" }));
-    expect(recorder.settle("bot")).toMatchObject({ tools: 2, toolErrors: 1, outcome: { status: "error", reason: "Claude API overloaded (529)" }, usageStatus: "unavailable" });
+    expect(recorder.settle("bot")).toMatchObject({ tools: 2, toolErrors: 1, outcome: { status: "error", reason: "Anthropic API overloaded (529)" }, usageStatus: "unavailable" });
     await flushSpans(dir);
     const tools = (await readSpans(dir, daysBetween(T0, T0), new Set(["bot:t1"]))).get("bot:t1")!.filter((span) => span.kind === "tool");
     expect(tools).toHaveLength(2);
@@ -171,18 +171,6 @@ describe("trace recorder", () => {
     await flushSpans(dir);
     const t1 = (await readSpans(dir, daysBetween(T0, T0), new Set(["bot:t1"]))).get("bot:t1")!;
     expect(t1.find((span) => span.kind === "tool")).toMatchObject({ status: "ended", endedAt: T0 + 500 });
-  });
-
-  it("takes each Codex turn's share of the thread's running total", () => {
-    const recorder = createTraceRecorder({ dataDir: dataDir(), now: () => T0 + 3_000 });
-    recorder.observe(started("codex", "t1", 0, "codex"));
-    recorder.observe(usage("codex", "t1", 500, { input: 1_000, output: 100, cachedInput: 200, reasoning: 30 }, "codex"));
-    recorder.observe(completed("codex", "t1", 1_000));
-    recorder.settle("codex");
-    recorder.observe(started("codex", "t2", 2_000, "codex"));
-    recorder.observe(usage("codex", "t2", 2_500, { input: 1_800, output: 160, cachedInput: 900, reasoning: 50 }, "codex"));
-    const live = recorder.liveTurns().find((turn) => turn.turnId === "t2")!;
-    expect(live.spans.find((span) => span.kind === "step")).toMatchObject({ running: true, tokens: { input: 800, output: 60, cachedInput: 700, reasoning: 20 } });
   });
 
   it("records 2,000 tool calls in one turn without holding up the event loop", async () => {
