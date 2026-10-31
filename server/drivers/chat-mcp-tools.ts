@@ -380,7 +380,7 @@ export async function mountChatTools(integrations: SendTurnInput["integrations"]
             : Buffer.byteLength(JSON.stringify(tool.inputSchema)) > SCHEMA_BYTES ? "has a schema over the 64KB limit" : null;
           let schema: ReturnType<typeof compileToolSchema> | undefined;
           let why = unusable ? `it ${unusable}` : "";
-          if (!unusable) { try { schema = compileToolSchema(tool.inputSchema); } catch (error) { why = error instanceof Error ? error.message : "its schema does not compile"; } }
+          if (!unusable) { try { schema = compileToolSchema(tool.inputSchema as Record<string, unknown>); } catch (error) { why = error instanceof Error ? error.message : "its schema does not compile"; } }
           if (!schema) {
             console.warn(`chat-mcp: ${server}: leaving out tool "${tool.name}": ${why}`);
             continue;

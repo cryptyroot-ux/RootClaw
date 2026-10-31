@@ -3651,8 +3651,7 @@ describe("harness HTTP API", () => {
     mkdirSync(join(isolatedData), { recursive: true });
     writeFileSync(join(isolatedStatic, "index.html"), "<!doctype html><title>Computer wait park test</title>");
     writeFileSync(join(isolatedStatic, "assets", "smoke.css"), "body{}");
-    const isolatedEngine = await startFakeOpenAiChat({ FAKE_CHAT_MODELS: JSON.stringify(FIXTURE_MODELS), FAKE_CLAUDE_MODE: "hang",
-      FAKE_CLAUDE_DUMP: isolatedDump, FAKE_CLAUDE_FINISH_GATE: isolatedFinishGate });
+    const isolatedEngine = await startFakeOpenAiChat({ FAKE_CHAT_MODELS: JSON.stringify(FIXTURE_MODELS), FAKE_CLAUDE_MODE: "hang", FAKE_CLAUDE_PROMPTS: join(isolatedHome, "desktop-prompts.jsonl") });
     onTestFinished(() => isolatedEngine.stop());
     writeFileSync(join(isolatedData, "config.json"), JSON.stringify({ instances: { claude: fakeEngineInstance(isolatedEngine) } }));
     let isolatedStderr = "";
@@ -3850,35 +3849,20 @@ describe("harness HTTP API", () => {
     mkdirSync(isolatedData, { recursive: true });
     writeFileSync(join(isolatedStatic, "index.html"), "<!doctype html><title>Computer wait goal test</title>");
     writeFileSync(join(isolatedStatic, "assets", "smoke.css"), "body{}");
+    // Three native engines on their own scripted fakes: the holder hangs on the computer, the lead and worker answer in order.
+    const prompts = join(isolatedHome, "desktop-prompts.jsonl");
+    const engines = await Promise.all([
+      { FAKE_CLAUDE_MODE: "hang", FAKE_CLAUDE_PROMPTS: prompts },
+      { FAKE_CLAUDE_MODE: "happy", FAKE_CLAUDE_REPLIES: JSON.stringify(leadReplies) },
+      { FAKE_CLAUDE_PROMPTS: prompts, FAKE_CLAUDE_MODE: "happy", FAKE_CLAUDE_REPLIES: JSON.stringify(["The parked computer work is complete."]) },
+    ].map((env) => startFakeOpenAiChat({ FAKE_CHAT_MODELS: JSON.stringify(FIXTURE_MODELS), ...env })));
+    onTestFinished(() => Promise.all(engines.map((engine) => engine.stop())).then(() => {}));
+    const [holder, lead, worker] = engines.map(fakeEngineInstance);
     writeFileSync(join(isolatedData, "config.json"), JSON.stringify({
       instances: {
-        holder: {
-          driver: "claudeAgent",
-          displayName: "Fixture holder",
-          environment: { FAKE_CLAUDE_MODE: "hang", FAKE_CLAUDE_PROMPTS: join(isolatedHome, "desktop-prompts.jsonl") },
-          config: { cli: FAKE_CLAUDE_CLI },
-        },
-        lead: {
-          driver: "claudeAgent",
-          displayName: "Fixture lead",
-          environment: {
-            FAKE_CLAUDE_MODE: "happy",
-            FAKE_CLAUDE_REPLIES: JSON.stringify(leadReplies),
-            FAKE_CLAUDE_REPLY_STATE: join(isolatedHome, "lead-replies.txt"),
-          },
-          config: { cli: FAKE_CLAUDE_CLI },
-        },
-        worker: {
-          driver: "claudeAgent",
-          displayName: "Fixture worker",
-          environment: {
-            FAKE_CLAUDE_PROMPTS: join(isolatedHome, "desktop-prompts.jsonl"),
-            FAKE_CLAUDE_MODE: "happy",
-            FAKE_CLAUDE_REPLIES: JSON.stringify(["The parked computer work is complete."]),
-            FAKE_CLAUDE_REPLY_STATE: join(isolatedHome, "worker-replies.txt"),
-          },
-          config: { cli: FAKE_CLAUDE_CLI },
-        },
+        holder: { ...holder, displayName: "Fixture holder" },
+        lead: { ...lead, displayName: "Fixture lead" },
+        worker: { ...worker, displayName: "Fixture worker" },
       },
     }));
     let isolatedStderr = "";
@@ -6500,8 +6484,7 @@ describe("harness HTTP API", () => {
     mkdirSync(isolatedGate, { recursive: true });
     writeFileSync(join(isolatedStatic, "index.html"), "<!doctype html><title>Phone secret race test</title>");
     writeFileSync(join(isolatedStatic, "assets", "smoke.css"), "body{}");
-    const isolatedEngine = await startFakeOpenAiChat({ FAKE_CHAT_MODELS: JSON.stringify(FIXTURE_MODELS), FAKE_CLAUDE_MODE: "hang",
-      FAKE_CLAUDE_DUMP: isolatedDump, FAKE_CLAUDE_FINISH_GATE: isolatedFinishGate });
+    const isolatedEngine = await startFakeOpenAiChat({ FAKE_CHAT_MODELS: JSON.stringify(FIXTURE_MODELS), FAKE_CLAUDE_MODE: "hang", FAKE_CLAUDE_DUMP: isolatedDump });
     onTestFinished(() => isolatedEngine.stop());
     writeFileSync(join(isolatedData, "config.json"), JSON.stringify({ instances: { claude: fakeEngineInstance(isolatedEngine) } }));
 
@@ -8913,21 +8896,12 @@ describe("harness HTTP API", () => {
       })).status).toBe(200);
       rmSync(fakeClaudeDump, { force: true });
       expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "/setup watch Discord too" })).status).toBe(202);
-      const seen = await readJsonFileWhenReady<{ systemPrompt?: string; prompt?: { message?: { content?: unknown } } }>(fakeClaudeDump, 15_000);
+      const seen = await readJsonFileWhenReady<{ systemPrompt?: string; prompt?: string }>(fakeClaudeDump, 15_000);
       const system: string = modelSaw(seen);
       const soulEnd = system.indexOf("--- END STANDING INSTRUCTIONS ---") + "--- END STANDING INSTRUCTIONS ---".length;
       expect(soulEnd).toBeGreaterThan(0);
       expect(system.slice(soulEnd).startsWith("\n\nThe user explicitly asked you to set yourself up")).toBe(true);
-      // Extract the user text the way fake-claude-cli.ts promptText() does.
-      const content: unknown = seen.prompt?.message?.content;
-      const userText: string = typeof content === "string"
-        ? content
-        : Array.isArray(content)
-          ? content
-              .filter((block: { type?: string }) => block?.type === "text")
-              .map((block: { text?: string }) => block.text ?? "")
-              .join("")
-          : "";
+      const userText = seen.prompt ?? "";
       expect(userText).toContain("Set yourself up for this job: watch Discord too");
       expect(userText).not.toContain("/setup");
     } finally {

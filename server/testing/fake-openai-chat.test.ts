@@ -117,7 +117,7 @@ describe("the scriptable native fake", () => {
     fake = await startFakeOpenAiChat({ FAKE_CLAUDE_TEXT_FILE: textFile, FAKE_CLAUDE_SETUP_FILE: setupFile, FAKE_CHAT_DUMP: dump, FAKE_CLAUDE_TEXT_DUMP: textDump });
     const once = async (content: string) => {
       const response = await post({ stream: false, messages: user(content) });
-      return response.ok ? (await response.json()).choices[0].message.content : response.status;
+      return response.ok ? ((await response.json()) as { choices: Array<{ message: { content: string } }> }).choices[0]!.message.content : response.status;
     };
     expect(await once("title this")).toBe(500);
     writeFileSync(textFile, "A title");
