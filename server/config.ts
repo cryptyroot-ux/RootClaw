@@ -762,15 +762,20 @@ export function changedInstanceIds(before: Record<string, unknown>, after: Recor
 }
 
 export const DATA_DIR = process.env.ROOTCLAW_DATA_DIR ?? join(homedir(), ".rootclaw");
-const LEGACY_DATA_DIR = join(homedir(), ".rootclaw");
+/** Homes from before this name: OpenMausBot, then the name before that. The first one present is renamed once. */
+const LEGACY_DATA_DIRS = [join(homedir(), ".openmausbot"), join(homedir(), ".opengrokbot")];
 export const EVENTS_DIR = join(DATA_DIR, "events");
 export const NATIVE_DIR = join(DATA_DIR, "native");
 
 export function ensureDirs() {
-  if (!existsSync(DATA_DIR) && existsSync(LEGACY_DATA_DIR)) {
-    try {
-      renameSync(LEGACY_DATA_DIR, DATA_DIR);
-    } catch {
+  if (!existsSync(DATA_DIR)) {
+    for (const legacy of LEGACY_DATA_DIRS) {
+      if (!existsSync(legacy)) continue;
+      try {
+        renameSync(legacy, DATA_DIR);
+      } catch {
+      }
+      break;
     }
   }
   for (const dir of [DATA_DIR, EVENTS_DIR, NATIVE_DIR]) mkdirSync(dir, { recursive: true });
