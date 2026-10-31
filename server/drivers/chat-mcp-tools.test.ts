@@ -363,8 +363,10 @@ describe("Chat MCP session", () => {
     } }, ready.controller.signal);
     sessions.push(session);
     expect(session.definitions.map((definition) => definition.function.name)).toEqual(["jira_write"]);
-    expect(session.skipped.map((entry) => entry.server).sort()).toEqual(["kissflow", "missing", "slack"]);
+    // kissflow mounts without its one unusable tool: a bad schema drops that tool, not the server or the turn.
+    expect(session.skipped.map((entry) => entry.server).sort()).toEqual(["missing", "slack"]);
     expect(warn).toHaveBeenCalledTimes(3);
+    expect(warn.mock.calls.flat().join("\n")).toContain('kissflow: leaving out tool "x"');
     warn.mockRestore();
   });
 
@@ -850,8 +852,17 @@ describe("Chat MCP schema validation", () => {
     { type: "object", properties: {value:{type:"string","x-mcp-header": 5}} },
     { type: "object", properties: {value:{type:"string","x-google-enum-descriptions": "not a list"}} },
   ])("refuses schemas it cannot validate instead of silently weakening them %#", async (toolSchema) => {
+    // The tool is left out, never offered with a weaker schema; its server stays up for the rest.
     const f = fixture("", toolSchema);
-    await expectSkipped(f, /schema could not be validated/);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const session = await f.mount();
+      sessions.push(session);
+      expect(session.definitions).toEqual([]);
+      expect(session.skipped).toEqual([]);
+      expect(warn.mock.calls.flat().join("\n")).toMatch(/leaving out tool "write": .*schema could not be validated/);
+      await expect(session.execute("audit_write", {}, f.controller.signal)).rejects.toThrow("not advertised");
+    } finally { warn.mockRestore(); }
   });
 
   it("honors the configured per-call timeout instead of the fixed default", async () => {

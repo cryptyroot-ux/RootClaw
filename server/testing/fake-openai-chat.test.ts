@@ -101,4 +101,31 @@ describe("the scriptable native fake", () => {
   it("ignores unknown modes and malformed JSON knobs", () => {
     expect(scriptFromEnv({ FAKE_CLAUDE_MODE: "dead-session", FAKE_CHAT_REPLIES: "[", FAKE_CHAT_MODELS: "[]" })).toEqual({});
   });
+
+  it("ends a hanging turn once its release file exists", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fake-chat-"));
+    fake = await startFakeOpenAiChat({ FAKE_CLAUDE_MODE: "hang", FAKE_CLAUDE_RELEASE: join(dir, "release") });
+    const pending = turn(user("x"));
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    writeFileSync(join(dir, "release"), "");
+    expect((await pending).text).toBe("released");
+  });
+
+  it("answers one-shots from their files, failing without one, and keeps them out of the turn dump", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fake-chat-"));
+    const [textFile, setupFile, dump, textDump] = ["text", "setup", "dump.json", "text.json"].map((name) => join(dir, name));
+    fake = await startFakeOpenAiChat({ FAKE_CLAUDE_TEXT_FILE: textFile, FAKE_CLAUDE_SETUP_FILE: setupFile, FAKE_CHAT_DUMP: dump, FAKE_CLAUDE_TEXT_DUMP: textDump });
+    const once = async (content: string) => {
+      const response = await post({ stream: false, messages: user(content) });
+      return response.ok ? (await response.json()).choices[0].message.content : response.status;
+    };
+    expect(await once("title this")).toBe(500);
+    writeFileSync(textFile, "A title");
+    expect(await once("title this")).toBe("A title");
+    expect(JSON.parse(readFileSync(textDump, "utf8")).prompt).toBe("title this");
+    expect(await once("You write the answer options for the first message of a new bot")).toBe(500);
+    writeFileSync(setupFile, "[]");
+    expect(await once("You write the answer options for the first message of a new bot")).toBe("[]");
+    expect(existsSync(dump)).toBe(false);
+  });
 });

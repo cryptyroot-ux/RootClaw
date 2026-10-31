@@ -16,6 +16,11 @@
 //   dump         file path: the latest request as {model, prompt, systemPrompt, messages, tools}
 //   prompts      file path: every turn's user text appended as one JSON line
 //   cost         USD the final answer's usage reports as `cost`, as OpenRouter does (FAKE_CHAT_COST)
+//   release      with hang: once this file exists the turn answers "released" (FAKE_CHAT_RELEASE / FAKE_CLAUDE_RELEASE)
+//   finishGate   with hang: once this file exists the turn answers "fixture turn completed" (…_FINISH_GATE)
+// One-shot helpers (non-streamed requests: titles, memory upkeep, setup answers) never touch `dump`:
+//   setupFile    the new bot's setup-card answers; missing fails the call (…_SETUP_FILE); setupDump records its prompt
+//   textFile     every other one-shot's reply; missing or "__FAIL__" fails the call (…_TEXT_FILE); textDump records it
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 
@@ -28,6 +33,7 @@ export type FakeMode = "happy" | "slow" | "hang" | "error";
 export interface FakeScript {
   mode?: FakeMode; gate?: string; replies?: string[]; toolCalls?: FakeToolCall[]; routes?: FakeRoute[];
   models?: string[]; dump?: string; prompts?: string; cost?: number;
+  release?: string; finishGate?: string; setupFile?: string; setupDump?: string; textFile?: string; textDump?: string;
 }
 
 export interface FakeOpenAiChat {
@@ -66,6 +72,11 @@ export function scriptFromEnv(env: NodeJS.ProcessEnv): FakeScript {
   if (prompts) script.prompts = prompts;
   const cost = Number(pick("COST"));
   if (pick("COST") && Number.isFinite(cost) && cost >= 0) script.cost = cost;
+  for (const [key, name] of [["release", "RELEASE"], ["finishGate", "FINISH_GATE"], ["setupFile", "SETUP_FILE"], ["setupDump", "SETUP_DUMP"],
+    ["textFile", "TEXT_FILE"], ["textDump", "TEXT_DUMP"]] as const) {
+    const value = pick(name, name);
+    if (value) script[key] = value;
+  }
   return script;
 }
 
@@ -103,13 +114,36 @@ export async function startFakeOpenAiChat(env: NodeJS.ProcessEnv = {}): Promise<
     const userText = prompt.trim().split("\n").at(-1)?.trim() ?? "";
     const model = typeof body.model === "string" ? body.model : FAKE_OPENAI_MODEL;
     const newTurn = last?.role === "user";
+    if (body.stream !== true) {
+      // A one-shot helper: the setup card's answers, else any other text job.
+      const fail = (message: string) => { res.writeHead(500, { "content-type": "application/json" }); res.end(JSON.stringify({ error: { message } })); };
+      const setup = prompt.startsWith("You write the answer options for the first message of a new bot");
+      if (setup && script.setupDump) writeFileSync(script.setupDump, JSON.stringify({ model, prompt }, null, 2));
+      if (!setup && script.textDump) writeFileSync(script.textDump, JSON.stringify({ model, prompt }, null, 2));
+      const file = setup ? script.setupFile : script.textFile;
+      const text = !file && !setup ? `Fixture reply: ${userText}` : file && existsSync(file) ? readFileSync(file, "utf8") : "__FAIL__";
+      if (text.trim() === "__FAIL__") { fail("fixture one-shot failed"); return; }
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ id: "fixture", object: "chat.completion", model,
+        choices: [{ index: 0, message: { role: "assistant", content: text }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }));
+      return;
+    }
     if (script.dump) writeFileSync(script.dump, JSON.stringify({ model, prompt, systemPrompt: textOf(messages.find((message) => message.role === "system")?.content),
       messages, tools: body.tools ?? [] }, null, 2));
     if (newTurn && script.prompts && body.stream === true) appendFileSync(script.prompts, `${JSON.stringify(prompt)}\n`);
     const route = script.routes?.find((entry) => { try { return new RegExp(entry.match).test(prompt); } catch { return false; } });
     const mode = route?.mode ?? script.mode ?? "happy";
     if (mode === "error") { res.writeHead(500, { "content-type": "application/json" }); res.end(JSON.stringify({ error: { message: "fixture provider error" } })); return; }
-    if (mode === "hang") { await new Promise<void>((resolve) => { res.on("close", resolve); }); return; }
+    let released: string | undefined;
+    if (mode === "hang") {
+      for (;;) {
+        if (res.destroyed || res.socket?.destroyed !== false) return;
+        if (script.finishGate && existsSync(script.finishGate)) { released = "fixture turn completed"; break; }
+        if (script.release && existsSync(script.release)) { released = "released"; break; }
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
     if (mode === "slow" && body.stream === true) {
       while (!script.gate || !existsSync(script.gate)) {
         if (res.destroyed || res.socket?.destroyed !== false) return;
@@ -127,19 +161,13 @@ export async function startFakeOpenAiChat(env: NodeJS.ProcessEnv = {}): Promise<
     const calls = called ? [{ name: called[1]!, arguments: called[2] ?? "{}" }]
       : scripted.map((call) => ({ name: call.name, arguments: JSON.stringify(call.input ?? {}) }));
     const answer = (): string => {
+      if (released) return released;
       if (route?.reply !== undefined) return route.reply;
       if (script.replies && replyIndex < script.replies.length) return script.replies[replyIndex++]!;
       return last?.role === "tool" && !scripted.length && !script.toolCalls?.length ? "Fixture reply: tool finished" : `Fixture reply: ${userText}`;
     };
     const chunk = (delta: Record<string, unknown>, finish: string | null = null) =>
       `data: ${JSON.stringify({ id: "fixture", object: "chat.completion.chunk", model, choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`;
-    if (body.stream !== true) {
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ id: "fixture", object: "chat.completion", model,
-        choices: [{ index: 0, message: { role: "assistant", content: `Fixture reply: ${userText}` }, finish_reason: "stop" }],
-        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }));
-      return;
-    }
     res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
     if (calls.length) {
       res.write(chunk({ role: "assistant", tool_calls: calls.map((call, index) => ({ index, id: `call_${requests.length}_${index}`, type: "function",

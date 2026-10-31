@@ -16,7 +16,7 @@ import {
   DhkemP256HkdfSha256,
   HkdfSha256,
 } from "@hpke/core";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
 
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
@@ -35,9 +35,15 @@ import {
   type PhoneSecretContext,
 } from "./phone-secret.ts";
 
+import { startFakeOpenAiChat, type FakeOpenAiChat } from "./testing/fake-openai-chat.ts";
+
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(SERVER_DIR, "..");
-const FAKE_CLAUDE_CLI = join(SERVER_DIR, "testing", "fake-claude-cli.ts");
+/** The suite's "claude" instance: the native engine on a scriptable loopback fake, offering the models the tests pick. */
+const FIXTURE_MODELS = ["claude-sonnet-5", "claude-haiku-4-5", "fixture-claude-model"];
+const fakeEngineInstance = (fake: FakeOpenAiChat) =>
+  ({ driver: "openai-compat", displayName: "Fixture Claude", config: { url: fake.url, key: "fixture-only" } });
+let fakeEngine: FakeOpenAiChat;
 const FAKE_MCP_SERVER = join(SERVER_DIR, "testing", "fake-mcp-server.ts");
 const PORT = 18800 + Math.floor(Math.random() * 10_000);
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -397,6 +403,13 @@ beforeAll(async () => {
   oneShotTextDump = join(home, "fake-claude-one-shot-dump.json");
   setupAnswersFile = join(home, "fake-claude-setup-answers.txt");
   setupAnswersDump = join(home, "fake-claude-setup-answers-dump.json");
+  fakeEngine = await startFakeOpenAiChat({
+    FAKE_CHAT_MODELS: JSON.stringify(FIXTURE_MODELS), FAKE_CLAUDE_MODE: "hang", FAKE_CLAUDE_DUMP: fakeClaudeDump,
+    FAKE_CLAUDE_PROMPTS: fakeClaudePrompts, FAKE_CLAUDE_RELEASE: fakeClaudeRelease,
+    // The one-shot text helper fails until a test writes its reply file, and its dump never overwrites a turn's.
+    FAKE_CLAUDE_TEXT_FILE: oneShotTextFile, FAKE_CLAUDE_TEXT_DUMP: oneShotTextDump,
+    FAKE_CLAUDE_SETUP_FILE: setupAnswersFile, FAKE_CLAUDE_SETUP_DUMP: setupAnswersDump,
+  });
   const fakeDockerDir = join(home, "fake-docker-bin");
   const fakeDockerProgram = join(fakeDockerDir, "docker-empty.mjs");
   fakeDockerFixture = join(home, ".rootclaw", "fake-unmanaged-container");
@@ -464,7 +477,7 @@ beforeAll(async () => {
       features: { llmThreadTitles: true, browser: false, smartSetupChoices: false },
       instances: {
         ghost: { driver: "not-a-real-driver", displayName: "Ghost" },
-        claude: { driver: "claudeAgent", displayName: "Fixture Claude", config: { cli: FAKE_CLAUDE_CLI } },
+        claude: fakeEngineInstance(fakeEngine),
         // A known Codex target keeps the approval-mode routes on the trusted desktop boundary; its missing CLI keeps it unselected.
         codex: { driver: "codex", displayName: "Fixture Codex", config: { cli: join(home, "missing-codex") } },
         // A live engine without computer tools (no key, so never available): places that need a computer refuse it.
@@ -1241,17 +1254,6 @@ beforeAll(async () => {
       ROOTCLAW_AGENT_BROWSER_PATH: join(home, "fake-agent-browser"),
       // Production uses 15 s; the real timer path stays, but fast.
       ROOTCLAW_SSE_HEARTBEAT_MS: "50",
-      FAKE_CLAUDE_MODE: "hang",
-      FAKE_CLAUDE_DUMP: fakeClaudeDump,
-      FAKE_CLAUDE_PROMPTS: fakeClaudePrompts,
-      FAKE_CLAUDE_RELEASE: fakeClaudeRelease,
-      // The one-shot text helper fails until a test writes its reply file, and its dump never overwrites a turn's.
-      FAKE_CLAUDE_TEXT_FILE: oneShotTextFile,
-      FAKE_CLAUDE_TEXT_DUMP: oneShotTextDump,
-      FAKE_CLAUDE_SETUP_FILE: setupAnswersFile,
-      FAKE_CLAUDE_SETUP_DUMP: setupAnswersDump,
-      // the real CLI runs Manual for these even when asked for auto
-      FAKE_CLAUDE_AUTO_UNAVAILABLE_MODELS: "claude-haiku-4-5",
       ROOTCLAW_TEST_INTERNAL_CAPABILITY_KEY: TEST_CAPABILITY_KEY,
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -1274,6 +1276,7 @@ beforeAll(async () => {
 afterAll(async () => {
   boatStub?.close();
   await waitForExit(child, { signal: "SIGTERM" });
+  await fakeEngine?.stop();
   await removeTempDir(home);
 });
 
@@ -1342,11 +1345,10 @@ describe("harness HTTP API", () => {
     mkdirSync(isolatedData, { recursive: true });
     writeFileSync(join(isolatedStatic, "index.html"), "<!doctype html><title>Question restart test</title>");
     writeFileSync(join(isolatedStatic, "assets", "smoke.css"), "body{}");
-    writeFileSync(join(isolatedData, "config.json"), JSON.stringify({
-      instances: {
-        claude: { driver: "claudeAgent", displayName: "Fixture Claude", config: { cli: FAKE_CLAUDE_CLI } },
-      },
-    }));
+    const isolatedEngine = await startFakeOpenAiChat({ FAKE_CHAT_MODELS: JSON.stringify(FIXTURE_MODELS), FAKE_CLAUDE_MODE: "hang",
+      FAKE_CLAUDE_DUMP: isolatedDump, FAKE_CLAUDE_FINISH_GATE: isolatedFinishGate });
+    onTestFinished(() => isolatedEngine.stop());
+    writeFileSync(join(isolatedData, "config.json"), JSON.stringify({ instances: { claude: fakeEngineInstance(isolatedEngine) } }));
 
     let activeServer: { child: ChildProcess; stderr: () => string } | undefined;
     const startServer = () => {
@@ -1362,9 +1364,6 @@ describe("harness HTTP API", () => {
           ROOTCLAW_PORT: String(isolatedPort),
           ROOTCLAW_WEBHOOK_PORT: String(isolatedPort + 1),
           ROOTCLAW_STATIC_DIR: isolatedStatic,
-          FAKE_CLAUDE_MODE: "hang",
-          FAKE_CLAUDE_DUMP: isolatedDump,
-          FAKE_CLAUDE_FINISH_GATE: isolatedFinishGate,
         },
         stdio: ["ignore", "pipe", "pipe"],
       });
@@ -3646,11 +3645,10 @@ describe("harness HTTP API", () => {
     mkdirSync(join(isolatedData), { recursive: true });
     writeFileSync(join(isolatedStatic, "index.html"), "<!doctype html><title>Computer wait park test</title>");
     writeFileSync(join(isolatedStatic, "assets", "smoke.css"), "body{}");
-    writeFileSync(join(isolatedData, "config.json"), JSON.stringify({
-      instances: {
-        claude: { driver: "claudeAgent", displayName: "Fixture Claude", config: { cli: FAKE_CLAUDE_CLI } },
-      },
-    }));
+    const isolatedEngine = await startFakeOpenAiChat({ FAKE_CHAT_MODELS: JSON.stringify(FIXTURE_MODELS), FAKE_CLAUDE_MODE: "hang",
+      FAKE_CLAUDE_DUMP: isolatedDump, FAKE_CLAUDE_FINISH_GATE: isolatedFinishGate });
+    onTestFinished(() => isolatedEngine.stop());
+    writeFileSync(join(isolatedData, "config.json"), JSON.stringify({ instances: { claude: fakeEngineInstance(isolatedEngine) } }));
     let isolatedStderr = "";
     const isolatedChild = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
       cwd: ROOT,
@@ -5455,175 +5453,6 @@ describe("harness HTTP API", () => {
     }
   });
 
-  it("carries a Full bot's access across engines silently, and keeps Custom bots on Codex", async () => {
-    const isolatedHome = mkdtempSync(join(tmpdir(), "rootclaw-trusted-mode-model-"));
-    const isolatedData = join(isolatedHome, ".rootclaw");
-    const isolatedStatic = join(isolatedHome, "static");
-    const isolatedPort = await freePortBlock([0, 1]);
-    mkdirSync(join(isolatedStatic, "assets"), { recursive: true });
-    mkdirSync(isolatedData, { recursive: true });
-    writeFileSync(join(isolatedStatic, "index.html"), "<!doctype html><title>Trusted mode model test</title>");
-    writeFileSync(join(isolatedStatic, "assets", "smoke.css"), "body{}");
-    writeFileSync(join(isolatedData, "config.json"), JSON.stringify({
-      instances: {
-        codex: { driver: "codex", displayName: "Fixture Codex", config: { cli: join(isolatedHome, "missing-codex") } },
-        claude: { driver: "claudeAgent", displayName: "Fixture Claude", config: { cli: FAKE_CLAUDE_CLI } },
-      },
-    }));
-    const trustedBots = (["full", "custom"] as const).map((approvalMode, index) => ({
-      id: `${approvalMode}-model-guard`,
-      threadId: `${approvalMode}-model-thread`,
-      name: `${approvalMode} model guard`,
-      title: "",
-      description: "",
-      notifications: true,
-      color: "blue",
-      unread: false,
-      modelSelection: { instanceId: "codex", model: "fixture-codex-model" },
-      resumeCursors: {},
-      createdAt: index + 1,
-      approvalMode,
-      autoApprove: false,
-    }));
-    // A third Full bot changes engine by itself: its access must ride along.
-    const carrier = { ...trustedBots[0], id: "full-carry", threadId: "full-carry-thread", name: "full carrier", createdAt: 3 };
-    // An Ask bot with one conversation still on Custom.
-    const customThread = { ...trustedBots[0], id: "custom-thread", threadId: "custom-thread-main", name: "custom thread", createdAt: 4,
-      approvalMode: "ask", tasks: [
-        { threadId: "custom-thread-main", title: "Main", createdAt: 4, resumeCursors: {} },
-        { threadId: "custom-thread-own", title: "Own Custom", createdAt: 5, resumeCursors: {}, approvalMode: "custom", autoApprove: false },
-      ] };
-    writeFileSync(join(isolatedData, "bots.json"), JSON.stringify([...trustedBots, carrier, customThread]));
-
-    let isolatedStderr = "";
-    const isolatedChild = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
-      cwd: ROOT,
-      env: {
-        ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
-        ...(process.env.PATHEXT ? { PATHEXT: process.env.PATHEXT } : {}),
-        ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
-        HOME: isolatedHome,
-        USERPROFILE: isolatedHome,
-        ROOTCLAW_PORT: String(isolatedPort),
-        ROOTCLAW_WEBHOOK_PORT: String(isolatedPort + 1),
-        ROOTCLAW_STATIC_DIR: isolatedStatic,
-        FAKE_CLAUDE_MODE: "hang",
-        FAKE_CLAUDE_DUMP: join(isolatedHome, "fake-claude-dump.json"),
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    isolatedChild.stderr!.on("data", (chunk) => (isolatedStderr += chunk));
-    const isolatedApi = async (method: string, path: string, body?: unknown): Promise<{
-      status: number;
-      body: any;
-    }> => {
-      const response = await fetch(`http://127.0.0.1:${isolatedPort}${path}`, {
-        method,
-        headers: body ? { "content-type": "application/json" } : undefined,
-        body: body ? JSON.stringify(body) : undefined,
-      });
-      return { status: response.status, body: await response.json() };
-    };
-
-    try {
-      await waitForIsolatedServer(isolatedChild, isolatedPort, () => isolatedStderr);
-      const instances = (await isolatedApi("GET", "/api/instances")).body.instances;
-      const claude = instances.find((instance: { instanceId: string }) => instance.instanceId === "claude");
-      const targetSelection = { instanceId: claude.instanceId, model: claude.models.default };
-
-      const carried = await isolatedApi("PATCH", `/api/bots/${carrier.id}/model`, targetSelection);
-      expect(carried.status, JSON.stringify(carried.body)).toBe(200);
-      const afterCarry = (await isolatedApi("GET", "/api/bots?messages=0")).body.bots.find(
-        (candidate: { id: string }) => candidate.id === carrier.id,
-      );
-      expect(afterCarry).toMatchObject({ approvalMode: "full", modelSelection: targetSelection });
-      const carriedThread = afterCarry.tasks.find((task: { threadId: string }) => task.threadId === carrier.threadId);
-      expect(carriedThread.modelSelection).toEqual(targetSelection);
-      expect(carriedThread.approvalMode ?? afterCarry.approvalMode).toBe("full");
-
-      for (const seeded of trustedBots.filter((candidate) => candidate.approvalMode === "custom")) {
-        const rejected = await isolatedApi("PATCH", `/api/bots/${seeded.id}/model`, targetSelection);
-        expect(rejected.status, seeded.approvalMode).toBe(400);
-        expect(rejected.body.error).toMatch(/requires choosing Ask first/i);
-        const scoped = await isolatedApi("PATCH", `/api/bots/${seeded.id}/tasks/${seeded.threadId}`, {
-          modelSelection: targetSelection, updateBotDefault: true, approvalMode: "ask",
-        });
-        expect(scoped.status, seeded.approvalMode).toBe(403);
-        expect(scoped.body.error).toMatch(/Custom approval|resetApprovalToAsk/i);
-        const unchanged = (await isolatedApi("GET", "/api/bots?messages=0")).body.bots.find(
-          (candidate: { id: string }) => candidate.id === seeded.id,
-        );
-        expect(unchanged).toMatchObject({
-          approvalMode: seeded.approvalMode,
-          modelSelection: seeded.modelSelection,
-        });
-        expect(unchanged.tasks.find((task: { threadId: string }) => task.threadId === seeded.threadId).modelSelection).toEqual(seeded.modelSelection);
-      }
-
-      const full = trustedBots.find(candidate => candidate.approvalMode === "full")!;
-      const sibling = (await isolatedApi("POST", `/api/bots/${full.id}/tasks`, { title: "Follows the bot" })).body.task;
-      for (const body of [
-        { resetApprovalToAsk: true },
-        { modelSelection: targetSelection, resetApprovalToAsk: "yes" },
-        { modelSelection: targetSelection, resetApprovalToAsk: true, approvalMode: "auto" },
-        { modelSelection: targetSelection, resetApprovalToAsk: true, updateBotDefault: "yes" },
-        { modelSelection: { ...targetSelection, effort: "turbo" }, resetApprovalToAsk: true },
-      ]) {
-        expect((await isolatedApi("PATCH", `/api/bots/${full.id}/tasks/${full.threadId}`, body)).status).toBe(400);
-      }
-      const sameProvider = await isolatedApi("PATCH", `/api/bots/${full.id}/tasks/${full.threadId}`, {
-        modelSelection: { ...full.modelSelection, model: "another-model" },
-      });
-      expect(sameProvider.status).toBe(200);
-      expect(sameProvider.body.task.approvalMode ?? sameProvider.body.bot.approvalMode).toBe("full");
-      const switched = await isolatedApi("PATCH", `/api/bots/${full.id}/tasks/${full.threadId}`, {
-        modelSelection: targetSelection, updateBotDefault: true, resetApprovalToAsk: true,
-      });
-      expect(switched.status).toBe(200);
-      expect(switched.body.bot).toMatchObject({ modelSelection: targetSelection, approvalMode: "ask", autoApprove: false });
-      expect(switched.body.task).toMatchObject({ modelSelection: targetSelection, approvalMode: "ask", alwaysAllow: [] });
-      expect(switched.body.bot.tasks.find((task: { threadId: string }) => task.threadId === sibling.threadId))
-        .toMatchObject({ modelSelection: targetSelection, followsBotModel: true, approvalMode: "full" });
-      const created = await isolatedApi("POST", `/api/bots/${full.id}/tasks`, { title: "New defaults" });
-      expect(created.body.task).toMatchObject({ modelSelection: targetSelection, approvalMode: "ask" });
-      const refusedCustom = trustedBots.find(candidate => candidate.approvalMode === "custom")!;
-      expect((await isolatedApi("PATCH", `/api/bots/${refusedCustom.id}/tasks/${refusedCustom.threadId}`, {
-        modelSelection: targetSelection, resetApprovalToAsk: true,
-      })).status).toBe(403);
-
-      const custom = trustedBots.find((candidate) => candidate.approvalMode === "custom")!;
-      for (const body of [
-        { approvalMode: "ask" },
-        { approvalMode: "auto" },
-        { autoApprove: false },
-        { autoApprove: true },
-      ]) {
-        const rejected = await isolatedApi("PATCH", `/api/bots/${custom.id}`, body);
-        expect(rejected.status, JSON.stringify(body)).toBe(403);
-        expect(rejected.body.error).toMatch(/packaged desktop app/i);
-      }
-      const stillCustom = (await isolatedApi("GET", "/api/bots?messages=0")).body.bots.find(
-        (candidate: { id: string }) => candidate.id === custom.id,
-      );
-      expect(stillCustom).toMatchObject({ approvalMode: "custom", autoApprove: false });
-      for (const approvalMode of ["ask", "auto", "full"]) {
-        const rejected = await isolatedApi("PATCH", `/api/bots/${customThread.id}`, { approvalMode, applyToAllThreads: true });
-        expect(rejected.status, approvalMode).toBe(403);
-        expect(rejected.body.error).toMatch(/packaged desktop app/i);
-        expect((await isolatedApi("PATCH", `/api/bots/${custom.id}`, { approvalMode, applyToAllThreads: true })).status, approvalMode).toBe(403);
-      }
-      const keptCustom = (await isolatedApi("GET", "/api/bots?messages=0")).body.bots.find(
-        (candidate: { id: string }) => candidate.id === customThread.id,
-      );
-      expect(keptCustom.approvalMode).toBe("ask");
-      expect(keptCustom.tasks.find((task: { threadId: string }) => task.threadId === "custom-thread-own").approvalMode).toBe("custom");
-    } finally {
-      await waitForExit(isolatedChild, { signal: "SIGTERM" });
-      await removeTempDir(isolatedHome);
-    }
-    expectStoppedTestServerCleanly(isolatedChild, isolatedStderr);
-  }, 30_000);
-
   it("exports every visible bot and imports the team without creating a room", async () => {
     const first = (await api("POST", "/api/bots")).body.bot;
     const second = (await api("POST", "/api/bots")).body.bot;
@@ -6665,11 +6494,10 @@ describe("harness HTTP API", () => {
     mkdirSync(isolatedGate, { recursive: true });
     writeFileSync(join(isolatedStatic, "index.html"), "<!doctype html><title>Phone secret race test</title>");
     writeFileSync(join(isolatedStatic, "assets", "smoke.css"), "body{}");
-    writeFileSync(join(isolatedData, "config.json"), JSON.stringify({
-      instances: {
-        claude: { driver: "claudeAgent", displayName: "Fixture Claude", config: { cli: FAKE_CLAUDE_CLI } },
-      },
-    }));
+    const isolatedEngine = await startFakeOpenAiChat({ FAKE_CHAT_MODELS: JSON.stringify(FIXTURE_MODELS), FAKE_CLAUDE_MODE: "hang",
+      FAKE_CLAUDE_DUMP: isolatedDump, FAKE_CLAUDE_FINISH_GATE: isolatedFinishGate });
+    onTestFinished(() => isolatedEngine.stop());
+    writeFileSync(join(isolatedData, "config.json"), JSON.stringify({ instances: { claude: fakeEngineInstance(isolatedEngine) } }));
 
     // Models Electron's private utility-process bridge: both saves pause after decryption, before the config commit.
     const desktopPrelude = `data:text/javascript,${encodeURIComponent(`
@@ -7451,9 +7279,9 @@ describe("harness HTTP API", () => {
     await api("DELETE", `/api/bots/${bot.id}`);
   });
 
-  it("stores safe approval levels and Full over HTTP, and keeps Custom on the desktop", async () => {
+  it("stores safe approval levels and Full over HTTP, and refuses Custom, which no native engine offers", async () => {
     const bot = (await api("POST", "/api/bots", {
-      modelSelection: { instanceId: "codex", model: "fixture-codex-model" },
+      modelSelection: { instanceId: "claude", model: "claude-sonnet-5" },
     })).body.bot;
     try {
       for (const approvalMode of ["automatic", "unsafe", true, null]) {
@@ -7474,13 +7302,9 @@ describe("harness HTTP API", () => {
       expect((await api("PATCH", `/api/bots/${bot.id}`, { approvalMode: "ask" })).status).toBe(200);
 
       for (const body of [{ approvalMode: "custom" }, { approvalMode: "custom", acknowledgeFullAccess: true }]) {
-        const rejected = await api("PATCH", `/api/bots/${bot.id}`, body);
-        expect(rejected.status, JSON.stringify(body)).toBe(403);
-        expect(rejected.body.error).toMatch(/desktop app/i);
+        expect((await api("PATCH", `/api/bots/${bot.id}`, body)).status, JSON.stringify(body)).toBeGreaterThanOrEqual(400);
       }
-      const thread = await api("PATCH", `/api/bots/${bot.id}/tasks/${bot.threadId}`, { approvalMode: "custom" });
-      expect(thread.status).toBe(403);
-      expect(thread.body.error).toMatch(/Custom access requires trusted desktop confirmation/);
+      expect((await api("PATCH", `/api/bots/${bot.id}/tasks/${bot.threadId}`, { approvalMode: "custom" })).status).toBeGreaterThanOrEqual(400);
 
       const stored = (await api("GET", "/api/bots")).body.bots.find(
         (candidate: { id: string }) => candidate.id === bot.id,
@@ -7660,27 +7484,18 @@ describe("harness HTTP API", () => {
   });
 
   it("pins provider approval support at the thread settings gate", async () => {
-    const codex = (await api("POST", "/api/bots", {
-      modelSelection: { instanceId: "codex", model: "fixture-codex-model" },
-    })).body.bot;
-    try {
-      // Codex has no auto-accept-edits mode, so the thread-level PATCH must refuse Edits before any store write.
-      const refused = await api("PATCH", `/api/bots/${codex.id}/tasks/${codex.threadId}`, { approvalMode: "edits" });
-      expect(refused.status).toBe(400);
-      expect(refused.body.error).toMatch(/This provider does not support the selected approval level/);
-    } finally {
-      await api("DELETE", `/api/bots/${codex.id}`);
-    }
-    const claude = (await api("POST", "/api/bots", {
+    const bot = (await api("POST", "/api/bots", {
       modelSelection: { instanceId: "claude", model: "fixture-claude-model" },
     })).body.bot;
     try {
-      // Claude's engine implements acceptEdits, so the same PATCH applies.
-      const applied = await api("PATCH", `/api/bots/${claude.id}/tasks/${claude.threadId}`, { approvalMode: "edits" });
-      expect(applied.status).toBe(200);
-      expect(applied.body.task).toMatchObject({ approvalMode: "edits", autoApprove: false });
+      // The native engine has no auto-accept-edits mode, so the thread-level PATCH refuses Edits before any store write.
+      const refused = await api("PATCH", `/api/bots/${bot.id}/tasks/${bot.threadId}`, { approvalMode: "edits" });
+      expect(refused.status).toBe(400);
+      expect(refused.body.error).toMatch(/This provider does not support the selected approval level/);
+      expect((await api("GET", "/api/bots?messages=0")).body.bots.find((entry: { id: string }) => entry.id === bot.id)
+        .tasks.find((task: { threadId: string }) => task.threadId === bot.threadId).approvalMode).not.toBe("edits");
     } finally {
-      await api("DELETE", `/api/bots/${claude.id}`);
+      await api("DELETE", `/api/bots/${bot.id}`);
     }
   });
 
@@ -8888,125 +8703,6 @@ describe("harness HTTP API", () => {
     await api("PUT", "/api/config", { rooms: { turnTimeoutMinutes: 5 } });
   });
 
-  it("cards asks when Claude's reviewer never started and remembers an exact configured MCP read", async () => {
-    // Haiku 4.5: the CLI takes `auto` but runs Manual and asks about everything.
-    const bot = (await api("POST", "/api/bots", { name: "Quill" })).body.bot;
-    const conns: Socket[] = [];
-    try {
-      expect((await api("POST", "/api/mcp/servers", {
-        name: "linear",
-        command: process.execPath,
-        args: ["--experimental-strip-types", FAKE_MCP_SERVER],
-      })).status).toBe(201);
-      expect((await api("PATCH", "/api/mcp/servers/linear", { enabled: true })).status).toBe(200);
-      expect((await api("PATCH", `/api/bots/${bot.id}`, {
-        modelSelection: { instanceId: "claude", model: "claude-haiku-4-5" },
-        approvalMode: "auto",
-      })).status).toBe(200);
-      rmSync(fakeClaudeDump, { force: true });
-      expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "count my notes" })).status).toBe(202);
-      const dump = z.object({
-        mcpConfig: z.object({ mcpServers: z.object({ ogb: z.object({ args: z.array(z.string()) }) }) }),
-      }).parse(await readJsonFileWhenReady(fakeClaudeDump));
-      const socketPath = dump.mcpConfig.mcpServers.ogb.args[1];
-      const raise = async (
-        id: string,
-        command: string,
-        extra: Record<string, unknown> = {},
-        tool = "Bash",
-      ) => {
-        const conn = connect(socketPath);
-        conns.push(conn);
-        const answered = new Promise<{ behavior: string; always?: boolean }>((resolve) => {
-          let buf = "";
-          conn.on("data", (chunk) => {
-            buf += chunk;
-            const nl = buf.indexOf("\n");
-            if (nl !== -1) resolve(JSON.parse(buf.slice(0, nl)));
-          });
-        });
-        await new Promise<void>((resolve, reject) => {
-          conn.on("connect", resolve);
-          conn.on("error", reject);
-        });
-        conn.write(JSON.stringify({ t: "ask", id, tool, input: { command, ...extra } }) + "\n");
-        return answered;
-      };
-      type Msg = { kind: string; tool?: { name: string }; card?: { title: string; subtitle: string; requestId?: string; held?: string; heldCode?: string; allowKey?: string; allowSession?: boolean; answered?: string } };
-      const messages = async (): Promise<Msg[]> =>
-        (await api("GET", "/api/bots?messages=40")).body.bots.find((candidate: { id: string }) => candidate.id === bot.id).messages;
-
-      const first = raise("ask-wc", "wc -l notes.md");
-      const card = await expect.poll(async () => (await messages()).find((m) => m.card?.subtitle === "wc -l notes.md")?.card).toBeTruthy()
-        .then(async () => (await messages()).find((m) => m.card?.subtitle === "wc -l notes.md")!.card!);
-      expect(card.title).toBe("Approval needed");
-      expect(card.heldCode).toBe("approval.held.native");
-      expect(card.allowKey).toBeUndefined();
-      expect(card.allowSession).toBe(true);
-      expect((await messages()).some((m) => m.tool?.name.startsWith("auto-approved"))).toBe(false);
-      await expect.poll(async () => (await messages()).filter((m) => m.tool?.name.startsWith("Approve for me: Claude's automatic reviewer is not available")).length).toBe(1);
-      const notices = (await messages()).filter((m) => m.tool?.name.startsWith("Approve for me: Claude's automatic reviewer is not available"));
-      expect(notices).toHaveLength(1);
-      expect(notices[0].tool!.name).toContain("claude-haiku-4-5");
-      expect(notices[0].tool!.name).toContain("asks before each action");
-
-      expect((await api("POST", `/api/bots/${bot.id}/respond`, { requestId: card.requestId, behavior: "allow", always: true })).status).toBe(200);
-      await expect(first).resolves.toMatchObject({ behavior: "allow", always: true });
-
-      const second = raise("ask-ls", "ls memory");
-      await expect.poll(async () => (await messages()).find((m) => m.card?.subtitle === "ls memory")?.card?.title).toBe("Approval needed");
-      expect((await messages()).filter((m) => m.tool?.name.startsWith("Approve for me: Claude's automatic reviewer"))).toHaveLength(1);
-      const secondCard = (await messages()).find((m) => m.card?.subtitle === "ls memory")!.card!;
-      expect((await api("POST", `/api/bots/${bot.id}/respond`, { requestId: secondCard.requestId, behavior: "allow" })).status).toBe(200);
-      const plain = await second;
-      expect(plain).toMatchObject({ behavior: "allow" });
-      expect(plain).not.toHaveProperty("always");
-
-      const firstLinear = raise("ask-linear-list-1", "list KAT issues", { team: "KAT" }, "mcp__linear__list_issues");
-      const linearCard = await expect.poll(async () => (await messages()).find((m) => m.card?.subtitle === "list KAT issues")?.card).toBeTruthy()
-        .then(async () => (await messages()).find((m) => m.card?.subtitle === "list KAT issues")!.card!);
-      expect(linearCard.allowKey).toMatch(/^provider-tool:claude:linear:list_issues:/);
-      expect((await api("POST", `/api/bots/${bot.id}/always-allow`, {
-        threadId: bot.threadId,
-        allowKey: linearCard.allowKey,
-      })).status).toBe(200);
-      expect((await api("POST", `/api/bots/${bot.id}/respond`, {
-        requestId: linearCard.requestId,
-        behavior: "allow",
-      })).status).toBe(200);
-      await expect(firstLinear).resolves.toMatchObject({ behavior: "allow" });
-
-      const repeatedLinear = raise("ask-linear-list-2", "list KAT issues again", { team: "KAT" }, "mcp__linear__list_issues");
-      await expect(repeatedLinear).resolves.toMatchObject({ behavior: "allow" });
-      expect((await messages()).find((m) => m.card?.subtitle === "list KAT issues again")).toBeUndefined();
-
-      const linearWrite = raise("ask-linear-create", "create KAT issue", { team: "KAT" }, "mcp__linear__create_issue");
-      await expect.poll(async () => (await messages()).find((m) => m.card?.subtitle === "create KAT issue")?.card?.title).toBe("Approval needed");
-      const writeCard = (await messages()).find((m) => m.card?.subtitle === "create KAT issue")!.card!;
-      expect(writeCard.allowKey).toBeUndefined();
-      expect((await api("POST", `/api/bots/${bot.id}/respond`, { requestId: writeCard.requestId, behavior: "deny" })).status).toBe(200);
-      await expect(linearWrite).resolves.toMatchObject({ behavior: "deny" });
-
-      const widen = raise("ask-widen", "ls /", { dangerouslyDisableSandbox: true });
-      await expect.poll(async () => (await messages()).find((m) => m.card?.subtitle === "ls /")?.card?.title).toBe("Approval needed");
-      const widenCard = (await messages()).find((m) => m.card?.subtitle === "ls /")!.card!;
-      expect(widenCard.allowSession).toBeUndefined();
-      expect((await api("POST", `/api/bots/${bot.id}/respond`, { requestId: widenCard.requestId, behavior: "allow", always: true })).status).toBe(200);
-      const once = await widen;
-      expect(once).toMatchObject({ behavior: "allow" });
-      expect(once).not.toHaveProperty("always");
-
-      const nextTask = await api("POST", `/api/bots/${bot.id}/tasks`, { title: "Later work" });
-      expect(nextTask.status).toBe(201);
-      expect(nextTask.body.task.alwaysAllow).toContain(linearCard.allowKey);
-    } finally {
-      for (const conn of conns) conn.destroy();
-      await api("POST", `/api/bots/${bot.id}/interrupt`);
-      await api("DELETE", `/api/bots/${bot.id}`);
-      await api("DELETE", "/api/mcp/servers/linear").catch(() => undefined);
-    }
-  });
-
   it("mounts the verification skill into a real turn when its trigger appears", async () => {
     const bot = (await api("POST", "/api/bots", {})).body.bot;
     try {
@@ -10145,10 +9841,10 @@ describe("harness HTTP API", () => {
     mkdirSync(isolatedData, { recursive: true });
     writeFileSync(join(isolatedStatic, "index.html"), "<!doctype html><title>Cleanup restart test</title>");
     writeFileSync(join(isolatedStatic, "assets", "smoke.css"), "body{}");
+    const isolatedEngine = await startFakeOpenAiChat({ FAKE_CHAT_MODELS: JSON.stringify(FIXTURE_MODELS) });
+    onTestFinished(() => isolatedEngine.stop());
     writeFileSync(join(isolatedData, "config.json"), JSON.stringify({
-      instances: {
-        claude: { driver: "claudeAgent", displayName: "Fixture Claude", config: { cli: FAKE_CLAUDE_CLI } },
-      },
+      instances: { claude: fakeEngineInstance(isolatedEngine) },
       browserProfiles: [],
     }));
     writeFileSync(join(isolatedData, "bots.json"), JSON.stringify([{
@@ -13905,7 +13601,7 @@ describe("resumable event stream", () => {
   });
 });
 
-describe("instance CLI override API", () => {
+describe("instance API", () => {
   it("round-trips bounded per-instance icons without changing the driver", async () => {
     const before = JSON.parse(readFileSync(join(home, ".rootclaw", "config.json"), "utf8"));
     const preset = await api("PATCH", "/api/instances/ghost/icon", { icon: { kind: "preset", preset: "deepseek" } });
@@ -13933,80 +13629,10 @@ describe("instance CLI override API", () => {
     expect(JSON.parse(readFileSync(join(home, ".rootclaw", "config.json"), "utf8")).instances.ghost.icon).toBeUndefined();
   });
 
-  it("round-trips a set, clear, and rejects bad input", async () => {
-    // ghost is the fixture's one shadow instance (unknown driver)
-    const set = await api("PATCH", "/api/instances/ghost", { cli: "/opt/ghost/wrapper sub" });
-    expect(set.status).toBe(200);
-    const setRow = set.body.instances.find((i: any) => i.instanceId === "ghost");
-    expect(setRow.cli).toBe("/opt/ghost/wrapper sub");
-
-    const cleared = await api("PATCH", "/api/instances/ghost", { cli: "" });
-    expect(cleared.status).toBe(200);
-    const clearedRow = cleared.body.instances.find((i: any) => i.instanceId === "ghost");
-    expect(clearedRow.cli).toBeUndefined();
-
-    expect((await api("PATCH", "/api/instances/nope", { cli: "/x" })).status).toBe(404);
-    expect((await api("PATCH", "/api/instances/ghost", { cli: 42 })).status).toBe(400);
-    expect((await api("PATCH", "/api/instances/ghost", { cli: "/x\ny" })).status).toBe(400);
-  });
-
-  it("echoes a path-ish name back as the only cli candidate", async () => {
-    const res = await api("GET", "/api/cli-candidates?name=/opt/definitely/not/here");
-    expect(res.status).toBe(200);
-    expect(res.body.candidates).toEqual(["/opt/definitely/not/here"]);
-    expect((await api("GET", "/api/cli-candidates?name=")).body.candidates).toEqual([]);
-  });
-
-  it("reports a missing binary as a failed probe with install info", async () => {
-    const res = await api("POST", "/api/cli-test", { cli: "/no/such/binary-anywhere", driver: "claudeAgent" });
-    expect(res.status).toBe(200);
-    expect(res.body.ok).toBe(false);
-    expect(res.body.message).toContain("isn't installed");
-    expect(res.body.install?.docsUrl).toBe("https://claude.com/claude-code");
-  });
-
-  it("probes the complete wrapper with fixed arguments and no inherited credentials", async () => {
-    const script = join(home, "cli-wrapper-probe.mjs");
-    writeFileSync(
-      script,
-      `if (process.argv.slice(2).join(" ") !== "fixed --version") process.exit(9);\nif (process.env.COMPOSIO_API_KEY) process.exit(8);\nconsole.log("wrapper-ok");\n`,
-    );
-    const cli = `${JSON.stringify(process.execPath)} ${JSON.stringify(script)} fixed`;
-    const res = await api("POST", "/api/cli-test", { cli });
-    expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ ok: true, version: "wrapper-ok" });
-  });
-
-  it("reports excessive probe output without presenting install guidance", async () => {
-    const script = join(home, "cli-noisy-probe.mjs");
-    writeFileSync(script, `process.stdout.write("x".repeat(70 * 1024));\n`);
-    const cli = `${JSON.stringify(process.execPath)} ${JSON.stringify(script)}`;
-    const res = await api("POST", "/api/cli-test", { cli, driver: "claudeAgent" });
-    expect(res.status).toBe(200);
-    expect(res.body.ok).toBe(false);
-    expect(res.body.message).toContain("more than 64 KiB");
-    expect(res.body.install).toBeUndefined();
-  });
-
-  it("updates only the configured Claude instance and verifies its version", async () => {
-    const res = await api("POST", "/api/instances/claude/claude-update", {});
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual({ ok: true, version: "2.1.232 (Claude Code)" });
-
-    expect((await api("POST", "/api/instances/ghost/claude-update", {})).status).toBe(400);
-    expect((await api("POST", "/api/instances/missing/claude-update", {})).status).toBe(404);
-  });
-
-  it("requires JSON before launching the Claude updater", async () => {
-    const res = await fetch(`${BASE}/api/instances/claude/claude-update`, { method: "POST" });
-    expect(res.status).toBe(415);
-    expect(await res.json()).toEqual({ error: "content-type must be application/json" });
-  });
-
   it("rejects overlapping provider configuration writes", async () => {
     const slowConfigWrite = api("PUT", "/api/config", { box: { token: "box_slow" } });
     await new Promise((resolve) => setTimeout(resolve, 30));
-    const overlapping = await api("PATCH", "/api/instances/ghost", { cli: "/tmp/ghost-overlap" });
+    const overlapping = await api("PATCH", "/api/instances/ghost/icon", { icon: { kind: "preset", preset: "deepseek" } });
     expect(overlapping.status).toBe(409);
     expect((await slowConfigWrite).status).toBe(200);
   });

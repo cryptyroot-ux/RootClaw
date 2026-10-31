@@ -371,9 +371,16 @@ export async function mountChatTools(integrations: SendTurnInput["integrations"]
           if (!object(tool) || typeof tool.name !== "string" || !tool.name.trim() || originalNames.has(tool.name)) throw new Error("MCP server advertised an invalid or duplicate tool name");
           originalNames.add(tool.name);
           if (definitions.length + staged.length >= MCP_TOOL_COUNT) throw new Error("MCP tool count exceeds the 128-tool limit");
-          if (!object(tool.inputSchema) || tool.inputSchema.type !== "object") throw new Error("MCP tools require an object input schema");
-          if (Buffer.byteLength(JSON.stringify(tool.inputSchema)) > SCHEMA_BYTES) throw new Error("MCP tool schema exceeds the 64KB limit");
-          const schema = compileToolSchema(tool.inputSchema);
+          // One tool the model cannot be offered drops alone: the rest of its server, and the turn, carry on.
+          const unusable = !object(tool.inputSchema) || tool.inputSchema.type !== "object" ? "has no object input schema"
+            : Buffer.byteLength(JSON.stringify(tool.inputSchema)) > SCHEMA_BYTES ? "has a schema over the 64KB limit" : null;
+          let schema: ReturnType<typeof compileToolSchema> | undefined;
+          let why = unusable ? `it ${unusable}` : "";
+          if (!unusable) { try { schema = compileToolSchema(tool.inputSchema); } catch (error) { why = error instanceof Error ? error.message : "its schema does not compile"; } }
+          if (!schema) {
+            console.warn(`chat-mcp: ${server}: leaving out tool "${tool.name}": ${why}`);
+            continue;
+          }
           const [listed] = schemaProfile ? fitToolList([tool], schemaProfile, (line) => console.warn(`chat-mcp: ${server}: ${line}`)) : [tool];
           if (!object(listed) || !object(listed.inputSchema)) continue;
           const parameters = { ...listed.inputSchema };
