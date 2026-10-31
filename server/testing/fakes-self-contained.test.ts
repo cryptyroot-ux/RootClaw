@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 const HERE = dirname(fileURLToPath(import.meta.url));
 
 /** Fakes a test copies out of the repo: nothing relative may be imported, not even a sibling. */
-const COPIED_OUT = new Set(["fake-codex-app-server.ts"]);
+const COPIED_OUT = new Set<string>();
 
 /** Value imports only: `import type` is erased before the file runs. */
 const importSpecifiers = (source: string): string[] =>
@@ -22,9 +22,9 @@ describe("provider fakes stay self-contained", () => {
   );
 
   it("sees the fakes this guard exists for", () => {
-    expect(fakes).toContain("fake-codex-app-server.ts");
-    expect(fakes).toContain("fake-claude-cli.ts");
-    expect(fakes).toContain("fake-acp-cli.ts");
+    expect(fakes).toContain("fake-stdio-app-server.ts");
+    expect(fakes).toContain("fake-openai-live.ts");
+    expect(fakes).toContain("fake-cua-driver.ts");
   });
 
   it.each(fakes)("%s imports nothing from outside server/testing", (file) => {

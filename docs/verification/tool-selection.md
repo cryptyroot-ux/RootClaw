@@ -45,7 +45,6 @@ Install the official Pi CLI into a disposable prefix, then supply its absolute
 path. The scripts configure their own loopback synthetic provider:
 
 ```sh
-node --experimental-strip-types scripts/verify-pi-tool-scope.ts /absolute/path/to/pi
 node --experimental-strip-types scripts/verify-tool-scope.ts /absolute/path/to/grok
 pnpm build:server
 ```
