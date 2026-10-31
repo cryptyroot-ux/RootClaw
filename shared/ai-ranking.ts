@@ -26,7 +26,6 @@ interface SignInSnapshot {
   state: string;
   authenticated?: boolean;
   account?: { email?: string; organization?: string; method?: string };
-  chatgptPlan?: boolean;
   freeFallback?: boolean;
 }
 
@@ -34,6 +33,6 @@ interface SignInSnapshot {
 export function aiSignInKey(snapshot: SignInSnapshot): string {
   return JSON.stringify([
     snapshot.state, snapshot.authenticated ?? null, snapshot.account?.email ?? null, snapshot.account?.organization ?? null,
-    snapshot.account?.method ?? null, snapshot.chatgptPlan === true, snapshot.freeFallback === true,
+    snapshot.account?.method ?? null, snapshot.freeFallback === true,
   ]);
 }
