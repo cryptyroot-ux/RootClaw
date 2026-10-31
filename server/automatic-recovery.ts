@@ -14,7 +14,7 @@ export function startupBackups(bot: { fallback?: Backup[] }, recovery?: { enable
 
 /** An automatic switch must not strand the task without its tools or move its filesystem to another machine. */
 export function recoveryCapabilityError(from: Engine, to: Engine): string | undefined {
-  if (supportsWorkspaceFiles(from.driverKind) !== supportsWorkspaceFiles(to.driverKind)) {
+  if (supportsWorkspaceFiles(from.driverKind, from.capabilities) !== supportsWorkspaceFiles(to.driverKind, to.capabilities)) {
     return "The backup cannot use the same workspace.";
   }
   const tools = ["agentsMcp", "computerMcp", "composioMcp", "dataMcp", "highlevelMcp", "deviceMcp",

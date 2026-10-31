@@ -550,7 +550,7 @@ describe("OpenAI-compatible computer images", () => {
       { type: "text", text: "Screenshot result from tool call call_write:" },
       { type: "image_url", image_url: { url: `data:image/png;base64,${png}` } },
     ] });
-    expect(f.instance.adapter.capabilities).toMatchObject({ computerMcp: true, localComputerMcp: true, browserMcp: true, nativeImageInput: true });
+    expect(f.instance.adapter.capabilities).toMatchObject({ computerMcp: true, localComputerMcp: true, browserMcp: true, nativeImageInput: true, workspaceFiles: true });
   });
 
   it.each([

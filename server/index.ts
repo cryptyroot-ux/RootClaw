@@ -2908,7 +2908,7 @@ function previewSystemPrompt(bot: BotRecord) {
     destination: previewComputer,
     browserOn: caps?.browserMcp === true && builtInBrowserEnabled(cfg) && bot.browser !== false,
   });
-  const privateWorkspace = instance && supportsWorkspaceFiles(instance.driverKind);
+  const privateWorkspace = instance && supportsWorkspaceFiles(instance.driverKind, instance.adapter.capabilities);
   const built = buildSystemPrompt(persona, bot.soul ?? "", [
     { id: "user-profile", label: "About the user", text: userProfileSystemPrompt(teamHost.profileFor(CLOUD_TEAM ? botMainThread(bot.id) ?? "" : bot.threadId, cfg.profile)) },
     {
@@ -7863,7 +7863,7 @@ async function startTurn(
         createHash("sha256").update(JSON.stringify([...persistentConfig, soul])).digest("hex").slice(0, 16);
       const plannedConfig = sessionConfig(bot.soul);
       const skillAuthoring = skillAuthoringEnabled(cfg) && agentsMounted;
-      const skillCommandText = supportsWorkspaceFiles(instance.driverKind)
+      const skillCommandText = supportsWorkspaceFiles(instance.driverKind, instance.adapter.capabilities)
         ? skillsHost.expandSkillCommand(bot, threadId, providerText, instance)
         : providerText;
       const setupText = agentsMounted ? expandSetupTurnText(skillCommandText) : skillCommandText;
@@ -7942,7 +7942,7 @@ async function startTurn(
         attachCustomMcp(integrations, custom, cfg, { botId: bot.id, threadId });
         if (Object.keys(custom).length) Object.assign(integrations, chatAppsMcp.turnMounts(custom, bot.toolScope));
       }
-      const worksInWorkspace = supportsWorkspaceFiles(instance.driverKind);
+      const worksInWorkspace = supportsWorkspaceFiles(instance.driverKind, instance.adapter.capabilities);
       if (worksInWorkspace) {
         ensureWorkspace(bot.id, appLanguage());
         if (bot.memoryEnabled !== false) beginMemoryTurn(teamHost.layer(bot.id, threadId), threadId); botBox.lend(bot.id, threadId, teamHost.layerDirs(bot.id, threadId));
@@ -9806,7 +9806,7 @@ async function runClaimedGroupMemberTurn(
     !cardContinuation &&
     instance.adapter.capabilities.agentsMcp === true;
   if (instance.adapter.capabilities.agentsMcp === true) {
-    integrations.agents = agentsIntegration(bot.id, threadId, hop, skillAuthoring, internalGeneration, orchestration?.roomHandoffId, supportsWorkspaceFiles(instance.driverKind));
+    integrations.agents = agentsIntegration(bot.id, threadId, hop, skillAuthoring, internalGeneration, orchestration?.roomHandoffId, supportsWorkspaceFiles(instance.driverKind, instance.adapter.capabilities));
   }
   if (instance.adapter.capabilities.hooks === true && hooksEnabled()) {
     integrations.hooks = hooksIntegration(bot.id, threadId, internalGeneration);
@@ -10196,7 +10196,7 @@ async function runClaimedGroupMemberTurn(
   const roomTail = `\n\n(Reply to the conversation above as ${bot.name}.)${learnBlock}${heldReplay.block}${cardContinuation ? `\n\n${cardContinuation}` : ""}${coordinationReminder}${liveRosterBlock}`;
   const text = roomContext + roomTail;
 
-  const worksInWorkspace = supportsWorkspaceFiles(instance.driverKind);
+  const worksInWorkspace = supportsWorkspaceFiles(instance.driverKind, instance.adapter.capabilities);
   const workspace = worksInWorkspace ? ensureWorkspace(bot.id, appLanguage()) : undefined;
   // The room's folder pins at its first dispatch, so a room that already worked somewhere never has its folder moved.
   const cwd = workspace && cloudGuestOpened(threadId)

@@ -985,7 +985,7 @@ beforeAll(async () => {
               { name: "GMAIL_MANAGE_CONNECTIONS", description: "flow" },
               { name: "gmail_send_email", description: "bad case" },
               { name: "PLATFORM", description: "no service" },
-            ],
+            ].map((tool) => ({ ...tool, inputSchema: { type: "object", properties: {} } })),
           },
         }));
       }
@@ -8712,7 +8712,7 @@ describe("harness HTTP API", () => {
     }
   });
 
-  it("mounts the data-dashboards skill when the person asks for a dashboard", async () => {
+  it("mounts the data-dashboards skill, with the folder that holds its template, when the person asks for a dashboard", async () => {
     const bot = (await api("POST", "/api/bots", {})).body.bot;
     try {
       expect((await api("PATCH", `/api/bots/${bot.id}`, {
@@ -8724,8 +8724,9 @@ describe("harness HTTP API", () => {
       })).status).toBe(202);
       const seen = await readJsonFileWhenReady<{ systemPrompt?: string }>(fakeClaudeDump, 15_000);
       const system = modelSaw(seen);
-      // The native engine has no workspace folder, so the skill comes without a root to read its template from.
-      expect(system).toMatch(/<rootclaw-skill id="data-dashboards" version="[^"]+">/);
+      const root = /<rootclaw-skill id="data-dashboards" version="[^"]+" root="([^"]+)">/.exec(system)?.[1];
+      expect(root).toBeTruthy();
+      expect(existsSync(join(root!, "dashboard.html"))).toBe(true);
       expect(system).toContain("publish_page");
       expect(system).not.toContain('<rootclaw-skill id="create-verification-skill"');
     } finally {

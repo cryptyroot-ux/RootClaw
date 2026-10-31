@@ -13,7 +13,10 @@ import { DATA_DIR } from "./config.ts";
 export const WORKSPACES_DIR = join(DATA_DIR, "workspaces");
 export const TASK_WORKSPACES_DIR = join(DATA_DIR, "task-workspaces");
 
-export function supportsWorkspaceFiles(driverKind: string): boolean {
+/** Whether an engine works in a folder of its own: an engine that says so (the native chat engine has file tools whenever
+ * it has tools at all) is taken at its word; otherwise the driver kinds that never had file tools go without. */
+export function supportsWorkspaceFiles(driverKind: string, capabilities?: { workspaceFiles?: boolean }): boolean {
+  if (typeof capabilities?.workspaceFiles === "boolean") return capabilities.workspaceFiles;
   return !["grok", "openai-compat", "minimax", "mistral", "cerebras", "groq", "meta"].includes(driverKind);
 }
 

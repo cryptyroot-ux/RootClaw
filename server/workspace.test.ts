@@ -645,6 +645,13 @@ describe("workspace", () => {
     expect(supportsWorkspaceFiles("codex")).toBe(true);
   });
 
+  it("takes an engine's own word on working in a folder over its driver kind", () => {
+    // The native chat engine has file tools whenever it has tools, whichever provider it talks to.
+    expect(supportsWorkspaceFiles("openai-compat", { workspaceFiles: true })).toBe(true);
+    expect(supportsWorkspaceFiles("openai-compat", { workspaceFiles: false })).toBe(false);
+    expect(supportsWorkspaceFiles("openai-compat", {})).toBe(false);
+  });
+
   it("agents MCP enables targeted memory writes without promising native file reads", () => {
     writeMemoryFile(BOT, "# Memory\n- The user prefers CSV exports.\n");
     const prompt = memorySystemPrompt(BOT, { managedWrites: true, fileTools: false });

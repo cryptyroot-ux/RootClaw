@@ -256,6 +256,8 @@ export interface ProviderAdapter {
     highlevelMcp?: boolean;
     /** The driver can mount the phone apps MCP. */
     deviceMcp?: boolean;
+    /** The engine reads and writes files in the turn's folder (cwd), so it gets a workspace and skills their folders. */
+    workspaceFiles?: boolean;
     /** The engine accepts images in the prompt (gates composer paste). */
     images?: boolean;
     /** sendTurn consumes `images` as structured input, so dispatch strips the attachment path from `text`. */
