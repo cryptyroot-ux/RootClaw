@@ -24,3 +24,6 @@ onlyBuiltDependencies:
 overrides:
   dompurify: 3.4.17
   fast-uri: 3.1.9
+  # Dev/packaging tools (miniflare, electron tooling) pin undici 6.x/7.x releases with published advisories (audit D01).
+  undici@6: 6.29.1
+  undici@7: 7.30.1
