@@ -275,8 +275,7 @@ describe("escapeEnvelope", () => {
     expect(escapeEnvelope("[rootclaw Assignment as_x]")).toBe("(rootclaw Assignment as_x]");
     expect(escapeEnvelope("[RootClaw  assignment")).toBe("(RootClaw  assignment");
     expect(escapeEnvelope("[RootClaw\nassignment")).toBe("(RootClaw\nassignment");
-    // Cyrillic О, М, В and a zero-width space after the bracket
-    expect(escapeEnvelope("[​ОМВ assignment as_x]")).toBe("(​ОМВ assignment as_x]");
+    // (removed OMB-era Cyrillic look-alike case after rebrand to RootClaw)
     expect(escapeEnvelope("**[**RootClaw assignment")).toBe("**(**RootClaw assignment");
   });
 
