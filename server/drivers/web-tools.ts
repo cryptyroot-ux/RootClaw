@@ -60,6 +60,7 @@ export function privateAddress(address: string): boolean {
   const v4 = (hi: number, lo: number) => `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
   if (g.slice(0, 6).every((x) => x === 0)) return true; // ::, ::1 and IPv4-compatible ::a.b.c.d (deprecated)
   if (g.slice(0, 5).every((x) => x === 0) && g[5] === 0xffff) return privateV4(v4(g[6]!, g[7]!)); // ::ffff:a.b.c.d
+  if (g.slice(0, 4).every((x) => x === 0) && g[4] === 0xffff && g[5] === 0) return privateV4(v4(g[6]!, g[7]!)); // SIIT ::ffff:0:a.b.c.d (audit N05)
   if (g[0] === 0x64 && g[1] === 0xff9b) return true; // NAT64 64:ff9b::/96 (and the local-use /48) reaches IPv4 inside
   if (g[0] === 0x2002) return privateV4(v4(g[1]!, g[2]!)); // 6to4 carries its IPv4 in bits 16-47
   if (g[0] === 0x2001 && g[1] === 0) return true; // Teredo tunnels to an arbitrary IPv4
@@ -163,8 +164,10 @@ async function get(raw: string, signal: AbortSignal, options: WebOptions): Promi
 }
 
 const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: "\"", "#39": "'", apos: "'", nbsp: " " };
+/** A numeric entity outside Unicode (or a surrogate) decodes to U+FFFD instead of throwing (audit N04). */
+const codePoint = (n: number) => Number.isInteger(n) && n >= 0 && n <= 0x10ffff && !(n >= 0xd800 && n <= 0xdfff) ? String.fromCodePoint(n) : "\uFFFD";
 const decode = (text: string) => text.replace(/&(#\d+|#x[0-9a-f]+|\w+);/gi, (whole, code: string) =>
-  ENTITIES[code.toLowerCase()] ?? (code.startsWith("#x") ? String.fromCodePoint(parseInt(code.slice(2), 16)) : code.startsWith("#") ? String.fromCodePoint(Number(code.slice(1))) : whole));
+  ENTITIES[code.toLowerCase()] ?? (code.toLowerCase().startsWith("#x") ? codePoint(parseInt(code.slice(2), 16)) : code.startsWith("#") ? codePoint(Number(code.slice(1))) : whole));
 
 export function htmlToText(html: string): string {
   return decode(html.replace(/<(script|style|noscript|svg|head)[\s\S]*?<\/\1>/gi, " ").replace(/<!--[\s\S]*?-->/g, " ")

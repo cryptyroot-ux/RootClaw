@@ -1,6 +1,6 @@
 import { createServer, type Server } from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
-import { executeWebTool, operatorAllowsAddress, privateAddress, type WebOptions } from "./web-tools.ts";
+import { executeWebTool, htmlToText, operatorAllowsAddress, privateAddress, type WebOptions } from "./web-tools.ts";
 
 let server: Server | undefined;
 afterEach(() => new Promise<void>((resolve) => { if (server) server.close(() => resolve()); else resolve(); server = undefined; }));
@@ -87,5 +87,16 @@ describe("operator CIDR exceptions (fake-IP DNS)", () => {
     expect(operatorAllowsAddress("10.1.2.3", "10.0.0.0/8")).toBe(true);
     expect(operatorAllowsAddress("::1", "0.0.0.0/0")).toBe(false);
     expect(operatorAllowsAddress("198.18.0.1", "")).toBe(false);
+  });
+});
+
+describe("audit v2 web fixes", () => {
+  it("decodes an out-of-range numeric entity to U+FFFD instead of throwing (N04)", () => {
+    expect(htmlToText("<p>a&#99999999;b&#x110000;c&#xD800;d&#65;</p>")).toBe("a\uFFFDb\uFFFDc\uFFFDdA");
+  });
+  it("treats SIIT ::ffff:0:a.b.c.d as carrying its IPv4 address (N05)", () => {
+    expect(privateAddress("::ffff:0:127.0.0.1")).toBe(true);
+    expect(privateAddress("::ffff:0:10.0.0.1")).toBe(true);
+    expect(privateAddress("::ffff:0:8.8.8.8")).toBe(false);
   });
 });
