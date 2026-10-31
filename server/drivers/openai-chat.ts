@@ -28,7 +28,7 @@ import { applyPlanUpdate, carryPlan, completePlan, parseVerdict, pinPlan, PLAN_H
   takeCarriedPlan, unpinPlan, unverifiedNote, UPDATE_PLAN_DEFINITION, UPDATE_PLAN_TOOL, verifierPrompt, VERIFY_MAX_TOKENS, verifyRetryMessage,
   type TurnPlan } from "./plan-verify.ts";
 import { failoverHold, failoverKind } from "./failover.ts";
-import { classifyError, HttpStatusError, interruptibleDelay, nextRetryDelay, parseRetryAfter, RETRY_MAX_ATTEMPTS } from "./retry.ts";
+import { classifyError, HttpStatusError, interruptibleDelay, nextRetryDelay, parseRetryAfter, RETRY_MAX_ATTEMPTS, RETRYABLE_STATUSES } from "./retry.ts";
 import { plainFailureMessage } from "./engine-errors.ts";
 import { refusesRequestSize, RequestTooLargeError, sizeChange, smallerResend } from "./chat-size-limit.ts";
 import { compactTurnMessages, DEFAULT_KEEP_EXCHANGES, estimateRequestTokens, offloadToolOutput, READ_TOOL_OUTPUT_DEFINITION,
@@ -267,12 +267,18 @@ function refusedToolCall(status: number, body: string) {
   try { return toolCallRefusal(object(JSON.parse(body))?.error); } catch { return undefined; }
 }
 
-function completionError(json: CompletionJson, label: string): ChatProtocolError | null {
+function completionError(json: CompletionJson, label: string): Error | null {
   const message = providerError(json);
   if (!message) return null;
   const text = `provider returned a ${label}: ${message.slice(0, 200)}`;
   const refusal = toolCallRefusal(json.error);
-  return refusal ? new RejectedToolCallError(text, refusal) : new ChatProtocolError(text);
+  if (refusal) return new RejectedToolCallError(text, refusal);
+  // An error frame inside a 200 answer that carries a retryable status (OpenRouter sends an upstream 502/503/429 this
+  // way, e.g. {"error":{"code":502,"metadata":{"error_type":"provider_unavailable"}}}) is the same transient failure as
+  // that HTTP status, so it gets the same retry while nothing has streamed yet.
+  const code = Number((json.error as { code?: unknown } | undefined)?.code);
+  if (RETRYABLE_STATUSES.has(code)) return new HttpStatusError(text, code);
+  return new ChatProtocolError(text);
 }
 
 function refusedToolCallFailure(error: RejectedToolCallError, earlierSteps: boolean): string {

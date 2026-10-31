@@ -172,3 +172,42 @@ describe("a failed read does not fail the turn", () => {
     expect(done).toMatchObject({ ok: false, stopReason: "tool_error" });
   });
 });
+
+describe("an error frame inside a 200 stream", () => {
+  async function erroringProvider(code: number) {
+    let calls = 0;
+    const server = createServer(async (request, response) => {
+      for await (const _ of request) { /* drain */ }
+      if (request.url?.endsWith("/models")) { response.setHeader("content-type", "application/json"); response.end('{"data":[]}'); return; }
+      calls++;
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      if (calls === 1) {
+        response.write(": OPENROUTER PROCESSING\n\n");
+        response.end(`data: ${JSON.stringify({ choices: [], error: { code, message: "JSON error injected into SSE stream", metadata: { error_type: "provider_unavailable" } } })}\n\n`);
+        return;
+      }
+      response.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: "recovered" }, finish_reason: "stop" }] })}\n\n`);
+      response.end("data: [DONE]\n\n");
+    });
+    await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+    const instance = await OpenAICompatDriver.create({ instanceId: randomUUID(), displayName: "err", enabled: true,
+      config: { url: `http://127.0.0.1:${(server.address() as { port: number }).port}/v1`, apiKeyEnv: "FIXTURE_ERR_KEY" }, environment: { FIXTURE_ERR_KEY: "fixture-err-credential-9d" } });
+    const recorder = recordEvents(instance.adapter);
+    cleanups.push(async () => { recorder.stop(); await instance.dispose(); server.closeAllConnections(); await new Promise<void>((done) => server.close(() => done())); });
+    const threadId = randomUUID();
+    await instance.adapter.sendTurn({ threadId, text: "hi", model: "m", approvalMode: "full" });
+    return { done: await recorder.until((event) => event.type === "turn.completed"), calls: () => calls };
+  }
+
+  it("retries an in-stream upstream 502 before anything streamed, like an HTTP 502", async () => {
+    const run = await erroringProvider(502);
+    expect(run.done).toMatchObject({ ok: true });
+    expect(run.calls()).toBe(2);
+  });
+
+  it("does not retry a non-retryable in-stream error", async () => {
+    const run = await erroringProvider(400);
+    expect(run.done).toMatchObject({ ok: false });
+    expect(run.calls()).toBe(1);
+  });
+});
