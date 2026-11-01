@@ -64,7 +64,7 @@ const applier = createUpdateApplier({
   root, current: version, statusFile: join(root, "data", "update-apply.json"), restartMode: restartMode(), restartDelayMs: 100, healthyAfterMs: 300, diskCheck: () => null,
   restart: () => server.close(() => process.exit(75)),
 });
-server.listen(Number(process.env.PORT), "127.0.0.1");
+server.listen(Number(process.env.PORT), "127.0.0.1", () => applier.listening());
 `;
 
 function release(seed: string, version: string, extra: Record<string, string | null> = {}) {

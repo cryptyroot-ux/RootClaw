@@ -62,6 +62,7 @@ function fakeApplier(initial: Partial<ApplyStatus> = {}, refuse?: string) {
   const started: string[] = [];
   const applier: UpdateApplier = {
     status: () => status,
+    listening: () => {},
     busy: () => running,
     start: (latest) => {
       if (refuse) throw new ApplyRefused(refuse);

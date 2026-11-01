@@ -58,10 +58,10 @@ export const PREVIOUS_DIR = ".rootclaw-update-previous";
 export const STATUS_FILE = "update-apply.json";
 /** Failed starts of a new version before the launcher goes back to the previous one. */
 export const BOOT_ATTEMPTS = 2;
-/** A new version that stays up this long after loading the applier counts as started. */
+/** A new version that stays up this long after it starts listening counts as started. */
 export const HEALTHY_AFTER_MS = 30_000;
-/** Ctrl+C and a stop request end the server this way; they are not a failed start. */
-const STOP_CODES = new Set<number | null>([0, null, RESTART_EXIT_CODE, 130, 143]);
+/** Ctrl+C and a stop request end the server this way; they are not a failed start. A death by signal (no exit code) is. */
+const STOP_CODES = new Set<number | null>([0, RESTART_EXIT_CODE, 130, 143]);
 
 export interface RunResult { code: number | null; output: string }
 export type Runner = (command: string, args: readonly string[], options: { cwd: string; timeoutMs: number; env: NodeJS.ProcessEnv; onLine: (line: string) => void }) => Promise<RunResult>;
@@ -220,16 +220,7 @@ export function createUpdateApplier(options: ApplierOptions) {
       } else if (isActivePhase(saved.phase)) {
         Object.assign(next, { phase: "failed", error: "The update was interrupted (the server stopped while it ran). Run `git status` in the RootClaw folder before trying again.", finishedAt: now() });
       }
-      if (saved.boot && saved.to === options.current) {
-        // The new version got this far; once it has stayed up, it no longer needs the way back.
-        setTimeout(() => {
-          if (!status.boot) return;
-          rmSync(join(saved.boot!.root, PREVIOUS_DIR), { recursive: true, force: true });
-          set({ boot: undefined });
-        }, options.healthyAfterMs ?? HEALTHY_AFTER_MS).unref?.();
-      } else if (saved.boot) {
-        delete next.boot;
-      }
+      if (saved.boot && saved.to !== options.current) delete next.boot;
       save(next);
       return next;
     } catch {
@@ -370,6 +361,16 @@ export function createUpdateApplier(options: ApplierOptions) {
 
   return {
     status: (): ApplyStatus => ({ ...status, current: options.current }),
+    /** The server listens: a new version that stays up healthyAfterMs from now no longer needs the way back. */
+    listening() {
+      const boot = status.boot;
+      if (!boot) return;
+      setTimeout(() => {
+        if (!status.boot) return;
+        rmSync(join(boot.root, PREVIOUS_DIR), { recursive: true, force: true });
+        set({ boot: undefined });
+      }, options.healthyAfterMs ?? HEALTHY_AFTER_MS).unref?.();
+    },
     busy: () => running,
     /** Starts the update in the background; false when one is already running. */
     /** Throws ApplyRefused when it will not start at all. */

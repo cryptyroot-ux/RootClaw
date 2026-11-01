@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApplyRefused, BACKUP_DIR, BOOT_ATTEMPTS, commandEnv, createUpdateApplier, diskShortage, MIN_FREE_BYTES, MIN_FREE_INODES, PREVIOUS_DIR, recoverFailedUpdate, redactor, resolvePnpm, restartMode, spawnRunner, stopRunningCommands, type RunResult, type Runner } from "./update-apply.ts";
+import { ApplyRefused, BACKUP_DIR, BOOT_ATTEMPTS, commandEnv, createUpdateApplier, diskShortage, HEALTHY_AFTER_MS, MIN_FREE_BYTES, MIN_FREE_INODES, PREVIOUS_DIR, recoverFailedUpdate, redactor, resolvePnpm, restartMode, spawnRunner, stopRunningCommands, type RunResult, type Runner } from "./update-apply.ts";
 
 const dirs: string[] = [];
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
@@ -94,6 +94,7 @@ describe("one-click update of a git clone", () => {
     // The status survives the restart: the new server confirms it runs the version it was asked for, then lets the old build go.
     const booted = createUpdateApplier({ root: c.root, current: "1.1.0", statusFile: file, restartMode: "launcher", restart: vi.fn(), healthyAfterMs: 0 });
     expect(booted.status()).toMatchObject({ phase: "done", to: "1.1.0", current: "1.1.0", restart: "auto" });
+    booted.listening();
     await vi.waitFor(() => expect(JSON.parse(readFileSync(file, "utf8")).boot).toBeUndefined());
     expect(existsSync(join(c.root, PREVIOUS_DIR))).toBe(false);
   });
@@ -266,6 +267,36 @@ describe("a new version that crashes on start", () => {
     expect(await recoverFailedUpdate(dataDir, 1, deps(c))).toBe(false);
     expect(createUpdateApplier({ root: c.root, current: "1.0.0", statusFile: file, restartMode: "launcher", restart: vi.fn() }).status())
       .toMatchObject({ phase: "failed", rolledBack: true });
+  });
+
+  it("counts a start killed by a signal (exit code null, e.g. the OOM killer) as a failed start", async () => {
+    const { c, dataDir, file } = await updated();
+    c.calls.length = 0;
+    expect(await recoverFailedUpdate(dataDir, null, deps(c))).toBe(true);
+    expect(JSON.parse(readFileSync(file, "utf8")).boot.attempts).toBe(1);
+    expect(await recoverFailedUpdate(dataDir, null, deps(c))).toBe(true);
+    expect(c.calls).toEqual([["git", "reset", "--hard", "--quiet", PREV], ["pnpm", "install", "--frozen-lockfile"]]);
+    expect(c.read("dist/index.html")).toBe("old web");
+    expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({ phase: "failed", rolledBack: true });
+  });
+
+  it("starts the healthy countdown when the new server listens, not when it loads", async () => {
+    const { c, file } = await updated();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const booted = createUpdateApplier({ root: c.root, current: "1.1.0", statusFile: file, restartMode: "launcher", restart: vi.fn() });
+      vi.advanceTimersByTime(HEALTHY_AFTER_MS * 2);
+      expect(JSON.parse(readFileSync(file, "utf8")).boot).toMatchObject({ prev: PREV, attempts: 0 });
+      expect(existsSync(join(c.root, PREVIOUS_DIR))).toBe(true);
+      booted.listening();
+      vi.advanceTimersByTime(HEALTHY_AFTER_MS - 1);
+      expect(JSON.parse(readFileSync(file, "utf8")).boot).toBeDefined();
+      vi.advanceTimersByTime(1);
+      expect(JSON.parse(readFileSync(file, "utf8")).boot).toBeUndefined();
+      expect(existsSync(join(c.root, PREVIOUS_DIR))).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("leaves a clean stop, a restart, and a server with no pending update alone", async () => {
