@@ -100,3 +100,18 @@ it("the container launcher stops on any other exit, and on a 75 that arrives whi
   expect(await looping).toBe(RESTART_EXIT_CODE);
   expect(runs).toBe(6);
 });
+
+it("`serve` gives a new version that stops while starting to the update's recovery, and starts again when it went back", async () => {
+  const log = vi.spyOn(console, "log").mockImplementation(() => {});
+  try {
+    const codes = [1, 1, 0];
+    const asked: Array<[string, number]> = [];
+    const answers = [true, true];
+    let runs = 0;
+    const recover = async (dataDir: string, code: number) => { asked.push([dataDir, code]); return answers.shift() ?? false; };
+    expect(await serveUntilStopped(options, async () => { runs++; return codes.shift()!; }, Date.now, recover)).toBe(0);
+    expect(runs).toBe(3);
+    expect(asked).toEqual([["/tmp/rootclaw", 1], ["/tmp/rootclaw", 1], ["/tmp/rootclaw", 0]]);
+    expect(await serveUntilStopped(options, async () => 1, Date.now, async () => false)).toBe(1);
+  } finally { log.mockRestore(); }
+});

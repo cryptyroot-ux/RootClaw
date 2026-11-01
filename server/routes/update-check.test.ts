@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { json, readBody } from "../harness/http.ts";
 import { requiredScope, type RequestAuth } from "../request-auth.ts";
-import type { ApplyStatus, UpdateApplier } from "../update-apply.ts";
+import { ApplyRefused, type ApplyStatus, type UpdateApplier } from "../update-apply.ts";
 import type { UpdateCheck } from "../update-check.ts";
 import { dispatchRoutes } from "./table.ts";
 import { createUpdateCheckRoutes, selfUpdateRefusal } from "./update-check.ts";
@@ -56,7 +56,7 @@ describe("update check route", () => {
 
 const available: UpdateCheck = { current: "0.1.92", install: "git", latest: "0.1.93", available: true };
 
-function fakeApplier(initial: Partial<ApplyStatus> = {}) {
+function fakeApplier(initial: Partial<ApplyStatus> = {}, refuse?: string) {
   let status: ApplyStatus = { phase: "idle", current: "0.1.92", log: [], ...initial };
   let running = false;
   const started: string[] = [];
@@ -64,6 +64,7 @@ function fakeApplier(initial: Partial<ApplyStatus> = {}) {
     status: () => status,
     busy: () => running,
     start: (latest) => {
+      if (refuse) throw new ApplyRefused(refuse);
       if (running) return false;
       running = true;
       started.push(latest);
@@ -128,6 +129,19 @@ describe("one-click update routes", () => {
     expect(await pending.json()).toMatchObject({ error: "v0.1.93 is already installed. Restart RootClaw to run it." });
     const broken = await serve(async () => { throw new Error("offline"); }, fakeApplier().applier);
     expect((await post(broken)).status).toBe(502);
+  });
+
+  it("answer a release tag that is not a version, or a refused start, with a JSON error instead of a crash", async () => {
+    const odd = fakeApplier();
+    const oddTag = await serve(async () => ({ ...available, latest: "nightly-2026-11-01" }), odd.applier);
+    const bad = await post(oddTag);
+    expect(bad.status).toBe(502);
+    expect(await bad.json()).toMatchObject({ error: "The newest release (nightly-2026-11-01) is not a version number RootClaw can install. Update by hand from the release page." });
+    expect(odd.started).toEqual([]);
+    const leftover = await serve(async () => available, fakeApplier({}, "A saved build from an earlier update is still in .rootclaw-update-backup.").applier);
+    const refused = await post(leftover);
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toMatchObject({ error: "A saved build from an earlier update is still in .rootclaw-update-backup." });
   });
 
   it("offer self-update only on a git clone, off Windows, unless switched off", () => {

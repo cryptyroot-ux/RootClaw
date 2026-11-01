@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { BACKUP_DIR, commandEnv, createUpdateApplier, diskShortage, MIN_FREE_BYTES, MIN_FREE_INODES, redactor, resolvePnpm, restartMode, type RunResult, type Runner } from "./update-apply.ts";
+import { ApplyRefused, BACKUP_DIR, BOOT_ATTEMPTS, commandEnv, createUpdateApplier, diskShortage, MIN_FREE_BYTES, MIN_FREE_INODES, PREVIOUS_DIR, recoverFailedUpdate, redactor, resolvePnpm, restartMode, spawnRunner, stopRunningCommands, type RunResult, type Runner } from "./update-apply.ts";
 
 const dirs: string[] = [];
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
@@ -87,9 +87,15 @@ describe("one-click update of a git clone", () => {
     expect(c.calls).toContainEqual(["pnpm", "install", "--frozen-lockfile"]);
     expect(c.read("dist/index.html")).toBe("new web");
     expect(existsSync(join(c.root, BACKUP_DIR))).toBe(false);
-    // The status survives the restart: the new server confirms it runs the version it was asked for.
-    expect(createUpdateApplier({ root: c.root, current: "1.1.0", statusFile: join(c.root, "data", "update-apply.json"), restartMode: "launcher", restart: vi.fn() }).status())
-      .toMatchObject({ phase: "done", to: "1.1.0", current: "1.1.0", restart: "auto" });
+    // The old build stays until the new one has booted and stayed up.
+    expect(readFileSync(join(c.root, PREVIOUS_DIR, "dist", "index.html"), "utf8")).toBe("old web");
+    const file = join(c.root, "data", "update-apply.json");
+    expect(JSON.parse(readFileSync(file, "utf8")).boot).toEqual({ root: c.root, prev: PREV, branch: "main", attempts: 0 });
+    // The status survives the restart: the new server confirms it runs the version it was asked for, then lets the old build go.
+    const booted = createUpdateApplier({ root: c.root, current: "1.1.0", statusFile: file, restartMode: "launcher", restart: vi.fn(), healthyAfterMs: 0 });
+    expect(booted.status()).toMatchObject({ phase: "done", to: "1.1.0", current: "1.1.0", restart: "auto" });
+    await vi.waitFor(() => expect(JSON.parse(readFileSync(file, "utf8")).boot).toBeUndefined());
+    expect(existsSync(join(c.root, PREVIOUS_DIR))).toBe(false);
   });
 
   it("refuses a clone with uncommitted changes before touching anything", async () => {
@@ -185,7 +191,7 @@ describe("one-click update of a git clone", () => {
     expect(a.start("1.1.0")).toBe(true);
     expect(a.busy()).toBe(true);
     expect(a.start("1.1.0")).toBe(false);
-    expect(() => createUpdateApplier({ root: c.root, current: "1", statusFile: null, restartMode: "none", restart: vi.fn() }).start("1.1.0; rm -rf /")).toThrow(/Not a release version/);
+    expect(() => createUpdateApplier({ root: c.root, current: "1", statusFile: null, restartMode: "none", restart: vi.fn() }).start("1.1.0; rm -rf /")).toThrow(/not a release version/);
     release();
     await settle(a);
     expect(c.calls.filter((call) => call[1] === "fetch")).toHaveLength(1);
@@ -211,6 +217,100 @@ describe("one-click update of a git clone", () => {
     expect(createUpdateApplier({ root: c.root, current: "1.0.0", statusFile: file, restartMode: "launcher", restart: vi.fn() }).status())
       .toMatchObject({ phase: "failed", error: expect.stringMatching(/interrupted/) });
   });
+
+  it("refuses to start over a backup a failed rollback left behind, and never deletes it", async () => {
+    const c = clone();
+    c.write(`${BACKUP_DIR}/dist/index.html`, "saved web");
+    const a = applier(c);
+    expect(() => a.start("1.1.0")).toThrow(ApplyRefused);
+    expect(() => a.start("1.1.0")).toThrow(/\.rootclaw-update-backup/);
+    expect(c.calls).toEqual([]);
+    expect(a.busy()).toBe(false);
+    expect(c.read(`${BACKUP_DIR}/dist/index.html`)).toBe("saved web");
+    expect(() => a.start("1.1.0; rm -rf /")).toThrow(ApplyRefused);
+  });
+});
+
+describe("a new version that crashes on start", () => {
+  async function updated(spec: Clone = {}) {
+    const c = clone(spec);
+    const a = applier(c);
+    a.start("1.1.0");
+    expect((await settle(a)).phase).toBe("restarting");
+    // The new build is in place; the launcher now watches it start.
+    return { c, dataDir: join(c.root, "data"), file: join(c.root, "data", "update-apply.json") };
+  }
+  const deps = (c: ReturnType<typeof clone>) => ({ run: c.run, env: { PATH: "" }, nodeDir: c.bin, log: () => {} });
+
+  it("gets another start first, then goes back to the previous commit, build and dependencies", async () => {
+    const { c, dataDir, file } = await updated();
+    c.calls.length = 0;
+    expect(BOOT_ATTEMPTS).toBe(2);
+    expect(await recoverFailedUpdate(dataDir, 1, deps(c))).toBe(true);
+    expect(c.calls).toEqual([]);
+    expect(JSON.parse(readFileSync(file, "utf8")).boot.attempts).toBe(1);
+    const timeouts: unknown[] = [];
+    const run: Runner = (command, args, opts) => { timeouts.push(opts.timeoutMs); return c.run(command, args, opts); };
+    expect(await recoverFailedUpdate(dataDir, 1, { ...deps(c), run })).toBe(true);
+    expect(c.calls).toEqual([["git", "reset", "--hard", "--quiet", PREV], ["pnpm", "install", "--frozen-lockfile"]]);
+    expect(timeouts.every((ms) => typeof ms === "number" && ms >= 60_000)).toBe(true);
+    expect(c.read("dist/index.html")).toBe("old web");
+    expect(c.read("dist-server/index.js")).toBe("old server");
+    expect(existsSync(join(c.root, PREVIOUS_DIR))).toBe(false);
+    const saved = JSON.parse(readFileSync(file, "utf8"));
+    expect(saved).toMatchObject({ phase: "failed", rolledBack: true, to: "1.1.0" });
+    // The page adds "Rolled back: RootClaw is still on v1.0.0." to this.
+    expect(saved.error).toBe("v1.1.0 was installed but stopped while starting, twice.");
+    expect(saved.boot).toBeUndefined();
+    // The old version starting again is now an ordinary start: a later crash is passed through.
+    expect(await recoverFailedUpdate(dataDir, 1, deps(c))).toBe(false);
+    expect(createUpdateApplier({ root: c.root, current: "1.0.0", statusFile: file, restartMode: "launcher", restart: vi.fn() }).status())
+      .toMatchObject({ phase: "failed", rolledBack: true });
+  });
+
+  it("leaves a clean stop, a restart, and a server with no pending update alone", async () => {
+    const { c, dataDir, file } = await updated();
+    for (const code of [0, 75, 130, 143]) expect(await recoverFailedUpdate(dataDir, code, deps(c))).toBe(false);
+    expect(JSON.parse(readFileSync(file, "utf8")).boot.attempts).toBe(0);
+    const empty = mkdtempSync(join(tmpdir(), "rootclaw-apply-"));
+    dirs.push(empty);
+    expect(await recoverFailedUpdate(empty, 1, deps(c))).toBe(false);
+  });
+
+  it("keeps the saved build and says how to restore it when going back fails", async () => {
+    const { c, dataDir, file } = await updated({ fail: (call) => call[1] === "reset" });
+    await recoverFailedUpdate(dataDir, 1, deps(c));
+    expect(await recoverFailedUpdate(dataDir, 1, deps(c))).toBe(false);
+    expect(existsSync(join(c.root, PREVIOUS_DIR, "dist", "index.html"))).toBe(true);
+    const saved = JSON.parse(readFileSync(file, "utf8"));
+    expect(saved).toMatchObject({ phase: "failed", rolledBack: false });
+    expect(saved.error).toMatch(new RegExp(`git reset --hard ${PREV}`));
+    expect(saved.error).toMatch(/\.rootclaw-update-previous/);
+    expect(saved.boot).toBeUndefined();
+  });
+
+  it("tells a server without the rootclaw launcher how to go back by hand", async () => {
+    const c = clone();
+    const a = applier(c, { restartMode: "systemd" });
+    a.start("1.1.0");
+    const status = await settle(a);
+    expect(status.log.join("\n")).toMatch(new RegExp(`If v1\\.1\\.0 does not start, go back with: git reset --hard ${PREV}`));
+  });
+});
+
+describe("shutting down during an update", () => {
+  it.skipIf(process.platform === "win32")("stops the whole command group so no git or pnpm keeps writing", async () => {
+    const pids: number[] = [];
+    const script = "const c=require('node:child_process').spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});console.log(c.pid);setInterval(()=>{},1000)";
+    const running = spawnRunner(process.execPath, ["-e", script], { cwd: tmpdir(), timeoutMs: 60_000, env: process.env, onLine: (line) => pids.push(Number(line)) });
+    await vi.waitFor(() => expect(pids).toHaveLength(1), { timeout: 5_000 });
+    const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+    expect(alive(pids[0]!)).toBe(true);
+    stopRunningCommands();
+    expect((await running).code).toBeNull();
+    await vi.waitFor(() => expect(alive(pids[0]!)).toBe(false), { timeout: 5_000 });
+    expect(process.listeners("exit")).not.toContain(stopRunningCommands);
+  });
 });
 
 describe("update commands", () => {
@@ -221,6 +321,9 @@ describe("update commands", () => {
       PATH: ["/opt/node/bin", "/usr/bin"].join(delimiter), HOME: "/root", NODE_OPTIONS: "--max-old-space-size=4096", GIT_TERMINAL_PROMPT: "0", COREPACK_ENABLE_DOWNLOAD_PROMPT: "0",
     });
     expect(commandEnv({}, "/n").NODE_OPTIONS).toBe("--max-old-space-size=6144");
+    // The ssh agent's socket is a path, not a secret: git over ssh needs it.
+    expect(commandEnv({ SSH_AUTH_SOCK: "/tmp/ssh-x/agent.1", GH_AUTH_TOKEN: "t0k3n-value" }, "/n")).toMatchObject({ SSH_AUTH_SOCK: "/tmp/ssh-x/agent.1" });
+    expect(commandEnv({ GH_AUTH_TOKEN: "t0k3n-value" }, "/n").GH_AUTH_TOKEN).toBeUndefined();
     const redact = redactor(env);
     expect(redact("fatal: https://user:ghp_x@github.com/a.git and sk-or-abcdef123 hunter22hunter")).toBe("fatal: https://***@github.com/a.git and [redacted] [redacted]");
     expect(redact("x".repeat(400))).toHaveLength(301);
