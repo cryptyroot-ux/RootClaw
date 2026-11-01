@@ -25,25 +25,58 @@ function withoutLeadingTurnClock(suffix: string): string {
   return end === -1 ? suffix : suffix.slice(end);
 }
 
-/** Only a leading Claude update wrapped around captured raw user input is
+const CLAUDE_VOLATILE_PREFIX = "<system-reminder>\nThis part of your instructions changed since this session started. It replaces the earlier copy:\n\n";
+const NATIVE_VOLATILE_PREFIX = "Context from RootClaw updated since this conversation started; it replaces any earlier copy:\n\n";
+
+/** Only a leading product update wrapped around captured raw user input is
  * an instruction surface. User copies and unproven inputs fail closed. */
 function volatileInstructions(prompt: string, messages: WorldSnapshot["threads"][string]): string {
   try {
-    const envelope = JSON.parse(prompt) as { type?: string; message?: { role?: string; content?: unknown } };
-    const content = envelope?.message?.content;
-    if (envelope?.type !== "user" || envelope.message?.role !== "user" || typeof content !== "string") return "";
+    const content = deliveredContent(prompt);
+    if (!content) return "";
     if (messages.some(message => message.role === "user" && message.text === content)) return "";
-    const prefix = "<system-reminder>\nThis part of your instructions changed since this session started. It replaces the earlier copy:\n\n";
-    if (!content.startsWith(prefix)) return "";
-    const closing = "\n</system-reminder>";
-    const end = content.indexOf(closing, prefix.length);
-    if (end === -1) return "";
-    const suffix = withoutLeadingTurnClock(content.slice(end + closing.length));
-    if (!messages.some(message => message.role === "user" && typeof message.text === "string" && suffix === "\n\n" + message.text)) return "";
-    return content.slice(prefix.length, end);
+    return claudeVolatileBody(content, messages) || nativeVolatileBody(content, messages);
   } catch {
     return "";
   }
+}
+
+function deliveredContent(prompt: string): string {
+  const parsed = JSON.parse(prompt) as unknown;
+  if (typeof parsed === "string") return parsed;
+  if (!parsed || typeof parsed !== "object") return "";
+  const envelope = parsed as { type?: string; message?: { role?: string; content?: unknown } };
+  return envelope.type === "user" && envelope.message?.role === "user" && typeof envelope.message.content === "string"
+    ? envelope.message.content
+    : "";
+}
+
+function claudeVolatileBody(content: string, messages: WorldSnapshot["threads"][string]): string {
+  if (!content.startsWith(CLAUDE_VOLATILE_PREFIX)) return "";
+  const closing = "\n</system-reminder>";
+  const end = content.indexOf(closing, CLAUDE_VOLATILE_PREFIX.length);
+  if (end === -1) return "";
+  const suffix = withoutLeadingTurnClock(content.slice(end + closing.length));
+  if (!messages.some(message => message.role === "user" && typeof message.text === "string" && suffix === "\n\n" + message.text)) return "";
+  return content.slice(CLAUDE_VOLATILE_PREFIX.length, end);
+}
+
+function nativeVolatileBody(content: string, messages: WorldSnapshot["threads"][string]): string {
+  if (!content.startsWith(NATIVE_VOLATILE_PREFIX)) return "";
+  const rest = content.slice(NATIVE_VOLATILE_PREFIX.length);
+  const text = messages
+    .flatMap(message => message.role === "user" && typeof message.text === "string" && message.text ? [message.text] : [])
+    .filter(entry => rest.endsWith("\n\n" + entry))
+    .sort((left, right) => right.length - left.length)[0];
+  if (text === undefined) return "";
+  const tail = "\n\n" + text;
+  const head = rest.slice(0, rest.length - tail.length);
+  const lead = "\n\n" + TURN_CLOCK_LEAD;
+  const at = head.lastIndexOf(lead);
+  const clockTrails = at !== -1 && !head.slice(at + lead.length).includes("\n");
+  const candidate = (clockTrails ? head.slice(at) : "") + tail;
+  if (withoutLeadingTurnClock(candidate) !== tail) return "";
+  return clockTrails ? head.slice(0, at) : head;
 }
 
 export function evaluateAssertions(assertions: Assertion[], world: WorldSnapshot): AssertionResult[] {

@@ -10,8 +10,8 @@ afterEach(async () => { await fake?.stop(); fake = undefined; });
 const post = (body: Record<string, unknown>, signal?: AbortSignal) => fetch(`${fake!.url}/chat/completions`, {
   method: "POST", body: JSON.stringify({ model: "fixture-model", stream: true, ...body }), signal });
 /** The streamed reply's text and tool calls. */
-async function turn(messages: unknown[], signal?: AbortSignal) {
-  const response = await post({ messages }, signal);
+async function turn(messages: unknown[], signal?: AbortSignal, extra: Record<string, unknown> = {}) {
+  const response = await post({ messages, ...extra }, signal);
   const text = await response.text();
   const deltas = text.split("\n").filter((line) => line.startsWith("data: {")).map((line) => JSON.parse(line.slice(6)).choices?.[0]?.delta ?? {});
   return { status: response.status, text: deltas.map((delta) => delta.content ?? "").join(""),
@@ -127,5 +127,84 @@ describe("the scriptable native fake", () => {
     writeFileSync(setupFile, "[]");
     expect(await once("You write the answer options for the first message of a new bot")).toBe("[]");
     expect(existsSync(dump)).toBe(false);
+  });
+
+  it("replays a room plan, keeps plan-only tool keys in evidence, and holds a gated teammate", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fake-chat-"));
+    const planPath = join(dir, "room-plan.json");
+    const gate = join(dir, "gate");
+    const [sender, teammate] = ["bot-sender", "bot-teammate"];
+    writeFileSync(planPath, JSON.stringify({
+      [sender]: {
+        steps: [{ arguments: { bot_ids: [teammate], request_key: "map-check", message: "look" } }],
+        reply: "Sent.",
+        resumeReply: "The teammate finished.",
+      },
+      [teammate]: { gateFile: gate, reply: "Done." },
+    }));
+    fake = await startFakeOpenAiChat({ FAKE_CHAT_ROOM_PLAN: planPath });
+    const system = (id: string, thread: string) => "File locations for this bot (absolute paths): " + JSON.stringify({
+      sharedBotFolder: "/tmp/workspaces/" + id, currentWorkingFolder: "/tmp/task-workspaces/" + id + "/" + thread,
+    });
+    const loader = { type: "function", function: { name: "load_tools", description: "Load more tools.\nagents_coordinate_bots: Ask teammates.", parameters: { type: "object", properties: { names: { type: "array" } }, additionalProperties: false } } };
+    const coordinate = { type: "function", function: { name: "agents_coordinate_bots", parameters: { type: "object", additionalProperties: false, properties: { bot_ids: {}, message: {} }, required: ["bot_ids", "message"] } } };
+    const senderSystem = system(sender, "thread-1");
+    expect((await turn([{ role: "system", content: senderSystem }, { role: "user", content: "ask" }], undefined, { tools: [loader] })).calls)
+      .toEqual([["load_tools", { names: ["agents_coordinate_bots"] }]]);
+    const called = await turn([
+      { role: "system", content: senderSystem },
+      { role: "user", content: "ask" },
+      { role: "assistant", tool_calls: [{ id: "c1", type: "function", function: { name: "load_tools", arguments: JSON.stringify({ names: ["agents_coordinate_bots"] }) } }] },
+      { role: "tool", tool_call_id: "c1", content: JSON.stringify({ ok: true, result: "Loaded agents_coordinate_bots" }) },
+    ], undefined, { tools: [loader, coordinate] });
+    expect(called.calls).toEqual([["agents_coordinate_bots", { bot_ids: [teammate], message: "look" }]]);
+    expect(existsSync(planPath + ".evidence.jsonl")).toBe(false);
+    let teammateDone = false;
+    const teammateTurn = turn([{ role: "system", content: system(teammate, "thread-2") }, { role: "user", content: "work" }])
+      .then((result) => { teammateDone = true; return result; });
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(teammateDone).toBe(false);
+    const answered = await turn([
+      { role: "system", content: senderSystem },
+      { role: "user", content: "ask" },
+      { role: "assistant", tool_calls: [{ id: "c1", type: "function", function: { name: "load_tools", arguments: "{}" } }] },
+      { role: "tool", tool_call_id: "c1", content: JSON.stringify({ ok: true, result: "loaded" }) },
+      { role: "assistant", tool_calls: [{ id: "c2", type: "function", function: { name: "agents_coordinate_bots", arguments: JSON.stringify({ bot_ids: [teammate], message: "look" }) } }] },
+      { role: "tool", tool_call_id: "c2", content: JSON.stringify({ ok: true, result: "queued" }) },
+    ]);
+    expect(answered.text).toBe("Sent.");
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(teammateDone).toBe(false);
+    writeFileSync(gate, "");
+    expect((await teammateTurn).text).toBe("Done.");
+    const rows = readFileSync(planPath + ".evidence.jsonl", "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    expect(rows.map((row) => row.botId)).toEqual([sender, teammate]);
+    expect(rows[0]).toMatchObject({ turnIndex: 0, threadId: "thread-1", evidence: [{ step: { arguments: { bot_ids: [teammate], request_key: "map-check", message: "look" } } }] });
+    const resumed = await turn([{ role: "system", content: senderSystem }, { role: "user", content: "Your downstream room requests have settled. Review." }]);
+    expect(resumed.text).toBe("The teammate finished.");
+  });
+
+  it("refuses an indexed turn the plan does not have, and a tool outcome the plan did not declare", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fake-chat-"));
+    const planPath = join(dir, "room-plan.json");
+    const id = "bot-a";
+    writeFileSync(planPath, JSON.stringify({
+      [id]: { turns: [{ steps: [{ tool: "shell", arguments: { command: "nope" } }], reply: "ran" }] },
+    }));
+    fake = await startFakeOpenAiChat({ FAKE_CHAT_ROOM_PLAN: planPath });
+    const system = "File locations for this bot (absolute paths): " + JSON.stringify({ sharedBotFolder: "/tmp/workspaces/" + id, currentWorkingFolder: "/tmp/task-workspaces/" + id + "/thread-9" });
+    const tools = [{ type: "function", function: { name: "shell", parameters: { type: "object", properties: { command: {} }, additionalProperties: false } } }];
+    const history = [{ role: "system", content: system }, { role: "user", content: "go" }];
+    expect((await turn(history, undefined, { tools })).calls).toEqual([["shell", { command: "nope" }]]);
+    const refused = await turn([
+      ...history,
+      { role: "assistant", tool_calls: [{ id: "c", type: "function", function: { name: "shell", arguments: JSON.stringify({ command: "nope" }) } }] },
+      { role: "tool", tool_call_id: "c", content: JSON.stringify({ ok: false, result: "denied" }) },
+    ], undefined, { tools });
+    expect(refused.status).toBe(500);
+    const evidence = planPath + ".evidence.jsonl";
+    expect(JSON.parse(readFileSync(evidence, "utf8")).evidence[0].response.result.isError).toBe(true);
+    expect((await turn([{ role: "system", content: system }, { role: "user", content: "again" }])).status).toBe(500);
+    expect(readFileSync(evidence, "utf8").trim().split("\n")).toHaveLength(1);
   });
 });

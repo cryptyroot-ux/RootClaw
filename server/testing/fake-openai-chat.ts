@@ -24,8 +24,11 @@
 // One-shot helpers (non-streamed requests: titles, memory upkeep, setup answers) never touch `dump`:
 //   setupFile    the new bot's setup-card answers; missing fails the call (…_SETUP_FILE); setupDump records its prompt
 //   textFile     every other one-shot's reply; missing or "__FAIL__" fails the call (…_TEXT_FILE); textDump records it
+// FAKE_CHAT_ROOM_PLAN (FAKE_CLAUDE_ROOM_PLAN) is a room-plan file, re-read on every streamed request. A missing or
+// unreadable file, or a bot the plan does not name, falls through to the script above. One-shots never consume a turn.
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
-import { createServer, type Server } from "node:http";
+import { createServer, type Server, type ServerResponse } from "node:http";
+import { basename } from "node:path";
 
 export const FAKE_OPENAI_MODEL = "fixture-model";
 
@@ -90,6 +93,13 @@ export async function startFakeOpenAiChat(env: NodeJS.ProcessEnv = {}): Promise<
   let live: FakeScript = {};
   let replyIndex = 0;
   let streamedCount = 0;
+  const unfinished = new Set<string>();
+  let evidenceChain = Promise.resolve();
+  const writeEvidence = (path: string, row: unknown): Promise<void> => {
+    const run = evidenceChain.then(() => { appendFileSync(path, `${JSON.stringify(row)}\n`); });
+    evidenceChain = run.then(() => undefined, () => undefined);
+    return run;
+  };
   const current = (): FakeScript => {
     const file = env.FAKE_CHAT_SCRIPT && existsSync(env.FAKE_CHAT_SCRIPT) ? json<FakeScript>(readFileSync(env.FAKE_CHAT_SCRIPT, "utf8")) ?? {} : {};
     return { ...base, ...file, ...live };
@@ -140,6 +150,8 @@ export async function startFakeOpenAiChat(env: NodeJS.ProcessEnv = {}): Promise<
     if (script.dump) writeFileSync(script.dump, JSON.stringify({ model, prompt, systemPrompt: __systemPrompt, cwd: __cwd,
       messages, tools: body.tools ?? [], mcpConfig: { mcpServers: mountedServers(Array.isArray(body.tools) ? body.tools : []) } }, null, 2));
     if (newTurn && script.prompts && body.stream === true) appendFileSync(script.prompts, `${JSON.stringify(prompt)}\n`);
+    const system = messages.filter((message) => message.role === "system").map((message) => textOf(message.content)).join("\n");
+    if (await replayRoomPlan({ env, res, body, messages, model, prompt, system, unfinished, writeEvidence })) return;
     const route = script.routes?.find((entry) => { try { return new RegExp(entry.match).test(prompt); } catch { return false; } });
     const mode = route?.mode ?? script.mode ?? "happy";
     if (mode === "error") {
@@ -223,4 +235,254 @@ function mountedServers(tools: unknown[]): Record<string, { tools: string[] }> {
     (servers[server] ??= { tools: [] }).tools.push(name.slice(server.length + 1));
   }
   return servers;
+}
+
+const SETTLED = "Your downstream room requests have settled.";
+const LOCATIONS = "File locations for this bot (absolute paths): ";
+
+interface PlanStep { tool?: string; arguments?: Record<string, unknown>; expectError?: boolean }
+interface PlanTurn {
+  steps?: PlanStep[];
+  resumeSteps?: PlanStep[];
+  reply?: string;
+  resumeReply?: string;
+  gateFile?: string;
+  delayMs?: number;
+  fail?: boolean;
+  turns?: PlanTurn[];
+}
+interface ToolDef { name: string; parameters: { properties?: Record<string, unknown>; additionalProperties?: boolean } }
+type ChatMessage = Message & { tool_call_id?: string; tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: string } }> };
+
+function fileLocations(system: string): { currentWorkingFolder?: string; sharedBotFolder?: string } | undefined {
+  const at = system.indexOf(LOCATIONS);
+  if (at < 0 || system[at + LOCATIONS.length] !== "{") return undefined;
+  const start = at + LOCATIONS.length;
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = start; i < system.length; i++) {
+    const ch = system[i]!;
+    if (inString) {
+      if (escape) escape = false;
+      else if (ch === "\\") escape = true;
+      else if (ch === "\"") inString = false;
+      continue;
+    }
+    if (ch === "\"") inString = true;
+    else if (ch === "{") depth++;
+    else if (ch === "}") {
+      if (--depth === 0) {
+        try { return JSON.parse(system.slice(start, i + 1)) as { currentWorkingFolder?: string; sharedBotFolder?: string }; }
+        catch { return undefined; }
+      }
+    }
+  }
+  return undefined;
+}
+
+function pathTail(path: string | undefined): string | undefined {
+  if (!path || /\s/.test(path)) return undefined;
+  return basename(path) || undefined;
+}
+
+function readPlan(path: string): Record<string, PlanTurn> | undefined {
+  if (!existsSync(path)) return undefined;
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+    return parsed as Record<string, PlanTurn>;
+  } catch { return undefined; }
+}
+
+function countTurns(path: string, botId: string): number {
+  if (!existsSync(path)) return 0;
+  return readFileSync(path, "utf8").trim().split("\n").filter(Boolean).filter((line) => {
+    try { return (JSON.parse(line) as { botId?: string }).botId === botId; } catch { return false; }
+  }).length;
+}
+
+function listedTools(body: Record<string, unknown>): ToolDef[] {
+  if (!Array.isArray(body.tools)) return [];
+  return body.tools.map((tool) => {
+    const fn = (tool as { function?: { name?: string; parameters?: ToolDef["parameters"] } }).function;
+    return { name: fn?.name ?? "", parameters: fn?.parameters ?? {} };
+  });
+}
+
+function wireName(tool: string | undefined, defs: ToolDef[]): string {
+  const bare = tool || "coordinate_bots";
+  if (defs.some((def) => def.name === bare) || NATIVE_TOOLS.test(bare)) return bare;
+  if (/^(agents|computer|browser|data)_/.test(bare)) return bare;
+  return `agents_${bare}`;
+}
+
+function publishedArgs(args: Record<string, unknown>, def: ToolDef | undefined): Record<string, unknown> {
+  const properties = def?.parameters.properties;
+  if (def?.parameters.additionalProperties !== false || !properties) return args;
+  return Object.fromEntries(Object.entries(args).filter(([key]) => Object.prototype.hasOwnProperty.call(properties, key)));
+}
+
+function toolOk(content: string): boolean | undefined {
+  const start = content.indexOf("{");
+  if (start < 0) return undefined;
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = start; i < content.length; i++) {
+    const ch = content[i]!;
+    if (inString) {
+      if (escape) escape = false;
+      else if (ch === "\\") escape = true;
+      else if (ch === "\"") inString = false;
+      continue;
+    }
+    if (ch === "\"") inString = true;
+    else if (ch === "{") depth++;
+    else if (ch === "}") {
+      if (--depth === 0) {
+        try {
+          const parsed = JSON.parse(content.slice(start, i + 1)) as { ok?: unknown };
+          return typeof parsed.ok === "boolean" ? parsed.ok : undefined;
+        } catch { return undefined; }
+      }
+    }
+  }
+  return undefined;
+}
+
+function answeredCalls(messages: Message[]): Array<{ name: string; content: string }> {
+  const start = messages.findLastIndex((message) => message.role === "user");
+  const calls: Array<{ name: string; id?: string; content?: string }> = [];
+  for (const message of messages.slice(start + 1) as ChatMessage[]) {
+    if (message.role === "assistant") {
+      for (const call of message.tool_calls ?? []) calls.push({ name: call.function?.name ?? "", id: call.id });
+    } else if (message.role === "tool") {
+      const open = (message.tool_call_id ? calls.find((call) => call.id === message.tool_call_id && call.content === undefined) : undefined)
+        ?? calls.find((call) => call.content === undefined);
+      if (open) open.content = textOf(message.content);
+    }
+  }
+  return calls.flatMap((call) => call.content === undefined ? [] : [{ name: call.name, content: call.content }]);
+}
+
+/** Replays one streamed turn from FAKE_CHAT_ROOM_PLAN. A parent that emits a real tool call stays unfinished until its
+ * reply is recorded, so a teammate's reply cannot land first. Returns false when this request is not a planned turn. */
+async function replayRoomPlan(input: {
+  env: NodeJS.ProcessEnv; res: ServerResponse; body: Record<string, unknown>; messages: Message[];
+  model: string; prompt: string; system: string; unfinished: Set<string>;
+  writeEvidence: (path: string, row: unknown) => Promise<void>;
+}): Promise<boolean> {
+  const planPath = input.env.FAKE_CHAT_ROOM_PLAN || input.env.FAKE_CLAUDE_ROOM_PLAN;
+  if (!planPath) return false;
+  const plan = readPlan(planPath);
+  if (!plan) return false;
+  const locations = fileLocations(input.system);
+  const botId = pathTail(locations?.sharedBotFolder);
+  const botPlan = botId ? plan[botId] : undefined;
+  if (!botId || !botPlan || typeof botPlan !== "object") return false;
+  const { res, model, prompt, system, unfinished, writeEvidence } = input;
+  const gone = () => res.destroyed || res.socket?.destroyed === true;
+  const evidencePath = `${planPath}.evidence.jsonl`;
+  const turnIndex = countTurns(evidencePath, botId);
+  const indexed = Array.isArray(botPlan.turns);
+  const turn = indexed ? botPlan.turns![turnIndex] : botPlan;
+  if (!turn) {
+    if (!gone()) {
+      res.writeHead(500, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: { message: `Unexpected extra fixture turn ${turnIndex} for ${botId}` } }));
+    }
+    return true;
+  }
+  const resumed = system.includes(SETTLED) || prompt.includes(SETTLED);
+  const steps = indexed ? turn.steps ?? [] : resumed ? turn.resumeSteps ?? [] : turn.steps ?? [];
+  const reply = indexed ? turn.reply ?? `Result from ${botId}`
+    : resumed ? turn.resumeReply ?? `Summary from ${botId}`
+    : turn.reply ?? `Result from ${botId}`;
+  const threadId = pathTail(locations?.currentWorkingFolder) ?? "";
+  const evidence: Array<{ step: PlanStep; response: { error?: { message: string }; result: { isError: boolean } } }> = [];
+  const row = () => ({ botId, turnIndex, threadId, system, prompt, evidence });
+  for (const call of answeredCalls(input.messages)) {
+    if (call.name === "load_tools") continue;
+    const step = steps[evidence.length];
+    if (!step) break;
+    const failed = toolOk(call.content) === false;
+    evidence.push({ step, response: failed ? { error: { message: "tool failed" }, result: { isError: true } } : { result: { isError: false } } });
+    if (Boolean(step.expectError) !== failed) {
+      await writeEvidence(evidencePath, row());
+      unfinished.delete(botId);
+      if (!gone()) {
+        res.writeHead(500, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: { message: "Unexpected tool outcome" } }));
+      }
+      return true;
+    }
+  }
+  const frame = (delta: Record<string, unknown>, finish: string | null = null) =>
+    `data: ${JSON.stringify({ id: "fixture", object: "chat.completion.chunk", model, choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`;
+  const sendCalls = (calls: Array<{ name: string; arguments: string }>, hold: boolean) => {
+    if (hold) {
+      unfinished.add(botId);
+      let sent = false;
+      res.on("close", () => { if (!sent) unfinished.delete(botId); });
+      sent = true;
+    }
+    res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
+    res.write(frame({ role: "assistant", tool_calls: calls.map((call, index) => ({
+      index, id: `call_${turnIndex}_${evidence.length}_${index}`, type: "function", function: { name: call.name, arguments: call.arguments },
+    })) }));
+    res.write(frame({}, "tool_calls"));
+    res.end("data: [DONE]\n\n");
+  };
+  if (evidence.length < steps.length) {
+    const step = steps[evidence.length]!;
+    const defs = listedTools(input.body);
+    const name = wireName(step.tool, defs);
+    if (!defs.some((def) => def.name === name) && defs.some((def) => def.name === "load_tools")) {
+      sendCalls([{ name: "load_tools", arguments: JSON.stringify({ names: [name] }) }], false);
+      return true;
+    }
+    sendCalls([{ name, arguments: JSON.stringify(publishedArgs(step.arguments ?? {}, defs.find((def) => def.name === name))) }], true);
+    return true;
+  }
+  const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  const waitUntil = async (ready: () => boolean, capMs?: number): Promise<boolean> => {
+    const deadline = capMs === undefined ? undefined : Date.now() + capMs;
+    while (!ready()) {
+      if (gone()) return false;
+      if (deadline !== undefined && Date.now() >= deadline) return !gone();
+      await pause(20);
+    }
+    return !gone();
+  };
+  if (!(await waitUntil(() => ![...unfinished].some((id) => id !== botId), 20_000))) {
+    unfinished.delete(botId);
+    return true;
+  }
+  if (turn.gateFile && !(await waitUntil(() => existsSync(turn.gateFile!)))) {
+    unfinished.delete(botId);
+    return true;
+  }
+  if (typeof turn.delayMs === "number" && turn.delayMs > 0) {
+    const end = Date.now() + turn.delayMs;
+    while (Date.now() < end) {
+      if (gone()) { unfinished.delete(botId); return true; }
+      await pause(Math.min(20, end - Date.now()));
+    }
+  }
+  await writeEvidence(evidencePath, row());
+  unfinished.delete(botId);
+  if (Boolean(turn.fail) && (indexed || !resumed)) {
+    if (!gone()) {
+      res.writeHead(500, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: { message: "Scripted addressed agent failure" } }));
+    }
+    return true;
+  }
+  if (gone()) return true;
+  res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
+  for (const piece of reply.match(/.{1,12}/gs) ?? [reply]) res.write(frame({ content: piece }));
+  res.write(`data: ${JSON.stringify({ id: "fixture", object: "chat.completion.chunk", model, choices: [{ index: 0, delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } })}\n\n`);
+  res.end("data: [DONE]\n\n");
+  return true;
 }

@@ -97,6 +97,29 @@ describe("evaluateAssertions", () => {
     }
   });
 
+  it("checks instructions in a native context note, never ordinary user text", () => {
+    const pinned = "Assignments you already sent are still outstanding";
+    const raw = "Also use UTF-8";
+    const prefix = "Context from RootClaw updated since this conversation started; it replaces any earlier copy:\n\n";
+    const clock = "Current time when this message was sent: Thursday, 2026-10-08 19:48 UTC (UTC+00:00).";
+    const cases = [
+      { text: prefix + pinned + "\n\n" + raw, stored: raw, pass: true },
+      { text: prefix + pinned + "\n\n" + clock + "\n\n" + raw, stored: raw, pass: true },
+      { text: prefix + pinned + "\n\n" + raw, stored: prefix + pinned + "\n\n" + raw, pass: false },
+      { text: "The user quoted: " + prefix + pinned + "\n\n" + raw, stored: raw, pass: false },
+      { text: prefix + pinned + "\n\n" + raw, stored: "something else", pass: false },
+    ];
+    for (const example of cases) {
+      const turn = { ...world.turns[0], system: "plain", prompt: JSON.stringify(example.text) };
+      const snapshot = { ...world, turns: [turn], threads: { [turn.threadId]: [{ role: "user", text: example.stored }] } };
+      const result = evaluateAssertions([{ kind: "instructionsInclude", bot: "chief", turn: 0, includes: pinned }], snapshot)[0];
+      expect(result.pass, example.text).toBe(example.pass);
+      if (!example.pass) expect(result.detail).toContain(turn.prompt);
+      expect(evaluateAssertions([{ kind: "systemPromptIncludes", bot: "chief", turn: 0, includes: pinned }], snapshot)[0].pass).toBe(false);
+      expect(evaluateAssertions([{ kind: "systemPromptOmits", bot: "chief", turn: 0, omits: pinned }], snapshot)[0].pass).toBe(true);
+    }
+  });
+
   it("requires captured raw input and rejects a verbatim user-authored reminder", () => {
     const pinned = "Assignments you already sent are still outstanding";
     const raw = "Also use UTF-8";
