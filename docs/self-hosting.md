@@ -2,7 +2,7 @@
 
 Run the harness server on an always-on Linux box (a VPS, a home server, a
 Mac mini in a closet) and pair browsers, the desktop app, or phones with it.
-The npm CLI supports a managed public tunnel, Tailscale, or your own proxy.
+The `rootclaw` CLI supports a managed public tunnel, Tailscale, or your own proxy.
 
 > **Security first:** by default a self-hosted server trusts loopback as its
 > owner — any process that can reach `127.0.0.1:8799` has full control,
@@ -33,7 +33,7 @@ Runs fully on a server:
 - text-to-speech (with a key), the web UI (the server serves it itself)
 
 - a browser for bots, once the engine is installed on the server
-  (`npx rootclaw browser install`, or nothing to do in the Docker image,
+  (`rootclaw browser install`, or nothing to do in the Docker image,
   which ships it): each bot gets its own isolated, persistent session.
   Watching it live from the app is the next step (docs/plans/browser-engine.md).
   It reaches the public internet and the dev servers a bot starts itself,
@@ -44,13 +44,24 @@ Desktop-only for now (needs the Mac/Linux app):
 
 - dictation/voice, controlling the host desktop
 
-## Quickest: one command with Node
+## Quickest: build it once with Node
 
-On any machine with Node 24 or newer (a VPS, a Mac mini, a Raspberry Pi):
+The `rootclaw` npm package is not published for this repository, so
+`npx rootclaw` and `npm install -g rootclaw` do not work. On any machine with
+Node 24 or newer and git (a VPS, a Mac mini, a Raspberry Pi), build it from a
+clone ([install](install.md#1-clone-install-build) has the details):
 
 ```sh
-npx rootclaw start
+git clone https://github.com/cryptyroot-ux/RootClaw.git && cd RootClaw
+corepack enable --install-directory ~/.local/bin && export PATH=~/.local/bin:$PATH
+pnpm install --frozen-lockfile
+NODE_OPTIONS=--max-old-space-size=6144 pnpm build && pnpm build:server
+alias rootclaw="node $PWD/dist-server/rootclaw.js"
+rootclaw start
 ```
+
+Every `rootclaw …` command on this page means that alias (or
+`node /path/to/RootClaw/dist-server/rootclaw.js …`).
 
 First launch asks for a model provider API key (OpenAI, Anthropic, Gemini,
 OpenRouter, Groq, Meta, Ollama Cloud or another OpenAI-compatible service) and
@@ -61,8 +72,8 @@ explains the choices, key storage, and how to run setup again safely.
 It then starts the server and keeps your data in `~/.rootclaw`. If you
 choose phone access, it prints a pairing link and QR code only after checking
 the HTTPS connection. Choosing **Skip for now** keeps the workspace local-only
-and creates no pairing invitation. Use `npx rootclaw setup` to configure without starting, or
-`npx rootclaw serve` to start non-interactively with your existing config
+and creates no pairing invitation. Use `rootclaw setup` to configure without starting, or
+`rootclaw serve` (or `pnpm start` in the clone) to start non-interactively with your existing config
 (for services and scripts).
 
 Every bot runs on RootClaw's built-in engine; there are no agent CLIs to
@@ -73,19 +84,19 @@ operating-system user.
 For a Linux service, the [VPS guide](deploy-vps.md#before-you-start) shows the
 account setup, provider key, and browser dependency installation.
 After installing browser libraries as administrator, also run
-`npx rootclaw browser install` as the service user so that user's browser
+`rootclaw browser install` as the service user so that user's browser
 is present. Three ways to make the server reachable from elsewhere:
 
 - **On your Tailscale network, no domain needed:**
-  `npx rootclaw serve --tailscale`. Tailscale terminates HTTPS with its
+  `rootclaw serve --tailscale`. Tailscale terminates HTTPS with its
   own certificate and the link uses this machine's MagicDNS name, so only
   devices on your tailnet can reach it. Needs Tailscale signed in and HTTPS
   certificates enabled for the tailnet (admin console → DNS).
 - **A public address, no domain, no proxy, no open port:**
 
   ```sh
-  npx rootclaw login          # once: an emailed code signs this machine in
-  npx rootclaw serve --tunnel
+  rootclaw login          # once: an emailed code signs this machine in
+  rootclaw serve --tunnel
   ```
 
   `login` reserves an address like `https://c-….rootclaw.example` for this
@@ -97,7 +108,7 @@ is present. Three ways to make the server reachable from elsewhere:
   the server treats as "through a proxy", never as the owner. That listener
   also gzips JSON replies of 1 KB or more when the client accepts gzip, since
   the hop to Cloudflare runs on this machine's upload uncompressed; the
-  loopback port never compresses. `npx rootclaw logout` releases the
+  loopback port never compresses. `rootclaw logout` releases the
   address. The account credentials live in
   `~/.rootclaw/tunnel-account.json` (mode 0600).
   Starting it from a fleet or a container, where nobody can type an emailed
@@ -108,7 +119,7 @@ is present. Three ways to make the server reachable from elsewhere:
 - **Your own domain, still one command:**
 
   ```sh
-  npx rootclaw serve --domain rootclaw.example.com
+  rootclaw serve --domain rootclaw.example.com
   ```
 
   Point the domain's A record at this machine and open ports 80 and 443.
@@ -117,17 +128,17 @@ is present. Three ways to make the server reachable from elsewhere:
   and renews the certificate from Let's Encrypt. On Linux, binding ports 80
   and 443 as a normal user needs one privilege grant; when Caddy reports the
   refusal, `serve` prints the exact `setcap` command to run once.
-- **Behind your own proxy or domain:** `npx rootclaw serve --public-url
+- **Behind your own proxy or domain:** `rootclaw serve --public-url
   https://rootclaw.example.com`, with the proxy rules from "Putting a proxy in
   front".
 
-Later: `npx rootclaw pair --label "Kitchen iPad"` for another device
+Later: `rootclaw pair --label "Kitchen iPad"` for another device
 (`--client` for one that may chat but not change settings), and
-`npx rootclaw sessions` to see or revoke them. `rootclaw serve` is a
+`rootclaw sessions` to see or revoke them. `rootclaw serve` is a
 plain foreground process. For unattended use, follow the
-[systemd example](deploy-vps.md#keep-it-running), which installs a chosen
-release and runs its binary directly. Restarting that service does not
-implicitly download a new release.
+[systemd example](deploy-vps.md#keep-it-running): `rootclaw service install`
+writes a unit that runs your built clone directly. Restarting that service
+does not download or rebuild anything.
 
 ## Add a provider key from the browser
 
@@ -197,12 +208,12 @@ ports 80/443 open.
 ```sh
 git clone https://github.com/cryptyroot-ux/RootClaw && cd RootClaw/deploy
 cp .env.example .env            # set DOMAIN
-docker compose pull rootclaw && docker compose up -d
+docker compose up -d --build
 ```
 
-That uses the image CI publishes on every `main` push
-(`ghcr.io/cryptyroot-ux/rootclaw`, tagged `latest`, `sha-…` and `v…`).
-To build from your checkout instead: `docker compose up -d --build`.
+That builds the image from your checkout. No prebuilt image is published: the
+Docker CI workflow builds with `push: false`, so `docker compose pull rootclaw`
+has nothing to fetch.
 
 Then mint a pairing code for your first device, and once paired add a
 provider key under **Settings → API keys** (it is saved on the `data` volume,
@@ -233,12 +244,10 @@ What the stack does, so you can adapt it:
   own pairing is the login. A shared-password `basic_auth` block is there,
   commented out, if you want a second wall in front of pairing.
 
-Upgrade with `docker compose pull rootclaw && docker compose up -d` (or
-`git pull && docker compose up -d --build`). State (chats, routines,
+Upgrade with `git pull && docker compose up -d --build`. State (chats, routines,
 saved provider keys, paired sessions) is on the `data` volume; back that up.
 
-The published image installs the current Chrome for Testing whenever a new
-Stable ships. A build from source keeps the Chrome (and any `ENGINES`) it
+A build keeps the Chrome (and any `ENGINES`) it
 installed first, because those layers sit beneath the app and stay cached
 across code changes. To pick up the current ones, rebuild with a new tag:
 
@@ -252,17 +261,18 @@ Requirements: Node 24+, pnpm, and an API key for one model provider.
 
 ```sh
 git clone https://github.com/cryptyroot-ux/RootClaw && cd RootClaw
-pnpm install
+pnpm install --frozen-lockfile
+NODE_OPTIONS=--max-old-space-size=6144 pnpm build  # web UI -> dist/
+pnpm build:server                                  # server -> dist-server/
 
 # choose where data lives and start the server
-ROOTCLAW_DATA_DIR="$HOME/.rootclaw" ROOTCLAW_PORT=8799 \
-  node --experimental-strip-types server/index.ts
+pnpm start --port 8799 --data-dir "$HOME/.rootclaw"   # = node dist-server/rootclaw.js serve
 ```
 
 For something durable, let the CLI write the service for you:
 
 ```sh
-npx rootclaw service install --domain rootclaw.example.com   # or --tunnel, --tailscale, or nothing
+rootclaw service install --domain rootclaw.example.com   # or --tunnel, --tailscale, or nothing
 ```
 
 It renders a systemd unit (Linux) or a launchd agent (macOS) that runs the
@@ -270,9 +280,11 @@ same `rootclaw serve …` with your options, restarts it if it stops, and,
 for `--domain`, grants the unit the capability to bind ports 80 and 443
 without root. The file is written next to your data and the two commands
 that install and start it are printed (they need `sudo` on Linux).
-`rootclaw service uninstall` prints the reverse. Install the package
-permanently first (`npm install -g rootclaw`): a service must not point
-at an `npx` cache that npm may prune.
+`rootclaw service uninstall` prints the reverse. Run it with the built
+clone (`node dist-server/rootclaw.js service install …`): the unit points
+at the Node binary and script that ran the command, so keep the clone where
+it is. (Its help text still says `npm install -g rootclaw`; that package is
+not published.)
 
 Give the service a provider key (Settings → API keys, `rootclaw engine set`,
 or a `ROOTCLAW_*_API_KEY` variable in the unit's environment) before you rely
@@ -347,8 +359,8 @@ Pair once, then use the server from any browser on any machine that can
 reach it. On the server:
 
 ```sh
-npx rootclaw pair                         # npm install
-pnpm rootclaw pair                                # from a checkout
+node dist-server/rootclaw.js pair                 # from a built checkout
+pnpm rootclaw pair                                # from a checkout, no build
 docker compose exec rootclaw node dist-server/rootclaw.js pair   # Docker
 ```
 
@@ -364,7 +376,7 @@ From the **desktop app**, use the server dropdown above Search → **Connect
 to a server…**, or **Settings → Servers**. Enter the server's
 HTTPS address or full pairing link, with an optional name. Custom domains and
 Cloudflare tunnel addresses work; Tailscale is not required. Generate a fresh
-link for each device: `npx rootclaw pair --label "My desktop"` creates an
+link for each device: `rootclaw pair --label "My desktop"` creates an
 owner link without the phone wizard; add `--client` for chat-only access.
 A code already used by your phone cannot also pair your desktop.
 
@@ -546,13 +558,13 @@ ROOTCLAW_SIGNIN_MEMBER_EMAILS="freelancer@example.com"          # chat and appro
 
 Signed in as an admin? Settings → Remote access → **Who can sign in with an
 email** edits the same list in the browser, no command line needed. With the
-npm package, the same thing from the command line, with the server running
+`rootclaw` CLI, the same thing from the command line, with the server running
 or not, no restart needed:
 
 ```sh
-npx rootclaw access add her@yourcompany.com
-npx rootclaw access add freelancer@example.com --chat-only
-npx rootclaw access list
+rootclaw access add her@yourcompany.com
+rootclaw access add freelancer@example.com --chat-only
+rootclaw access list
 ```
 
 An entry is an address or `@domain` (everyone at that domain). Admins get
@@ -778,7 +790,7 @@ on your private networks (Tailscale-aware) and issues its own per-device
 credentials, which are **not** `rootclaw sessions` and are revoked from
 its own page at the `127.0.0.1:8811/#token=…` link it prints. It also serves phones over cleartext HTTP
 on port 8810, so do not expose it from a public server. It ships only in a
-git checkout: neither the npm package nor the Docker image contains it.
+git checkout: the Docker image does not contain it.
 
 ```sh
 node --experimental-strip-types companion/src/index.ts
@@ -1156,14 +1168,11 @@ settings do not change it.
 
 ## Updating
 
-For the npm service, [install the chosen new version](deploy-vps.md#update)
-as the service user while the server is stopped, then start it again.
-For a foreground invocation, `npx --yes rootclaw@X.Y.Z serve --tunnel`
-selects a particular published release; replace `X.Y.Z` with that version.
+Pull and rebuild the clone, then restart ([details](deploy-vps.md#update)):
 
 ```sh
-docker compose -f deploy/docker-compose.yml pull rootclaw && docker compose -f deploy/docker-compose.yml up -d   # Docker
-git pull && pnpm install && sudo systemctl restart rootclaw          # from source
+git pull && docker compose -f deploy/docker-compose.yml up -d --build   # Docker
+git pull && pnpm install --frozen-lockfile && NODE_OPTIONS=--max-old-space-size=6144 pnpm build && pnpm build:server && sudo systemctl restart rootclaw   # from source
 ```
 
 Routines and queued work survive restarts. A teammate turn in flight runs

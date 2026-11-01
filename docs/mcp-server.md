@@ -16,13 +16,13 @@ change credentials, or control computer/VM lifecycle. Those actions stay in the 
 
 ## From the rootclaw command
 
-With the `rootclaw` npm package installed, the MCP client can run it
-directly; it serves the same tools:
+With a built clone (`pnpm build:server`; the `rootclaw` npm package is not published), the MCP
+client can run the CLI directly; it serves the same tools:
 
 ```json
 {
   "mcpServers": {
-    "rootclaw": { "command": "rootclaw", "args": ["mcp"], "env": { "ROOTCLAW_PORT": "8799" } }
+    "rootclaw": { "command": "node", "args": ["/absolute/path/to/RootClaw/dist-server/rootclaw.js", "mcp"], "env": { "ROOTCLAW_PORT": "8799" } }
   }
 }
 ```
