@@ -11,6 +11,8 @@ import {
 } from "./grok-subscription.ts";
 
 const HOUR = 3_600_000;
+// Windows has no owner-only permission bits; Node reports 0o666 for any writable file there.
+const OWNER_ONLY = process.platform === "win32" ? 0o666 : 0o600;
 let dir = "";
 let file = "";
 const store = (fields: Record<string, unknown>) => writeFileSync(file, JSON.stringify({
@@ -38,7 +40,7 @@ describe("RootClaw's own SuperGrok store", () => {
   it("saves a sign-in atomically, private to the owner, and serves it while valid", () => {
     expect(grokSubscriptionStatus(file)).toEqual({ signedIn: false, reconnect: false });
     saveGrokSignIn(file, { access_token: "token-1", refresh_token: "refresh-1", expires_in: 10_800 });
-    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expect(statSync(file).mode & 0o777).toBe(OWNER_ONLY);
     expect(readdirSync(dir)).toEqual(["xai-subscription.json"]);
     expect(readGrokSignIn(file)).toMatchObject({ token: "token-1", refreshToken: "refresh-1" });
     expect(grokSubscriptionStatus(file)).toEqual({ signedIn: true, reconnect: false });
@@ -82,7 +84,7 @@ describe("renewing the sign-in", () => {
     expect([...headers.values()].join(" ")).not.toContain("xai-grok-cli");
     expect(stored()).toMatchObject({ access_token: "token-2", refresh_token: "refresh-2" });
     expect(Date.parse(String(stored().expires_at)) - Date.now()).toBeGreaterThan(2.9 * HOUR);
-    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expect(statSync(file).mode & 0o777).toBe(OWNER_ONLY);
     expect(readdirSync(dir)).toEqual(["xai-subscription.json"]);
   });
 
