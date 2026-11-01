@@ -110,7 +110,7 @@ function loopbackLmStudioV1Url(baseUrl: string): string | null {
 function decodeConfig(raw: unknown): OpenAICompatConfig {
   const config = (raw ?? {}) as Record<string, unknown>;
   if (config.tools !== undefined && typeof config.tools !== "boolean") throw new Error("tools must be a boolean");
-  if (config.managedModels !== undefined && (!Array.isArray(config.managedModels) || !config.managedModels.length || config.managedModels.some(model => typeof model !== "string" || !model.trim()))) throw new Error("Invalid managed models.");
+  if (config.managedModels !== undefined && (!Array.isArray(config.managedModels) || config.managedModels.some(model => typeof model !== "string" || !model.trim()))) throw new Error("Invalid managed models.");
   const ownKey = typeof config.apiKeyEnv === "string" && OWN_KEY_ENVS.has(config.apiKeyEnv);
   if (config.catalog !== undefined && config.catalog !== "openai" && config.catalog !== "lmstudio") throw new Error("catalog must be \"openai\" or \"lmstudio\"");
   if (config.replyWaitMinutes !== undefined && !isReplyWait(config.replyWaitMinutes)) throw new Error(`replyWaitMinutes must be a whole number from 1 to ${MAX_REPLY_WAIT_MINUTES}`);
@@ -168,7 +168,7 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
       : `no API key — set ${config.apiKeyEnv} or add it to the instance config`;
     const seeded = config.catalog === "openai" ? OPENAI_MODELS : DEFAULT_MODELS;
     let catalog: ModelCatalog = config.managedModels
-      ? { default: config.managedModels[0], options: config.managedModels.map(id => ({ id, label: id })) }
+      ? { default: config.managedModels[0] ?? "", options: config.managedModels.map(id => ({ id, label: id })) }
       : config.model
       ? {
           default: config.model,

@@ -645,7 +645,7 @@ describe("turning a webhook back on, Run now, and a deleted bot's webhooks", () 
 
     expect(h.manager.list().map((trigger) => trigger.id)).toEqual([other.webhook.id]);
     expect(h.manager.listAttempts()).toEqual([]);
-    expect(h.cancelled).toContainEqual({ id: webhook.id, message: "The assigned ROOTCLAW was deleted" });
+    expect(h.cancelled).toContainEqual({ id: webhook.id, message: "The assigned bot was deleted" });
     expect(h.emitted).toContainEqual({ kind: "webhook.deleted", webhookId: webhook.id });
     expect(() => h.manager.receive(webhook.endpointId, secret, { payload: {} })).toThrow("Invalid webhook URL or secret");
     const saved = JSON.parse(readFileSync(h.file, "utf8"));

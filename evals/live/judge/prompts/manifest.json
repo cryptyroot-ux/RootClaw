@@ -3,12 +3,12 @@
     {
       "file": "open-ended-v1.md",
       "version": "open-ended-v1",
-      "sha256": "31bfc837c8c7ffcc15c9d24d8d2041674340e3284384ca95e5475dc66d5f1120"
+      "sha256": "abfb2db16d63e1fa3fd87ce99ea42f87dfc6b15bb5f581d07adcd6376219f149"
     },
     {
       "file": "reply-habits-v1.md",
       "version": "reply-habits-v1",
-      "sha256": "b4bf93d8d5f0b8244d28423a6214a818314c872e62c30907fd6c74b4fec2e65f"
+      "sha256": "d8d3937ffc00759f09c1ae68cdb8269ad0efceb3dc1fe769bc84b755e1ab12a5"
     }
   ]
 }

@@ -7,8 +7,8 @@ import { providerName } from "./EngineLibrary";
 import { DeepSeekMark, PresetProviderMark, ProviderMark } from "./ProviderIcons";
 
 describe("DeepSeek Harness in the renderer", () => {
-  it("names DeepSeek as the provider behind the engine card", () => {
-    expect(providerName({ driverKind: "deepseekAgent" } as InstanceInfo)).toBe("DeepSeek");
+  it("leaves a legacy driver id as the card name when it is not a native provider", () => {
+    expect(providerName({ driverKind: "deepseekAgent" } as InstanceInfo)).toBe("deepseekAgent");
   });
 
   it("draws the DeepSeek whale for the deepseekAgent driver and the deepseek preset alike", () => {

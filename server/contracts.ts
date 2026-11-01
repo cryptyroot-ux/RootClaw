@@ -329,7 +329,7 @@ export type CacheWarmPingResult =
 export type SteerOutcome = "steered" | "refused" | "indeterminate";
 
 export interface ProviderSnapshot {
-  /** Separate, explicitly authorized ChatGPT-plan billing (not Codex login). */
+  /** Retired external-engine metadata: retained as optional data only, no longer used by RootClaw. */
   chatgptPlan?: boolean;
   /** Ready only through OpenCode's free no-login models (no login, subscription or key of the person's own): a backup that
    * ranks last for a new bot's default and never counts as "an AI already works" in the welcome. */

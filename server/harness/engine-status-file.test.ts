@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
@@ -27,18 +27,15 @@ it("writes what the save delay still holds when the process exits cleanly, once"
   expect(process.listeners("exit").filter((listener) => listener === flushEngineStatusFiles)).toHaveLength(1);
 });
 
-it("keeps the marks the welcome and the AI tests read: a ChatGPT plan and OpenCode's free backup", () => {
+it("keeps the native free-provider mark and ignores retired ChatGPT-plan metadata", () => {
   dir = mkdtempSync(join(tmpdir(), "rootclaw-engine-status-"));
   const file = join(dir, "providers", "engine-status.json");
   const status = engineStatusFile(file);
   const free = { state: "available" as const, authenticated: true, freeFallback: true };
-  const plan = { state: "available" as const, authenticated: true, chatgptPlan: true, account: { email: "a@example.com", method: "login" as const } };
-  status.save([
-    { instanceId: "opencode", driverKind: "opencodeGo", cli: "opencode", snapshot: free },
-    { instanceId: "codex", driverKind: "codex", cli: "codex", snapshot: plan },
-  ]);
-  flushEngineStatusFiles();
-  const read = status.read((instanceId) => instanceId === "opencode" ? { driverKind: "opencodeGo", cli: "opencode" } : { driverKind: "codex", cli: "codex" });
-  expect(read.get("opencode")).toEqual(free);
-  expect(read.get("codex")).toEqual(plan);
+  mkdirSync(join(dir, "providers"), { recursive: true });
+  writeFileSync(file, JSON.stringify({ v: 1, engines: [
+    { instanceId: "openrouter", driverKind: "openai-compat", cli: null, snapshot: { ...free, chatgptPlan: true } },
+  ] }));
+  const read = status.read(() => ({ driverKind: "openai-compat", cli: null }));
+  expect(read.get("openrouter")).toEqual(free);
 });

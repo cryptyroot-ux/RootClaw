@@ -7,7 +7,7 @@ icon: Building2
 If your company uses RootClaw Admin, you can sign the desktop app in to your organization. Your bots can then use the AI models your company approved. This is optional: RootClaw works without any account, and signing in changes nothing you already set up.
 
 <Callout type="info" title="What stays yours">
-  Company models are added alongside your own engines, accounts and local models, which stay available. Connecting does not upload your chat history. Requests you send to a Company model go through your organization's gateway.
+  Company models are added alongside your own model providers, which stay available. Connecting does not upload your chat history. Requests you send to a Company model go through your organization's gateway.
 </Callout>
 
 ## Before you start
@@ -18,7 +18,7 @@ If your company uses RootClaw Admin, you can sign the desktop app in to your org
 ## Sign in
 
 1. **Start in the app.**
-   - On first run, the **Your engines** step shows "Using RootClaw at work? Sign in with your organization." Choose **Sign in**.
+   - On first run, the provider step shows "Using RootClaw at work? Sign in with your organization." Choose **Sign in**.
    - Any time later, open **Settings → Organization** and choose **Sign in with your organization**.
    - A link from your administrator that opens RootClaw takes you straight to Settings → Organization.
 2. **Finish in your browser.** The app opens the Admin sign-in page. Sign in with your invited work address; Admin emails you a six-digit code.
@@ -29,12 +29,11 @@ The sign-in page is valid for ten minutes. If it expires, start again from the a
 
 ## Use a Company model
 
-Company models appear in each bot's model picker as **Company · *your organization* · Claude**, **Codex** or **OpenRouter**. Nothing switches automatically: choose a Company entry for each bot that should use it.
+Company models appear in each bot's model picker under **Company · *your organization***, for the providers your organization approved (Anthropic, OpenAI or OpenRouter). Nothing switches automatically: choose a Company entry for each bot that should use it.
 
-- **Company Claude** and **Company Codex** run through the Claude Code and Codex engines, so that engine must be installed on this computer. Install it the same way as a personal engine (see [Agent engines](../providers/index.mdx)); you do not need to sign in to a personal account or have a personal subscription.
-- **Company OpenRouter** needs nothing extra.
+Company models run on RootClaw's built-in engine like every other provider, so there is nothing to install and no personal account or subscription is needed.
 
-If you only have Company models, the welcome flow's engines step reads "Everything is ready". Your own engines stay listed below it as optional.
+If you only have Company models, you don't need a provider key of your own; your own providers stay optional.
 
 ## Another Admin address
 

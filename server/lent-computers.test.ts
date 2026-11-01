@@ -52,7 +52,7 @@ describe("what a server remembers about computers lent to it", () => {
     expect(awayNotice([{ ...record, platform: "darwin", stoppedAt: at }], new Set()).say).toContain("choose Resume from RootClaw's icon in the menu bar on that Mac");
     expect(awayNotice([{ ...record, platform: "darwin" }], new Set()).say).toMatch(/^Their Mac ASH-PC is shared with the Cloud/u);
     expect(awayNotice([record], new Set([record.id]))).toEqual({});
-    for (const sentence of [awayNotice([record], new Set()).say!, awayNotice([{ ...record, stoppedAt: at }], new Set()).say!]) expect(sentence).not.toMatch(/this Mac|ROOTCLAW Cloud|RootClaw Cloud/u);
+    for (const sentence of [awayNotice([record], new Set()).say!, awayNotice([{ ...record, stoppedAt: at }], new Set()).say!]) expect(sentence).not.toMatch(/this Mac|ROOTCLAW Cloud/u);
   });
 });
 

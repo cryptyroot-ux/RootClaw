@@ -13,7 +13,6 @@ import {
   fleetLayout,
   initPlan,
   initialConfig,
-  MANAGED_OPENROUTER,
   instanceEnv,
   parseRegistry,
   resumePlan,
@@ -239,30 +238,39 @@ describe("plans", () => {
     ]);
   });
 
-  it("seeds private agentful OpenRouter config, including an empty catalog for later assignments", () => {
-    const seed = { admins: ["owner@example.test"], members: [], portalUrl: "https://admin.example.test", openrouterKey: "workspace-scoped-token", openrouterUrl: "https://admin.example.test/api/gateway/acme/openrouter/v1", openrouterModels: ["anthropic/claude-sonnet-4"], openrouterDefault: true };
-    const registry = emptyRegistry("example.test");
-    const plan = createPlan({ registry, slug: "acme", seed, layout });
-    const config = plan.steps.find((step) => step.kind === "write" && step.path.endsWith("/opencode.json"));
-    expect(config).toMatchObject({ owner: "rootclaw-acme", mode: 0o600 });
-    expect(config?.kind === "write" && JSON.parse(config.content)).toEqual({ provider: { [MANAGED_OPENROUTER]: {
-      npm: "@ai-sdk/openai-compatible", name: "Managed OpenRouter",
-      options: { baseURL: seed.openrouterUrl, apiKey: seed.openrouterKey }, models: { "anthropic/claude-sonnet-4": { name: "anthropic/claude-sonnet-4" } },
-    } } });
-    expect(plan.steps.filter((step) => step.kind === "mkdir" && step.path.includes("/.config"))).toEqual([
-      { kind: "mkdir", path: "/var/lib/rootclaw/acme/.config", mode: 0o700, owner: "rootclaw-acme" },
-      { kind: "mkdir", path: "/var/lib/rootclaw/acme/.config/opencode", mode: 0o700, owner: "rootclaw-acme" },
-    ]);
-    expect(JSON.parse(initialConfig(seed)).defaultModelSelection).toEqual({ instanceId: "opencodeGo", model: `${MANAGED_OPENROUTER}/anthropic/claude-sonnet-4` });
+  it("seeds OpenRouter as a RootClaw API provider and keeps its key in the service environment", () => {
+    const seed = {
+      admins: ["owner@example.test"], members: [], portalUrl: "https://admin.example.test",
+      openrouterKey: "workspace-scoped-token", openrouterUrl: "https://admin.example.test/api/gateway/acme/openrouter/v1",
+      openrouterModels: ["anthropic/claude-sonnet-4"], openrouterDefault: true,
+    };
+    const plan = createPlan({ registry: emptyRegistry("example.test"), slug: "acme", seed, layout });
+    const configStep = plan.steps.find((step) => step.kind === "write" && step.path.endsWith("/.rootclaw/config.json"));
+    if (!configStep || configStep.kind !== "write") throw new Error("RootClaw config was not provisioned");
+    const config = JSON.parse(configStep.content);
+    expect(config.defaultModelSelection).toEqual({ instanceId: "openrouter", model: "anthropic/claude-sonnet-4" });
+    expect(config.instances.openrouter).toMatchObject({
+      driver: "openai-compat",
+      config: {
+        url: seed.openrouterUrl,
+        apiKeyEnv: "ROOTCLAW_OPENROUTER_API_KEY",
+        managedModels: seed.openrouterModels,
+      },
+    });
+    expect(JSON.stringify(config)).not.toContain(seed.openrouterKey);
+    expect(plan.steps.some((step) => step.kind === "write" && step.path.includes("/.config/opencode/"))).toBe(false);
+    const environment = plan.steps.find((step) => step.kind === "write" && step.path.endsWith("/acme.env"));
+    expect(environment).toMatchObject({ mode: 0o600 });
+    expect(environment?.kind === "write" && environment.content).toContain(`ROOTCLAW_OPENROUTER_API_KEY=${seed.openrouterKey}`);
     expect(JSON.parse(initialConfig({ ...seed, openrouterDefault: false, anthropicKey: "other-scoped-token" }))).not.toHaveProperty("defaultModelSelection");
-    const empty = createPlan({ registry, slug: "acme", seed: { ...seed, openrouterModels: [], openrouterDefault: false }, layout });
-    const emptyConfig = empty.steps.find((step) => step.kind === "write" && step.path.endsWith("/opencode.json"));
-    expect(emptyConfig?.kind === "write" && JSON.parse(emptyConfig.content).provider[MANAGED_OPENROUTER].models).toEqual({});
+    const empty = createPlan({ registry: emptyRegistry("example.test"), slug: "acme", seed: { ...seed, openrouterModels: [], openrouterDefault: false }, layout });
+    const emptyConfig = empty.steps.find((step) => step.kind === "write" && step.path.endsWith("/.rootclaw/config.json"));
+    expect(emptyConfig?.kind === "write" && JSON.parse(emptyConfig.content).instances.openrouter.config.managedModels).toEqual([]);
     for (const openrouterUrl of ["https://evil.example.test/v1", "https://admin.example.test/api/gateway/other/openrouter/v1", `${seed.openrouterUrl}?key=secret`]) {
-      expect(() => createPlan({ registry, slug: "acme", seed: { ...seed, openrouterUrl }, layout })).toThrow("workspace's portal gateway");
+      expect(() => createPlan({ registry: emptyRegistry("example.test"), slug: "acme", seed: { ...seed, openrouterUrl }, layout })).toThrow("workspace's portal gateway");
     }
-    expect(() => createPlan({ registry, slug: "acme", seed: { ...seed, portalUrl: undefined }, layout })).toThrow("workspace's portal gateway");
-    expect(() => createPlan({ registry, slug: "acme", seed: { ...seed, openrouterModels: [] }, layout })).toThrow("requires a model assignment");
-    for (const openrouterModels of [["bad\nmodel"], Array(101).fill("provider/model")]) expect(() => createPlan({ registry, slug: "acme", seed: { ...seed, openrouterModels }, layout })).toThrow("valid model IDs");
+    expect(() => createPlan({ registry: emptyRegistry("example.test"), slug: "acme", seed: { ...seed, portalUrl: undefined }, layout })).toThrow("workspace's portal gateway");
+    expect(() => createPlan({ registry: emptyRegistry("example.test"), slug: "acme", seed: { ...seed, openrouterModels: [] }, layout })).toThrow("requires a model assignment");
+    for (const openrouterModels of [["bad\nmodel"], Array(101).fill("provider/model")]) expect(() => createPlan({ registry: emptyRegistry("example.test"), slug: "acme", seed: { ...seed, openrouterModels }, layout })).toThrow("valid model IDs");
   });
 });

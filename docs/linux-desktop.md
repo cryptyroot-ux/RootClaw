@@ -7,7 +7,7 @@ of Linux desktop on your own server instead of this machine, see [byo-vps.md](by
 ## What works
 
 - The native Electron window and embedded RootClaw server on GNOME Xorg and GNOME Wayland.
-- Local Claude, Codex, Grok, Gemini, and other configured agent CLIs.
+- The built-in engine with any configured model provider API key.
 - Chat, streaming turns, approvals, bot-to-bot communication, and local data storage.
 - Composio connected apps and Boat cloud computers.
 - External documentation and OAuth links in the default browser.

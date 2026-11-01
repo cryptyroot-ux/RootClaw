@@ -92,8 +92,8 @@ copies. Shareable team templates remain separate from full backups.
 
 ## What stays outside a workspace backup
 
-- External project directories and default CLI login homes such as `.claude`
-  and `.codex`. Reinstall providers and sign in again if needed on another host.
+- External project directories, and provider keys set in the server's
+  environment (an `EnvironmentFile`, for example). Set them again on another host.
 - Saved account credentials, API keys, connection settings, operating-system
   keychains, browser login/session homes, and phone pairing keys. Sign in or
   reconnect on the new machine; destination credentials remain untouched.
@@ -111,8 +111,8 @@ paths are not copied or rewritten; check them when moving between computers.
 Close RootClaw before taking a filesystem-level backup so SQLite and configuration files are captured consistently. Preserve the entire `.rootclaw` directory rather than selecting individual database files.
 
 Raw filesystem snapshots differ from Settings exports: they may include saved
-credentials, CLI homes and browser sessions. A Docker snapshot of the whole
-`/data` volume includes the container's CLI homes. Protect these snapshots as
+credentials (provider keys saved in `config.json`) and browser sessions. A
+Docker snapshot of the whole `/data` volume includes them too. Protect these snapshots as
 sensitive data. For migration without saved credentials, use the Settings export
 and reconnect accounts on the new machine instead.
 

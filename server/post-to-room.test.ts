@@ -7,16 +7,19 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { readHandoffs } from "./testing/handoff-rows.ts";
+import { FAKE_OPENAI_MODEL, startFakeOpenAiChat, type FakeOpenAiChat } from "./testing/fake-openai-chat.ts";
 import { freePortBlock } from "./testing/ports.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
-const FAKE_CLAUDE_CLI = join(SERVER_DIR, "testing", "fake-claude-cli.ts");
 const TEST_CAPABILITY_KEY = "post-to-room-fixture-capability";
 
 let PORT = 0;
 let WEBHOOK_PORT = 0;
 let BASE = "";
 let child: ChildProcess;
+// The native engine on loopback fake OpenAI-compatible servers: one for every bot, one for the bot that @mentions.
+let fakeChat: FakeOpenAiChat | undefined;
+let mentionerChat: FakeOpenAiChat | undefined;
 let home: string;
 let fakeClaudeDump = "";
 let mentionerDump = "";
@@ -126,14 +129,14 @@ const waitForPeerCard = async (threadId: string): Promise<StoredMessage> => {
 const makeBot = async (
   name: string,
   section: string,
-  instanceId = "claude",
+  instanceId = "openaiCompat",
 ): Promise<{ id: string; threadId: string }> => {
   const created = await api("POST", "/api/bots");
   const id = str(field(created.body, "bot", "id"));
   const patched = await api("PATCH", `/api/bots/${id}`, {
     name,
     section,
-    modelSelection: { instanceId, model: "claude-sonnet-5" },
+    modelSelection: { instanceId, model: FAKE_OPENAI_MODEL },
   });
   expect(patched.status).toBe(200);
   return { id, threadId: str(field(created.body, "bot", "threadId")) };
@@ -143,7 +146,7 @@ const makeCoordinator = async (
   name: string,
   section: string,
   managedSections: string[],
-  instanceId = "claude",
+  instanceId = "openaiCompat",
 ): Promise<{ id: string; threadId: string }> => {
   const created = await api("POST", "/api/bots");
   const id = str(field(created.body, "bot", "id"));
@@ -153,7 +156,7 @@ const makeCoordinator = async (
     chiefOfStaff: true,
     managedSections,
     acknowledgePeerScope: true,
-    modelSelection: { instanceId, model: "claude-sonnet-5" },
+    modelSelection: { instanceId, model: FAKE_OPENAI_MODEL },
   });
   expect(patched.status).toBe(200);
   return { id, threadId: str(field(created.body, "bot", "threadId")) };
@@ -189,19 +192,25 @@ beforeAll(async () => {
   fakeClaudeDump = join(home, "fake-claude-dump.json");
   mentionerDump = join(home, "mentioner-dump.json");
   mkdirSync(join(home, ".rootclaw"), { recursive: true });
+  fakeChat = await startFakeOpenAiChat({ FAKE_CHAT_DUMP: fakeClaudeDump });
+  mentionerChat = await startFakeOpenAiChat({
+    FAKE_CHAT_DUMP: mentionerDump,
+    FAKE_CHAT_REPLIES: JSON.stringify([`@${OUTSIDE_BOT} what do you think?`]),
+  });
   writeFileSync(
     join(home, ".rootclaw", "config.json"),
     JSON.stringify({
+      // A setup card's answers would be one more engine call at every new bot.
+      features: { smartSetupChoices: false },
+      openaiCompat: { url: fakeChat.url, key: "fixture-only", model: FAKE_OPENAI_MODEL },
+      defaultModelSelection: { instanceId: "openaiCompat", model: FAKE_OPENAI_MODEL },
       instances: {
-        claude: { driver: "claudeAgent", displayName: "Fixture Claude", config: { cli: FAKE_CLAUDE_CLI } },
+        openaiCompat: { driver: "openai-compat", displayName: "Fixture engine" },
         mentioner: {
-          driver: "claudeAgent",
+          driver: "openai-compat",
           displayName: "Mentioning fixture",
-          environment: {
-            FAKE_CLAUDE_DUMP: mentionerDump,
-            FAKE_CLAUDE_REPLIES: JSON.stringify([`@${OUTSIDE_BOT} what do you think?`]),
-          },
-          config: { cli: FAKE_CLAUDE_CLI },
+          environment: { OPENAI_COMPAT_API_KEY: "fixture-only" },
+          config: { url: mentionerChat.url },
         },
       },
     }),
@@ -215,7 +224,6 @@ beforeAll(async () => {
       USERPROFILE: home,
       ROOTCLAW_PORT: String(PORT),
       ROOTCLAW_WEBHOOK_PORT: String(WEBHOOK_PORT),
-      FAKE_CLAUDE_DUMP: fakeClaudeDump,
       ROOTCLAW_TEST_INTERNAL_CAPABILITY_KEY: TEST_CAPABILITY_KEY,
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -235,6 +243,8 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await waitForExit(child, { signal: "SIGTERM" });
+  await fakeChat?.stop();
+  await mentionerChat?.stop();
   await removeTempDir(home);
 });
 
@@ -347,7 +357,7 @@ describe("a room turn and the teammates outside the room", () => {
     rmSync(mentionerDump, { force: true });
     expect((await api("POST", `/api/groups/${room.id}/messages`, { text: `get ${OUTSIDE_BOT}'s take on this` })).status).toBe(202);
     await expect.poll(() => existsSync(mentionerDump), { timeout: 10_000 }).toBe(true);
-    // SAFETY: the fake CLI writes {systemPrompt, ...}; any other shape fails the assertions below.
+    // SAFETY: the fake engine writes {systemPrompt, ...}; any other shape fails the assertions below.
     const dump = JSON.parse(readFileSync(mentionerDump, "utf8")) as { systemPrompt?: string };
     const system = String(dump.systemPrompt ?? "");
     expect(system).toContain("Plain @mentions are only for conversational replies in this room");

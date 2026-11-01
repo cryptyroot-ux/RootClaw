@@ -20,16 +20,16 @@ Use the same command next time. The first launch guides you through setup; later
 
 The setup wizard uses Clack. Use ↑/↓ and Enter to select an option. Plain terminals show numbered choices instead.
 
-1. Choose ChatGPT/Codex, Claude Code, or an API service. Existing supported connections are also listed.
-2. Sign in with the provider, or paste an API key into the hidden prompt. Setup asks before installing a missing Codex or Claude CLI. Codex also offers device-code sign-in for a remote terminal. API choices include OpenAI, OpenRouter, Groq, and other OpenAI-compatible endpoints.
-3. Choose a model and save. An API connection asks permission to send a short test message, which the provider may charge for. Native CLI setup confirms sign-in; it does not test the chosen model with a message. Model access is checked when you send one.
+1. Choose a model provider. Setup is API-key only: OpenAI-compatible presets (OpenAI API, OpenRouter, Groq, Meta Model API, Ollama Cloud), the native Anthropic, Google Gemini and OpenAI Responses APIs, or another OpenAI-compatible endpoint. Existing OpenAI-compatible connections are also listed. There is no CLI to install or sign in.
+2. Paste the provider's API key into the hidden prompt.
+3. Choose a model and save. An OpenAI-compatible connection asks permission to send a short test message, which the provider may charge for. A native API key is checked when you send the first message.
 4. Optionally connect a phone, or choose **Skip for now**. Your AI setup is already saved before this step.
 
 The workspace then starts and opens its local address in a browser on this computer. On SSH or a computer without a graphical desktop, open the printed address using an appropriate connection instead. Automatic browser opening only uses the local address; `--no-open` disables it.
 
 Keep the terminal open while using your bots. This runs a foreground server, not an installed background service. Ctrl-C stops the server without deleting saved work; closing the browser alone does not stop it. Bots keep working only while the computer and server are running.
 
-Codex and Claude Code support agent tools. API-key connections currently support chat only. A ChatGPT or Claude subscription does not include separately billed API usage. Changing the saved default affects **new bots only**; existing bots and conversations keep their settings.
+Every bot runs on RootClaw's built-in engine: chat, plus approved MCP tools when the model supports tool calling. Provider API usage is billed by the provider per token; a ChatGPT or Claude chat subscription does not include it. Changing the saved default affects **new bots only**; existing bots and conversations keep their settings.
 
 ## Optional phone access
 
@@ -37,7 +37,7 @@ A phone cannot connect to this computer's `localhost` address. The harness also 
 
 Choose one connection method:
 
-- **Managed HTTPS address:** setup asks explicit permission for a public endpoint through Cloudflare and a possible connector download. Device pairing protects chat and settings; the pairing page and basic server identity remain publicly reachable. Sign in to an **RootClaw account** using an emailed code, or reuse this machine's saved account. This account is separate from ChatGPT, Claude, or an API-provider account. The connection stays active while RootClaw runs.
+- **Managed HTTPS address:** setup asks explicit permission for a public endpoint through Cloudflare and a possible connector download. Device pairing protects chat and settings; the pairing page and basic server identity remain publicly reachable. Sign in to an **RootClaw account** using an emailed code, or reuse this machine's saved account. This account is separate from your model provider account. The connection stays active while RootClaw runs.
 - **Existing Tailscale:** both computer and phone must already be signed in to the same tailnet, with HTTPS certificates enabled. Setup asks before enabling HTTPS serving to that tailnet; it does not install or sign in to Tailscale for you.
 - **Existing HTTPS address (advanced):** supply the origin of a reverse proxy you already configured, such as `https://rootclaw.example.com`. Do not paste a password, path, query, or pairing code. Entering an address does not create the proxy or open a LAN listener.
 
@@ -77,8 +77,8 @@ Setup needs an interactive terminal. Later starts can run without one once setup
 
 ## Credentials and cancellation
 
-API keys are hidden while typed or pasted. New API connections save their key in the data directory's `config.json` as **plaintext, not encrypted**, with owner-only permissions (`0600`) on Unix. Managed-access account credentials in `tunnel-account.json` are also plaintext with `0600` permissions on Unix. Keep these files and backups private. Native provider sign-in credentials are managed by the provider's own CLI.
+API keys are hidden while typed or pasted. New API connections save their key in the data directory's `config.json` as **plaintext, not encrypted**, with owner-only permissions (`0600`) on Unix. Managed-access account credentials in `tunnel-account.json` are also plaintext with `0600` permissions on Unix. Keep these files and backups private.
 
-Ctrl-C during AI setup leaves unsaved ROOTCLAW changes unapplied. Installations and provider sign-ins already completed remain available. Ctrl-C during the later phone step keeps the AI setup you already saved, exits without starting a server, and does not undo an account sign-in already completed. Run `rootclaw setup` to continue; no destructive reset is needed.
+Ctrl-C during AI setup leaves unsaved RootClaw changes unapplied. Ctrl-C during the later phone step keeps the AI setup you already saved, exits without starting a server, and does not undo an account sign-in already completed. Run `rootclaw setup` to continue; no destructive reset is needed.
 
 For remote access and background deployment options, see [self-hosting](self-hosting.md) and [the VPS guide](deploy-vps.md).

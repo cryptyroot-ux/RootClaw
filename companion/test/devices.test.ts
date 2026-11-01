@@ -381,7 +381,7 @@ describe("bearerToken", () => {
     expect(bearerToken("bearer rootclaw_abc")).toBe("rootclaw_abc");
     expect(bearerToken("BEARER rootclaw_abc")).toBe("rootclaw_abc");
     expect(bearerToken("BeArEr rootclaw_abc")).toBe("rootclaw_abc");
-    expect(bearerToken("BeArEr\tomb_abc")).toBe("rootclaw_abc");
+    expect(bearerToken("BeArEr\trootclaw_abc")).toBe("rootclaw_abc");
     expect(bearerToken("Bearer ")).toBeUndefined();
     expect(bearerToken("Bearer   ")).toBeUndefined();
     expect(bearerToken("Beareromb_abc")).toBeUndefined();

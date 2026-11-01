@@ -1,4 +1,4 @@
-// Keys are never written in the file: an engine's key is { env: NAME } or { file: PATH }, read only when it must be written.
+// Keys are never written in the file: a provider's key is { env: NAME } or { file: PATH }, read only when it must be written.
 import { readFileSync } from "node:fs";
 import { dirname, posix, resolve, win32 } from "node:path";
 
@@ -23,7 +23,7 @@ const url = z.string().regex(/^https?:\/\/\S+$/, "must be an http:// or https://
 
 const keyOnly = z.object({ key: secret }).strict();
 const enginesSchema = z.object({
-  claude: z.object({ key: secret, baseUrl: z.union([url, secret]).optional(), everyClaudeBot: z.boolean().optional(), install: z.boolean().optional() }).strict().optional(),
+  claude: z.object({ key: secret, baseUrl: z.union([url, secret]).optional() }).strict().optional(),
   openai: keyOnly.optional(),
   openrouter: keyOnly.optional(),
   xai: keyOnly.optional(),
@@ -42,7 +42,7 @@ const botFields = {
   title: oneLine("a title", BOT_PROFILE_LIMITS.title).optional(),
   description: z.string().max(BOT_PROFILE_LIMITS.description, `must be at most ${BOT_PROFILE_LIMITS.description} characters`).optional(),
   soul: textOrFile.optional(),
-  model: z.string().regex(/^[\w.-]+\/\S.*$/, "must be INSTANCE/MODEL, such as claude/claude-sonnet-5-5").optional(),
+  model: z.string().regex(/^[\w.-]+\/\S.*$/, "must be INSTANCE/MODEL, such as anthropicApi/claude-sonnet-5-5").optional(),
   effort: z.enum(["none", "low", "medium", "high", "xhigh", "max"]).optional(),
   approval: z.enum(["ask", "edits", "auto", "full"], { error: "must be ask, edits, auto or full (custom is set in the desktop app)" }).optional(),
   computer: z.enum(["auto", "off", "browser", "local", "vm", "cloud"]).optional(),
@@ -103,7 +103,7 @@ export interface DesiredBot {
 }
 export interface DesiredRoom { name: string; team?: string; members: string[]; brief?: string; responder?: string }
 export interface DesiredTeam { name: string; brief?: string; prune: boolean }
-export interface DesiredEngine { kind: string; key: Secret; baseUrl?: string | Secret; everyClaudeBot?: boolean; install?: boolean }
+export interface DesiredEngine { kind: string; key: Secret; baseUrl?: string | Secret }
 
 export interface TeamFile {
   path: string;
@@ -261,10 +261,9 @@ export function checkTeamFile(input: TeamFileInput, file: string, dir: string): 
   });
   const engines: DesiredEngine[] = Object.entries(input.engines ?? {}).flatMap(([name, value]) => {
     if (!value) return [];
-    const spec = value as { key: Secret; baseUrl?: string | Secret; everyClaudeBot?: boolean; install?: boolean };
+    const spec = value as { key: Secret; baseUrl?: string | Secret };
     const anchored = <T extends string | Secret>(ref: T): T => typeof ref === "object" && "file" in ref ? { file: resolve(dir, ref.file) } as T : ref;
-    return [{ kind: ENGINE_KIND[name]!, key: anchored(spec.key), ...(spec.baseUrl !== undefined ? { baseUrl: anchored(spec.baseUrl) } : {}),
-      ...(spec.everyClaudeBot !== undefined ? { everyClaudeBot: spec.everyClaudeBot } : {}), ...(spec.install ? { install: true } : {}) }];
+    return [{ kind: ENGINE_KIND[name]!, key: anchored(spec.key), ...(spec.baseUrl !== undefined ? { baseUrl: anchored(spec.baseUrl) } : {}) }];
   });
   return { path: file, engines, teams, bots, rooms, warnings };
 }

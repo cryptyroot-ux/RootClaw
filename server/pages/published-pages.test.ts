@@ -391,6 +391,6 @@ describe("pages access", () => {
 
   it("signs a home's request exactly as the Admin checks it", () => {
     // The same vector is pinned in rootclaw-cloud tests/cloud-pages.test.ts.
-    expect(pagesHomeSignature("s".repeat(43), "cm-test-home", "1792670400", "nonce-nonce-nonce-1", '{"action":"create"}')).toBe("smys7kDYS99REKsdwsd9OaXv6pH_hP1Wajaq3KrTiVo");
+    expect(pagesHomeSignature("s".repeat(43), "cm-test-home", "1792670400", "nonce-nonce-nonce-1", '{"action":"create"}')).toBe("o_sMjy77pnBF1GOJSkztBV4R3fi6__fgo0Pio-Nui-8");
   });
 });

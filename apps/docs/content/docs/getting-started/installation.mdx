@@ -19,16 +19,15 @@ Choose your computer below. Each link always downloads the latest published buil
   The Windows installer is not code-signed yet. Windows may show “Unknown publisher.” Verify that you downloaded it from the official RootClaw releases repository before choosing **More info → Run anyway**.
 </Callout>
 
-## Install an agent CLI
+## Connect a model provider
 
-RootClaw needs at least one supported agent engine installed and signed in. Claude and Codex are the most common starting points.
+RootClaw runs every bot on its built-in engine, so there is no agent CLI to install. It needs one model provider with an API key.
 
-1. Install the CLI from its official provider.
-2. Run it once in a terminal and complete sign-in.
-3. Restart RootClaw.
-4. Open the model picker. Available engines appear normally; unavailable engines explain what is missing.
+1. Open **Settings → API keys** (the welcome asks for one too).
+2. Paste a key for a provider such as Ollama Cloud, OpenAI, OpenRouter, Anthropic or Google Gemini, then press **Test**.
+3. Open the model picker. Configured providers appear normally; unconfigured ones explain what is missing.
 
-See [Agent engines](../providers/index.mdx) for the complete list and explicit path overrides.
+See [Model providers](../providers/index.mdx) for the complete list and the server environment variables.
 
 ## Using RootClaw at work
 
@@ -36,7 +35,7 @@ If your company uses RootClaw Admin, you can sign in with your organization to u
 
 ## Build from source
 
-Requirements: Node.js 24 or newer, pnpm 10.33.0, and at least one authenticated agent CLI.
+Requirements: Node.js 24 or newer, pnpm 10.33.0, and an API key for one model provider.
 
 ```bash
 git clone https://github.com/cryptyroot-ux/RootClaw.git

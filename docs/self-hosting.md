@@ -16,15 +16,15 @@ The npm CLI supports a managed public tunnel, Tailscale, or your own proxy.
 
 Step by step, for a server you do not have yet: [Deploy RootClaw on a
 VPS](deploy-vps.md) walks through the three ways in (public address, own
-domain, Tailscale), signing engines in, pairing, keeping it running,
+domain, Tailscale), connecting a model provider, pairing, keeping it running,
 updating and backups. This page is the reference behind it.
 
 ## What works headless (and what doesn't)
 
 Runs fully on a server:
 
-- every engine CLI (Claude, Codex, Grok, custom ACP engines — install and
-  log them in **on the server**)
+- the built-in engine with every model provider (give the server one provider
+  API key; no agent CLI is installed or signed in)
 - chats, rooms, bot-to-bot coordination, routines (they keep running with
   every laptop on the planet closed — this is the point)
 - connected apps / custom MCP servers, webhooks, Company Brain
@@ -52,10 +52,10 @@ On any machine with Node 24 or newer (a VPS, a Mac mini, a Raspberry Pi):
 npx rootclaw start
 ```
 
-First launch asks you to choose AI access, connect an account or API key,
-and choose the default model for new bots. Existing sign-ins can be reused;
-Codex also offers device-code login for SSH. API-key connections currently
-support chat, not agent tools or computer use. The [setup guide](cli-onboarding.md)
+First launch asks for a model provider API key (OpenAI, Anthropic, Gemini,
+OpenRouter, Groq, Meta, Ollama Cloud or another OpenAI-compatible service) and
+the default model for new bots. An existing OpenAI-compatible connection can be
+reused. The [setup guide](cli-onboarding.md)
 explains the choices, key storage, and how to run setup again safely.
 
 It then starts the server and keeps your data in `~/.rootclaw`. If you
@@ -65,14 +65,13 @@ and creates no pairing invitation. Use `npx rootclaw setup` to configure without
 `npx rootclaw serve` to start non-interactively with your existing config
 (for services and scripts).
 
-The npm package does not include engine CLIs (`claude`, `codex`, …); setup
-can offer to install and sign in supported engines on this machine.
-Run setup, engine authentication, and the server as the same unprivileged
-operating-system user. Engine credentials live in that user's CLI-specific
-directories, not all under `.rootclaw`.
+Every bot runs on RootClaw's built-in engine; there are no agent CLIs to
+install. Setup saves the key in `~/.rootclaw/config.json` (owner-only
+permissions). Run setup and the server as the same unprivileged
+operating-system user.
 
 For a Linux service, the [VPS guide](deploy-vps.md#before-you-start) shows the
-account setup, engine installation, and browser dependency installation.
+account setup, provider key, and browser dependency installation.
 After installing browser libraries as administrator, also run
 `npx rootclaw browser install` as the service user so that user's browser
 is present. Three ways to make the server reachable from elsewhere:
@@ -130,31 +129,14 @@ plain foreground process. For unattended use, follow the
 release and runs its binary directly. Restarting that service does not
 implicitly download a new release.
 
-## Connect ChatGPT from the browser
+## Add a provider key from the browser
 
-A browser paired with Full access can connect an installed Codex CLI without opening a
-terminal: **Settings → Engines → Codex → Connect ChatGPT**. ROOTCLAW starts
-`codex login --device-auth` on the server and shows a one-time code. Choose
-**Open ChatGPT sign-in**, enter the code on OpenAI's page, and complete sign-in
-with your own account. ROOTCLAW checks for completion and refreshes the model list.
-You can cancel or request a fresh code after it expires.
-
-The server still needs Codex installed and runs it as the same operating-system
-user as ROOTCLAW. Your password never goes through ROOTCLAW; Codex stores its credentials
-on the server. Treat server access and backups as sensitive. Device-code login
-may need enabling in ChatGPT security settings or by your workspace admin; see
-[OpenAI's headless authentication guide](https://learn.chatgpt.com/docs/auth#login-on-headless-devices).
-Subscription limits still apply. This browser flow is currently for Codex;
-other providers retain their existing sign-in methods.
-
-Once connected, Settings shows the account email when Codex can report it.
-To switch accounts, open **Manage account and sign-in** under that line
-and choose **Sign out of ChatGPT**: ROOTCLAW runs `codex logout` on the server as
-the same user and confirms with `codex login status`. New ChatGPT tasks need
-a connected account. Stop running Codex tasks before switching: sign-out does
-not cancel work already in progress. API-key logins are not removed by this
-ChatGPT-specific action. A sign-in another browser is still completing is never
-pulled away; finish or cancel it first.
+A browser paired with Full access can add or replace provider keys under
+**Settings → API keys**: paste a key and it saves and checks itself. Keys are
+write-only; the page shows connected-or-not, never the key. Without a browser,
+`rootclaw engine set KIND --key-env VAR` does the same from the server's
+terminal (see [install](install.md#3-configure-a-provider)). A `ROOTCLAW_*`
+variable in the server's environment wins over a saved key.
 
 ## Connect a custom domain in Settings
 
@@ -222,12 +204,11 @@ That uses the image CI publishes on every `main` push
 (`ghcr.io/cryptyroot-ux/rootclaw`, tagged `latest`, `sha-…` and `v…`).
 To build from your checkout instead: `docker compose up -d --build`.
 
-Then sign the engine CLIs in **inside the container** (their logins live on
-the `data` volume, so they survive restarts and image upgrades) and mint a
-pairing code for your first device:
+Then mint a pairing code for your first device, and once paired add a
+provider key under **Settings → API keys** (it is saved on the `data` volume,
+so it survives restarts and image upgrades):
 
 ```sh
-docker compose exec rootclaw claude                       # each CLI you listed in ENGINES
 docker compose exec rootclaw node dist-server/rootclaw.js pair # prints a code, a link and a QR
 ```
 
@@ -241,8 +222,9 @@ What the stack does, so you can adapt it:
 
 - [`Dockerfile`](../Dockerfile) builds the UI and the self-contained
   server bundle, and runs them as an unprivileged user with `HOME=/data`.
-  `--build-arg ENGINES="…"` (or `ENGINES=` in `.env`) bakes engine CLIs
-  into the image.
+  `--build-arg ENGINES="…"` (or `ENGINES=` in `.env`) still bakes npm
+  packages into the image; RootClaw no longer runs agent CLIs, so leave it
+  empty (the example `.env` still lists one).
 - [`deploy/docker-compose.yml`](../deploy/docker-compose.yml) runs Caddy
   **in the server's network namespace**, so Caddy reaches the server on
   `127.0.0.1` and the server never binds anything public.
@@ -253,7 +235,7 @@ What the stack does, so you can adapt it:
 
 Upgrade with `docker compose pull rootclaw && docker compose up -d` (or
 `git pull && docker compose up -d --build`). State (chats, routines,
-engine logins, paired sessions) is on the `data` volume; back that up.
+saved provider keys, paired sessions) is on the `data` volume; back that up.
 
 The published image installs the current Chrome for Testing whenever a new
 Stable ships. A build from source keeps the Chrome (and any `ENGINES`) it
@@ -266,8 +248,7 @@ docker compose build --build-arg CHROME_CACHE_TAG=$(date +%F) rootclaw && docker
 
 ## From source
 
-Requirements: Node 24+, pnpm, and at least one agent CLI installed and
-signed in on the server.
+Requirements: Node 24+, pnpm, and an API key for one model provider.
 
 ```sh
 git clone https://github.com/cryptyroot-ux/RootClaw && cd RootClaw
@@ -293,53 +274,25 @@ that install and start it are printed (they need `sudo` on Linux).
 permanently first (`npm install -g rootclaw`): a service must not point
 at an `npx` cache that npm may prune.
 
-Engine CLIs read their logins from the service user's home: sign them in
-from Settings → Engines (below), or as that user in a terminal, before you
-rely on routines running unattended.
-
-## Installing the engines without a terminal
-
-Engines whose installer is an npm package (Claude Code, Codex, OpenCode,
-MiniMax, pi) can be installed and updated from **Settings → Engines** when
-npm is on the server's PATH. ROOTCLAW runs `npm install -g` as its own user into
-`<data dir>/tools/npm`, so nothing needs sudo and nothing touches a global
-prefix; that folder goes ahead of everything else on the engines' PATH, so
-the copy ROOTCLAW installed is the one bots run. The package name comes from the
-engine's own install descriptor, never from the browser. Engines installed
-by a `curl | bash` script still need the command on the server.
+Give the service a provider key (Settings → API keys, `rootclaw engine set`,
+or a `ROOTCLAW_*_API_KEY` variable in the unit's environment) before you rely
+on routines running unattended.
 
 ## Provider keys, billed per token
 
-**Settings → Connections → Model providers** takes the keys a whole workspace
-runs on, for people who would rather pay per token than have every user sign
-in. Keys are write-only: the page shows connected-or-not and a **Test** button
-that makes one read-only request to the provider from the server.
+**Settings → API keys** takes the keys a whole workspace runs on. Keys are
+write-only: the page shows connected-or-not, never the key, and checks a key
+when you paste it. Each provider has its own key and server variable
+(`ROOTCLAW_ANTHROPIC_API_KEY`, `ROOTCLAW_OPENAI_API_KEY`,
+`ROOTCLAW_OPENROUTER_API_KEY`, `ROOTCLAW_OLLAMA_API_KEY`, `XAI_API_KEY` and the
+rest; the full list is in [install](install.md#3-configure-a-provider)). The
+server's own `ANTHROPIC_API_KEY` environment variable is deliberately ignored
+for the workspace's Anthropic key; use the page, `config.json`, or
+`ROOTCLAW_ANTHROPIC_API_KEY`.
 
-- **Anthropic API key**: while one is saved, every Claude bot runs on it and
-  Claude Code reports the real cost per turn to the usage ledger. Nobody has
-  to sign in, and Settings → Engines shows "workspace API key" instead of a
-  person. Remove the key to go back to personal logins. The server's own
-  `ANTHROPIC_API_KEY` environment variable is deliberately ignored; use the
-  page, `config.json`, or `ROOTCLAW_ANTHROPIC_API_KEY`.
-- **OpenAI-compatible API key and base URL**: OpenRouter by default, or Groq,
-  Together, a gateway, or `https://api.openai.com/v1` for OpenAI itself. This
-  powers the OpenAI-compatible engine. Codex has no key path by design and
-  always uses a personal ChatGPT login.
-- **xAI API key**: the Grok API engine and xAI image generation.
-
-A saved key goes only to its own engine and only to the workspace's endpoint:
-an engine instance in `config.json` with its own base URL or its own key (a
-router or proxy) never receives it.
-
-**OpenCode is the exception to "the server's own environment is ignored".**
-Like `opencode` in a terminal, it reads provider keys from its environment
-(`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`,
-`KIMI_API_KEY`, `MOONSHOT_API_KEY`, `MINIMAX_API_KEY`) and offers those
-providers' models, billed to that key. It does so only where the server's
-environment is one person's own: never on RootClaw Cloud, a hosted team
-workspace, an organisation-managed desktop, or a server whose sign-in list
-lets other people in (users, more than one admin, or a whole domain).
-Providers added with `opencode auth login` work everywhere.
+A saved key goes only to its own provider and only to the workspace's
+endpoint: an OpenAI-compatible instance in `config.json` with its own base URL
+or its own key (a router or proxy) never receives it.
 
 ## Many client workspaces on one server
 
@@ -387,25 +340,6 @@ in with an emailed code. `ROOTCLAW_LICENSE_KEY` in the environment (or
 `--license-key`) is carried into every workspace so a partner's white-label
 key covers them all. Not root? Every command prints the exact steps to run as
 root instead, and `--dry-run` always prints.
-
-## Signing the engines in without a terminal
-
-On a hosted server, the engine CLIs sign in from Settings → Engines:
-
-- **Codex**: "Connect ChatGPT" shows a one-time code to enter on OpenAI's
-  device page. Once connected, Settings names the account and offers
-  **Sign out of ChatGPT** so a different person can connect their own.
-- **Claude Code**: "Sign in to Claude" opens Anthropic's own sign-in page in
-  your browser; after you sign in it shows a code, which you paste back into
-  Settings. The server hands that code to the unmodified `claude` CLI once and
-  never stores it; the login lands where Claude Code keeps it for the account
-  that runs your bots. This is the sign-in Anthropic permits for a hosted,
-  unmodified Claude Code with your own subscription; the bots then share that
-  subscription's usage limits. Once signed in, **Manage account and sign-in →
-  Sign out of Claude** runs `claude auth logout` for that account's
-  configuration directory, confirmed with `claude auth status`, so a different
-  person can sign in with their own subscription. Stop running Claude tasks
-  before switching accounts: signing out does not cancel them.
 
 ## Using it from your computer
 
@@ -877,17 +811,15 @@ When a turn ends on a usage limit (a subscription's 5-hour or weekly limit,
 one model's own weekly window, a model's extra usage credits), the bot carries
 on by itself with another AI the person has set up until that limit resets,
 and the person hears it once for that stretch of the limit, as a notification:
-"Codex reached its limit until 14:00, so Kai is using Claude meanwhile." With
+"Ollama Cloud reached its limit until 14:00, so Kai is using OpenRouter meanwhile." With
 no AI to carry on, it says the bot waits instead. Nobody is asked.
 
 - **Which AI.** For one model's own limit, the same AI's default model first;
   then the backups chosen for the bot or in Automatic recovery; then the AI a
-  new bot would get. Only an AI that can run a turn now (installed, signed in,
-  allowed by your organisation, not limited itself) with the tools and the
-  working folder the current one has, and one the conversation's approval level
-  can move to without asking (Auto-accept edits stays on an AI that has it).
-  Never another sign-in to the same subscription, which would rotate accounts
-  around the provider's limit; a pay-per-use API key on the same AI is fine.
+  new bot would get. Only an AI that can run a turn now (has a key, allowed by
+  your organisation, not limited itself) with the tools and the working folder
+  the current one has, and one the conversation's approval level can move to
+  without asking.
 - **What moves.** The person's message that met the limit is sent again on that
   AI, in that conversation alone; the bot's own model and its other
   conversations stay where they are. While the limit lasts, every new turn and
@@ -930,10 +862,9 @@ unless its status still says signed out.
 ### Which engine a new bot uses
 
 A saved default model (Settings, `rootclaw setup`, or the New Bot
-defaults) always wins. Without one, new bots get the first engine that can
-run, in this order: a Claude account, a ChatGPT plan, Gemini, Grok, then the
-rest in the order of `instances`; OpenCode running only Zen's free no-login
-models comes last.
+defaults) always wins. Without one, new bots get the first provider that can
+run, in the order of `instances`; a provider ready only through free models
+(no key of the person's own) comes last.
 
 The server picks at once at start, then sends the person's own engines one
 tiny test message each in the background ("Reply with the single word OK",
@@ -1007,6 +938,9 @@ to allow is denied instead. The bot is told why, the conversation shows
 `Blocked by the safety floor: …`, and the decision log gets an `auto-denied`
 row with source `safety-floor`. A card you answer yourself is not overridden:
 at "Ask for approval" the request still reaches you, and your Allow stands.
+The floor applies to every bot the same way, and it only checks automatic
+allows: Full access, a saved command, and "Always allow this session". A turn
+a guest drives always asks, so a person answers its cards.
 
 A command the floor cannot read is not approved automatically either: one
 with a quote or heredoc that never closes, or longer than 32 KB. The request
@@ -1022,17 +956,10 @@ and Linux: what follows `pwsh -c` or `powershell -Command` is read too, both
 as a POSIX line and as PowerShell, so `pwsh -c 'rm -rf /'` and
 `pwsh -c 'Remove-Item -Recurse -Force $HOME'` are blocked.
 
-It holds wherever the engine asks the server, and only there. API-key models
-(the chat runtime) are covered in full, at Full access and under "Always
-allow this session". So is any shell request Claude Code, Codex, Muse Code or
-an ACP agent sends, whether a saved command, a kept session allow or Full
-access would have answered it: the engine's command line travels with the
-request, so it is read even when its working directory is not known. An
-engine running its own no-ask mode never sends a request, so the floor does
-not see the command: at Full access that is Claude Code
-(`bypassPermissions`), Codex (approvals off) and the ACP agents started in
-their own yolo mode. Treat it as a net under saved commands and API-key bots,
-not as a sandbox.
+Every bot runs on the built-in engine, which asks the server about every
+shell command, so the floor covers all bots, at Full access and under "Always
+allow this session". Treat it as a net under saved commands and automatic
+approvals, not as a sandbox.
 
 ### Admin activity
 
@@ -1088,10 +1015,8 @@ admins get one in-app notification the first time each month crosses the
 warning and one when it reaches the limit (a new month or a new limit starts
 over).
 
-The figure is every cost in the usage ledger. Claude reports its own cost
-(real on your keys, an equivalent on personal subscriptions). Codex, the
-OpenAI-compatible/OpenRouter engine, Grok, MiniMax and the ACP engines report
-tokens but no price, so the server books an **estimate** from a built-in list
+The figure is every cost in the usage ledger. A provider that reports tokens
+but no price gets an **estimate** from a built-in list
 of vendor list prices (`server/model-prices.ts`, each entry with its source
 and the date it was read) and marks the row `costSource: "estimated"`. A model
 that is not in the list is unpriced and not counted; Usage says how many
@@ -1196,10 +1121,10 @@ off by default, also tells the bot:
   until something is ready (`curl -f` against a server that is still starting)
   counts as a failing command, which is why the stop is not on by default.
 
-The note needs an engine that accepts a message in the middle of a turn
-(Claude Code, Codex, Pi, Muse Code). ACP agents cannot take one, so they get
-only the stop, and only if you set it. The note and the stop do not cover bots
-on API models or turns in a room yet.
+The note and the stop cover the built-in engine too: the note goes into the
+running turn as a steer, and the stop interrupts it like the Stop button. They
+do not cover turns in a room yet. `correctiveRounds`, below, is an extra on top
+of them, not a replacement.
 
 Bots on API models (xAI, Mistral, Groq, Cerebras, Meta, MiniMax or an
 OpenAI-compatible endpoint) end a turn as failed when a tool call failed and

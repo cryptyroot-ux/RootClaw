@@ -130,25 +130,25 @@ describe("connecting an AI in the welcome", () => {
   type Row = { id: string; driverKind: string; access?: string; readOnly?: boolean };
   const row = (id: string, driverKind: string, extra: Partial<Row> = {}): Row => ({ id, driverKind, ...extra });
 
-  it("recommends a Claude account first, then a ChatGPT plan, and folds every other way under it", () => {
-    const grok = row("grok", "grokAgent");
-    const codex = row("codex", "codex");
-    const claudeKey = row("claude-api", "claudeAgent", { access: "api" });
-    const claude = row("claude", "claudeAgent");
-    expect(aiChoices([grok, codex, claudeKey, claude])).toEqual({ recommended: claude, others: [grok, codex, claudeKey] });
-    expect(aiChoices([grok, claudeKey, codex]).recommended).toBe(codex);
-    expect(aiChoices([grok, claudeKey]).recommended).toBe(grok);
-    expect(aiChoices([row("company", "claudeAgent", { readOnly: true }), grok]).recommended, "an organization's model is not a sign-in").toBe(grok);
+  it("recommends the first configured personal provider and folds every other way under it", () => {
+    const xai = row("xaiApi", "grok");
+    const openai = row("openaiResponses", "openai-responses");
+    const anthropicKey = row("anthropicApi", "anthropic", { access: "api" });
+    const anthropic = row("anthropicCustom", "anthropic");
+    expect(aiChoices([xai, openai, anthropicKey, anthropic])).toEqual({ recommended: xai, others: [openai, anthropicKey, anthropic] });
+    expect(aiChoices([openai, anthropicKey, xai]).recommended).toBe(openai);
+    expect(aiChoices([xai, anthropicKey]).recommended).toBe(xai);
+    expect(aiChoices([row("company.anthropic", "anthropic", { readOnly: true }), xai]).recommended, "an organization's model is not a sign-in").toBe(xai);
     expect(aiChoices([])).toEqual({ recommended: undefined, others: [] });
   });
 
-  it("recommends in the same order the new-bot default uses: then Gemini, then Grok, then the rest as listed", () => {
-    const kimi = row("kimi", "kimiAgent");
-    const grok = row("grok", "grokAgent");
-    const antigravity = row("antigravity", "antigravityAgent");
-    expect(aiChoices([kimi, grok, antigravity]).recommended).toBe(antigravity);
-    expect(aiChoices([kimi, grok])).toEqual({ recommended: grok, others: [kimi] });
-    expect(aiChoices([kimi, row("droid", "droidAgent")]).recommended).toBe(kimi);
+  it("uses the same configured order as the new-bot default", () => {
+    const openrouter = row("openrouter", "openai-compat");
+    const xai = row("xaiApi", "grok");
+    const gemini = row("geminiApi", "gemini");
+    expect(aiChoices([openrouter, xai, gemini]).recommended).toBe(openrouter);
+    expect(aiChoices([xai, gemini])).toEqual({ recommended: xai, others: [gemini] });
+    expect(aiChoices([gemini, openrouter]).recommended).toBe(gemini);
   });
 });
 
@@ -160,28 +160,28 @@ describe("the AI the welcome stands on", () => {
     return found && { id: found.instance.id, state: found.state };
   };
 
-  it("is none while only OpenCode's free backup works, so the welcome still asks for the person's own AI", () => {
-    const backup = ai("opencodeGo", "opencodeGo", { snapshot: { freeFallback: true }, aiTest: "passed" });
-    expect(stand([backup, ai("claude", "claudeAgent", { ready: false })])).toBeNull();
+  it("is none while only a free model works, so the welcome still asks for the person's own AI", () => {
+    const backup = ai("freeApi", "openai-compat", { snapshot: { freeFallback: true }, aiTest: "passed" });
+    expect(stand([backup, ai("anthropicApi", "anthropic", { ready: false })])).toBeNull();
     expect(stand([])).toBeNull();
   });
 
   it("is the best ready AI, waiting on its test, and works once it answered", () => {
-    expect(stand([ai("grok", "grokAgent"), ai("claude", "claudeAgent")])).toEqual({ id: "claude", state: "testing" });
-    expect(stand([ai("grok", "grokAgent"), ai("claude", "claudeAgent", { aiTest: "testing" })])).toEqual({ id: "claude", state: "testing" });
-    expect(stand([ai("grok", "grokAgent"), ai("claude", "claudeAgent", { aiTest: "passed" })])).toEqual({ id: "claude", state: "passed" });
+    expect(stand([ai("anthropicApi", "anthropic"), ai("xaiApi", "grok")])).toEqual({ id: "anthropicApi", state: "testing" });
+    expect(stand([ai("anthropicApi", "anthropic", { aiTest: "testing" }), ai("xaiApi", "grok")])).toEqual({ id: "anthropicApi", state: "testing" });
+    expect(stand([ai("anthropicApi", "anthropic", { aiTest: "passed" }), ai("xaiApi", "grok")])).toEqual({ id: "anthropicApi", state: "passed" });
     // An AI with nothing to test it with is trusted, as before.
-    expect(stand([ai("muse", "museCode", { aiTest: "untestable" })])).toEqual({ id: "muse", state: "untestable" });
+    expect(stand([ai("local", "openai-compat", { aiTest: "untestable" })])).toEqual({ id: "local", state: "untestable" });
     // Only those two let the welcome leave out its Connect an AI step.
     expect(["passed", "untestable", "testing", "failed"].map((state) => aiWorks({ state: state as Ai["aiTest"] & string }))).toEqual([true, true, false, false]);
     expect(aiWorks(null)).toBe(false);
   });
 
   it("walks past an AI that didn't answer to the next, and says so when none is left", () => {
-    expect(stand([ai("grok", "grokAgent", { aiTest: "passed" }), ai("claude", "claudeAgent", { aiTest: "failed" })])).toEqual({ id: "grok", state: "passed" });
-    expect(stand([ai("grok", "grokAgent"), ai("claude", "claudeAgent", { aiTest: "failed" })])).toEqual({ id: "grok", state: "testing" });
-    expect(stand([ai("claude", "claudeAgent", { aiTest: "failed" }), ai("opencodeGo", "opencodeGo", { snapshot: { freeFallback: true } })]))
-      .toEqual({ id: "claude", state: "failed" });
+    expect(stand([ai("anthropicApi", "anthropic", { aiTest: "passed" }), ai("xaiApi", "grok", { aiTest: "failed" })])).toEqual({ id: "anthropicApi", state: "passed" });
+    expect(stand([ai("anthropicApi", "anthropic"), ai("xaiApi", "grok", { aiTest: "failed" })])).toEqual({ id: "anthropicApi", state: "testing" });
+    expect(stand([ai("anthropicApi", "anthropic", { aiTest: "failed" }), ai("freeApi", "openai-compat", { snapshot: { freeFallback: true } })]))
+      .toEqual({ id: "anthropicApi", state: "failed" });
   });
 });
 

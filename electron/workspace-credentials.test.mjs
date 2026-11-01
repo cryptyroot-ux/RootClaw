@@ -22,7 +22,6 @@ describe("workspace credential migration", () => {
       box: { token: "boat-secret" },
       tts: { key: "tts-secret", fishKey: "fish-secret", voice: "narrator" },
       imageGen: { key: "image-secret" },
-      opencodeGo: { apiKey: "ocg-secret" },
       profile: { name: "Ada" },
     };
     const result = migrateWorkspaceCredentials(config, {});
@@ -33,7 +32,6 @@ describe("workspace credential migration", () => {
       boxToken: "boat-secret",
       ttsKey: "tts-secret",
       fishAudioKey: "fish-secret",
-      opencodeGoApiKey: "ocg-secret",
       openaiImageApiKey: "image-secret",
     });
     expect(result.config).toEqual({
@@ -41,7 +39,6 @@ describe("workspace credential migration", () => {
       box: {},
       tts: { voice: "narrator" },
       imageGen: {},
-      opencodeGo: {},
       profile: { name: "Ada" },
     });
     expect(config.xai.key).toBe("xai-secret");
@@ -95,14 +92,14 @@ describe("workspace credential migration", () => {
   });
 
   it("keeps the packaged save → restart cycle lossless end to end", () => {
-    const boot = migrateWorkspaceCredentials({ opencodeGo: { apiKey: "ocg-secret" } }, {});
-    expect(boot.credentials).toEqual({ opencodeGoApiKey: "ocg-secret" });
+    const boot = migrateWorkspaceCredentials({ xai: { key: "xai-secret" } }, {});
+    expect(boot.credentials).toEqual({ xaiApiKey: "xai-secret" });
 
     const afterTombstone = migrateWorkspaceCredentials(
-      { opencodeGo: { apiKey: "" }, profile: { name: "Ada" } },
-      { opencodeGoApiKey: "ocg-secret" },
+      { xai: { key: "" }, profile: { name: "Ada" } },
+      { xaiApiKey: "xai-secret" },
     );
-    expect(afterTombstone.credentials).toEqual({ opencodeGoApiKey: "ocg-secret" });
+    expect(afterTombstone.credentials).toEqual({ xaiApiKey: "xai-secret" });
     expect(afterTombstone.credentialsChanged).toBe(false);
   });
 
@@ -130,7 +127,6 @@ describe("workspace credential env", () => {
         boxToken: "boat-secret",
         ttsKey: "tts-secret",
         fishAudioKey: "fish-secret",
-        opencodeGoApiKey: "ocg-secret",
         openaiImageApiKey: "image-secret",
         composioApiKey: "ak_handled-separately",
       }),
@@ -139,7 +135,6 @@ describe("workspace credential env", () => {
       BOX_TOKEN: "boat-secret",
       ROOTCLAW_TTS_KEY: "tts-secret",
       ROOTCLAW_FISH_AUDIO_API_KEY: "fish-secret",
-      OPENCODE_API_KEY: "ocg-secret",
       ROOTCLAW_OPENAI_IMAGE_KEY: "image-secret",
     });
   });

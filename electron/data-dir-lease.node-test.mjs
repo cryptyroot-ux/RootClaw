@@ -374,7 +374,7 @@ test("a foreign-host reaper fails closed and identifies its preserved recovery r
 test("legacy data is moved before lease creation", () => {
   const root = mkdtempSync(path.join(tmpdir(), "rootclaw-electron-legacy-"));
   roots.push(root);
-  const legacyDataDir = path.join(root, ".rootclaw");
+  const legacyDataDir = path.join(root, ".openmausbot");
   const dataDir = path.join(root, ".rootclaw");
   mkdirSync(legacyDataDir);
   writeFileSync(path.join(legacyDataDir, "keep-me.txt"), "kept");

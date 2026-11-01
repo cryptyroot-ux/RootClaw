@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readBody, startFleetAgent } from "./fleet-agent.ts";
 import { fleetAvailable, fleetRequest } from "./fleet-client.ts";
 import type { FleetDeps } from "./fleet-cli.ts";
-import { emptyRegistry, fleetLayout, MANAGED_OPENROUTER } from "./fleet.ts";
+import { emptyRegistry, fleetLayout } from "./fleet.ts";
 import { removeTempDir } from "./testing/cleanup.ts";
 import { appendUsage, flushUsageLedger, readUsage, summarizeUsage } from "./usage-ledger.ts";
 
@@ -65,7 +65,7 @@ describe.skipIf(process.platform === "win32")("fleet agent over its socket", () 
     return logs;
   }
 
-  it("creates an OpenRouter-only workspace and updates its catalog through the real isolated socket", async () => {
+  it("creates a native OpenRouter workspace and updates its catalog through the real isolated socket", async () => {
     const m = machine(root);
     m.files.set(fleetLayout(root).registryFile, JSON.stringify(emptyRegistry("example.test")));
     await boot(m);
@@ -73,13 +73,15 @@ describe.skipIf(process.platform === "win32")("fleet agent over its socket", () 
     expect(created.status).toBe(200);
     const configPath = join(root, "var/lib/rootclaw/acme/.rootclaw/config.json");
     const original = m.files.get(configPath);
-    expect(JSON.parse(original!).defaultModelSelection).toEqual({ instanceId: "opencodeGo", model: `${MANAGED_OPENROUTER}/provider/first` });
-    const path = join(root, "var/lib/rootclaw/acme/.config/opencode/opencode.json");
+    expect(JSON.parse(original!).defaultModelSelection).toEqual({ instanceId: "openrouter", model: "provider/first" });
+    const path = join(root, "var/lib/rootclaw/acme/.rootclaw/config.json");
+    const envPath = join(root, "etc/rootclaw/instances/acme.env");
+    expect(m.files.get(envPath)).toContain("ROOTCLAW_OPENROUTER_API_KEY=scoped-secret");
     const count = m.calls.length;
     expect((await fleetRequest(socketPath, "POST", "/workspaces/acme/providers", { models: ["provider/second"] })).status).toBe(200);
-    expect(JSON.parse(m.files.get(path)!).provider[MANAGED_OPENROUTER]).toMatchObject({ options: { apiKey: "scoped-secret" }, models: { "provider/second": { name: "provider/second" } } });
+    expect(JSON.parse(m.files.get(path)!).instances.openrouter.config.managedModels).toEqual(["provider/second"]);
     expect(m.calls.length).toBe(count); // no service restart or live process mutation
-    expect(m.files.get(configPath)).toBe(original);
+    expect(JSON.stringify(m.files.get(path))).not.toContain("scoped-secret");
     for (const models of [undefined, "provider/model", [null], ["invalid\nmodel"]]) expect((await fleetRequest(socketPath, "POST", "/workspaces/acme/providers", { models })).status).toBe(400);
     const saved = m.files.get(path);
     m.files.set(path, '{"private":"scoped-secret",');
@@ -88,7 +90,7 @@ describe.skipIf(process.platform === "win32")("fleet agent over its socket", () 
     expect(readFileSync(join(root, "audit.jsonl"), "utf8")).not.toContain("scoped-secret");
     m.files.set(path, saved!);
     expect((await fleetRequest(socketPath, "POST", "/workspaces/acme/providers", { models: [] })).status).toBe(200);
-    expect(JSON.parse(m.files.get(path)!).provider[MANAGED_OPENROUTER].models).toEqual({});
+    expect(JSON.parse(m.files.get(path)!).instances.openrouter.config.managedModels).toEqual([]);
   });
 
   it("creates, lists with this month's usage, edits users, suspends, deletes, and audits every action", async () => {

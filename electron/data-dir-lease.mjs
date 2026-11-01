@@ -365,14 +365,17 @@ function validateDataDir(dataDir) {
 
 function prepareDataDir(dataDir, legacyDataDir) {
   validateDataDir(dataDir);
-  if (legacyDataDir !== undefined) {
-    validateDataDir(legacyDataDir);
-    // Before acquiring: creating the new directory first would turn the one-time legacy rename into a no-op.
-    if (!existsSync(dataDir) && existsSync(legacyDataDir)) {
+  const legacies = legacyDataDir === undefined ? [] : Array.isArray(legacyDataDir) ? legacyDataDir : [legacyDataDir];
+  // Before acquiring: creating the new directory first would turn the one-time legacy rename into a no-op.
+  if (!existsSync(dataDir)) {
+    for (const legacy of legacies) {
+      validateDataDir(legacy);
+      if (!existsSync(legacy)) continue;
       try {
-        renameSync(legacyDataDir, dataDir);
+        renameSync(legacy, dataDir);
       } catch {
       }
+      break;
     }
   }
   try {

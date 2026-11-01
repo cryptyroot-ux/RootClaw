@@ -187,17 +187,17 @@ describe("tools that ask a person", () => {
 });
 
 describe("delegatedApprovalMode", () => {
-  const base = { senderIsChief: true, senderMode: "full" as const, sameBot: false, recipientMode: "ask" as const, recipientDriverKind: "claudeAgent" };
+  const base = { senderIsChief: true, senderMode: "full" as const, sameBot: false, recipientMode: "ask" as const, recipientDriverKind: "openai-compat" };
   it("passes a Full-access Chief's access to the teammate it delegates to", () => {
     expect(delegatedApprovalMode(base)).toBe("full");
-    for (const recipientDriverKind of ["codex", "claudeAgent", "antigravityAgent", "cursorAgent", "grokAgent", "opencodeGo"]) {
+    for (const recipientDriverKind of ["openai-compat", "anthropic", "gemini", "grok"]) {
       expect(delegatedApprovalMode({ ...base, recipientDriverKind })).toBe("full");
     }
   });
-  it("passes an Approve-for-me or Auto-accept-edits Chief's level on too", () => {
+  it("passes Approve for me, and stops Auto-accept edits because no native engine implements it", () => {
     expect(delegatedApprovalMode({ ...base, senderMode: "auto" })).toBe("auto");
-    expect(delegatedApprovalMode({ ...base, senderMode: "edits" })).toBe("edits");
-    expect(delegatedApprovalMode({ ...base, senderMode: "custom", recipientDriverKind: "codex" })).toBe("auto");
+    expect(delegatedApprovalMode({ ...base, senderMode: "edits" })).toBeNull();
+    expect(delegatedApprovalMode({ ...base, senderMode: "custom" })).toBe("auto");
   });
   it("passes nothing on from an ordinary bot, a Chief on Ask, or a bot to itself", () => {
     expect(delegatedApprovalMode({ ...base, senderIsChief: false })).toBeNull();
@@ -209,13 +209,12 @@ describe("delegatedApprovalMode", () => {
     expect(delegatedApprovalMode({ ...base, senderMode: "auto", recipientMode: "auto" })).toBeNull();
     expect(delegatedApprovalMode({ ...base, senderMode: "full", recipientMode: "auto" })).toBe("full");
     expect(delegatedApprovalMode({ ...base, senderMode: "edits", recipientMode: "auto" })).toBeNull();
-    expect(delegatedApprovalMode({ ...base, recipientMode: "custom", recipientDriverKind: "codex" })).toBeNull();
+    expect(delegatedApprovalMode({ ...base, recipientMode: "custom" })).toBeNull();
   });
   it("steps down to the next level the teammate's engine has", () => {
-    expect(delegatedApprovalMode({ ...base, recipientDriverKind: "hermesAgent" })).toBe("full");
+    expect(delegatedApprovalMode({ ...base, recipientDriverKind: "anthropic" })).toBe("full");
     expect(delegatedApprovalMode({ ...base, recipientDriverKind: undefined })).toBe("full");
-    // Codex has no Auto-accept edits (its Ask already writes the workspace).
-    expect(delegatedApprovalMode({ ...base, senderMode: "edits", recipientDriverKind: "codex" })).toBeNull();
-    expect(delegatedApprovalMode({ ...base, senderMode: "auto", recipientDriverKind: "codex" })).toBe("auto");
+    expect(delegatedApprovalMode({ ...base, senderMode: "edits" })).toBeNull();
+    expect(delegatedApprovalMode({ ...base, senderMode: "auto" })).toBe("auto");
   });
 });

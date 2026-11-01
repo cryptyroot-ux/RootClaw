@@ -3,7 +3,7 @@
 ## 1. What this is
 RootClaw is a standalone AI agent platform with its OWN native engine, execution system and capability management. It does not ride on external AI engines (Claude Code, Codex, Hermes, OpenCode, Pi, etc.). Any LLM provider/model plugs in through adapters, never tied to an engine.
 - Repo: https://github.com/cryptyroot-ux/RootClaw (public), branch `main`. Owner: cryptyroot-ux.
-- Origin: fork of OpenMausBot (OMB), renamed to RootClaw. Only the required NOTICE file may mention OpenMausBot.
+- Origin: a renamed fork of an earlier open-source app; the upstream project is credited only in the required NOTICE file.
 - Stack: TypeScript, Node, pnpm, vitest, Electron app + server.
 
 ## 2. Goal
@@ -12,12 +12,12 @@ Build a native engine strong enough to compete with Claude Code / Codex / OpenCo
 ## 3. Architecture (key files)
 - `server/drivers/openai-chat.ts`: native turn loop.
 - `server/drivers/turn-context.ts`: context compaction.
-- `server/drivers/adapters/`: provider adapters: OpenAI-compatible (custom, multiple installs with own base URL + key), Anthropic, Gemini, OpenAI Responses, OpenRouter, Ollama Cloud.
+- Provider drivers: `server/drivers/adapters/` holds only the Anthropic, Gemini and OpenAI Responses wire adapters (+ `http.ts`). `server/drivers/api-providers.ts` registers those plus Ollama Cloud (its OpenAI-compatible endpoint); `server/drivers/openai-compat.ts` is the shared OpenAI-compatible driver (custom installs with their own base URL + key, OpenAI, OpenRouter); xAI (`grok.ts`), Groq, Mistral, Cerebras, Meta and MiniMax have their own files in `server/drivers/`, all on the shared `openai-chat.ts` loop.
 - Workspace tools (shell/fs/patch): bwrap sandbox; web fetch/search with SSRF guard.
 - `server/engine-memory.ts`: memory (not yet wired into the turn loop).
 - `server/testing/fake-openai-chat.ts`: scriptable fake provider for tests.
 - `evals/engine-tasks`: eval harness; results in `evals/results/`.
-- `legacy-engines.ts`: KEEP (migrates old OMB data). Never delete.
+- `legacy-engines.ts`: KEEP (migrates pre-rename data). Never delete.
 - Docs: README, `docs/install.md`, `docs/migration.md`, `docs/design/*.md`.
 
 ## 4. Done
@@ -37,15 +37,15 @@ Build a native engine strong enough to compete with Claude Code / Codex / OpenCo
 ## 5. Not done / open problems
 1. **CI on main is RED.** ~64 failing test files as of run 41215755420, mostly:
    - Remaining external engine ids in CODE (`codex`, `claude`, `kimi`, `grok`, `moonshot`, ...) in engine registry, default model selection and tool profiles. Tests expect e.g. default instance `claude`. Root cause: removal of external engines is incomplete.
-   - Rebrand drift: OMB_ → ROOTCLAW_ env names; Cyrillic look-alike text (`ОМВ`) and broken brackets in `server/runtime/envelope.test.ts`.
+   - Rebrand drift: pre-rename env prefixes → `ROOTCLAW_` names; Cyrillic look-alike text and broken brackets in `server/runtime/envelope.test.ts`.
    - Count mismatches (e.g. `sessions.test.ts` 57 vs 52, `agents-bridge-wire` tools object).
    - `agents-bridge-chat.test.ts` ("carries on after use_tool") fails independently.
-2. **Shell sandbox on CI:** GitHub runners lack bubblewrap; shell tools refuse there. Tests use `ROOTCLAW_SHELL_SANDBOX=off`. Either install bwrap in CI (`apt-get install -y bubblewrap`) or keep the opt-out in tests only. Document the setting in `docs/install.md`.
+2. **Shell sandbox on CI:** GitHub runners lack bubblewrap; shell tools refuse there. Tests use `ROOTCLAW_SHELL_SANDBOX=off`. Either install bwrap in CI (`apt-get install -y bubblewrap`) or keep the opt-out in tests only. (Done: the setting and the fail-closed behavior are documented in `docs/install.md` → Requirements.)
 3. **Lost coverage:** API tests for thread capacity, guarded messages and independent threads were deleted (needed the removed fake Claude CLI). Rewrite them on `fake-openai-chat.ts`.
 4. **E2E tests** hang in CI (open handles). Excluded from main shards. Diagnose per file with `--reporter=hanging-process`.
 5. **Phase 5 code not implemented:** response caching (beyond Anthropic cache_control), intelligence layer wiring, plugin system, multi-agent swarm.
 6. Eval: fix engine-side causes of the 2 failures; run more models.
-7. Release checklist not done: CHANGELOG, version tag, clean install test, OMB-data migration test, final secret scan.
+7. Release checklist not done: CHANGELOG, version tag, clean install test, pre-rename data migration test, final secret scan.
 
 ## 6. Next steps (in order)
 1. `git pull`. Latest failing CI run: `gh run list -b main -L 3`, then `gh run view <id> --log-failed`.

@@ -32,23 +32,18 @@ describe("Settings → Connections", () => {
     expect(sectionMatches(connections, typed.trim().toLowerCase())).toBe(true);
   });
 
-  it("points OpenCode users at `opencode auth login` for other providers", async () => {
+  it("lists native provider keys, not a removed engine's login command", async () => {
     const { SettingsModal } = await import("./SettingsModal");
     const html = renderToStaticMarkup(createElement(SettingsModal));
-    expect(html).toContain("More providers for OpenCode bots");
-    expect(html).toContain('<code class="font-mono">opencode auth login</code>');
+    expect(html).toContain("OpenAI API key");
+    expect(html).toContain("Anthropic API key");
+    expect(html).toContain('data-api-key-row="openai"');
+    expect(html).toContain('data-api-key-row="anthropic"');
+    expect(html).not.toContain("opencode auth login");
+    expect(html).not.toContain('data-api-key-row="opencodeGo"');
   });
 
-  it("offers keys for other OpenCode providers next to the OpenCode key", async () => {
-    const { SettingsModal } = await import("./SettingsModal");
-    const html = renderToStaticMarkup(createElement(SettingsModal));
-    const opencode = html.indexOf('data-api-key-row="opencodeGo"');
-    expect(opencode).toBeGreaterThan(0);
-    expect(html.indexOf("data-opencode-provider-keys")).toBeGreaterThan(opencode);
-    expect(html).toContain("Keys for other OpenCode providers");
-  });
-
-  it("sends nobody on a Cloud to a terminal, only to the keys for other providers", async () => {
+  it("keeps those keys on a Cloud, with no terminal login", async () => {
     const { configStatusFromFrame } = await import("@/state/store");
     fixture.config = configStatusFromFrame({
       composio: { configured: false },
@@ -61,9 +56,8 @@ describe("Settings → Connections", () => {
     });
     const { SettingsModal } = await import("./SettingsModal");
     const html = renderToStaticMarkup(createElement(SettingsModal));
-    expect(html).toContain("OpenCode API key");
+    expect(html).toContain("OpenAI API key");
+    expect(html).toContain('data-api-key-row="xai"');
     expect(html).not.toContain("opencode auth login");
-    expect(html).not.toContain("More providers for OpenCode bots");
-    expect(html).toContain("Keys for other OpenCode providers");
   });
 });

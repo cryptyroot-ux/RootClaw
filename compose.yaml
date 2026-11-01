@@ -9,7 +9,7 @@ services:
       context: ./deploy/local
       args:
         BASE_IMAGE: ${ROOTCLAW_BASE_IMAGE:-ghcr.io/cryptyroot-ux/rootclaw:latest}
-        ENGINES: ${ENGINES-@anthropic-ai/claude-code @openai/codex}
+        ENGINES: ${ENGINES:-}
     image: ${ROOTCLAW_LOCAL_IMAGE:-rootclaw-local:latest}
     restart: unless-stopped
     volumes:

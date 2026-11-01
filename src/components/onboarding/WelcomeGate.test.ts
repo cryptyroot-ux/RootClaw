@@ -231,14 +231,7 @@ describe("who gets the welcome flow", () => {
     expect(localStorage.getItem(WELCOME_DRAFT_KEY)).toBeNull();
   });
 
-  it("steps aside while Settings is open on the organization sign-in it offers, and is back after", () => {
-    vi.stubGlobal("window", LOCAL_PAGE);
-    store.state = { ...store.state, appSettingsOpen: true, appSettingsSection: "organization" };
-    expect(gate(LOCAL_VIEWER).tree).toBeNull();
-    store.state = { ...store.state, appSettingsOpen: false };
-    expect(gate(LOCAL_VIEWER).tree?.type).toBe(WelcomeFlow);
   });
-});
 
 describe("useWelcomeViewer", () => {
   const viewer = () => {

@@ -45,12 +45,12 @@ const room = (message: Message) => renderToStaticMarkup(createElement(RoomToolCh
 describe("a member's failed turn in a room", () => {
   const signedOut = failed("error: Not logged in · Please run /login", { setup: true });
 
-  it("says the engine is signed out and offers the sign-in, not the CLI's /login text", () => {
+  it("says the engine is signed out and offers setup, not the CLI's /login text", () => {
     const markup = room(signedOut);
     expect(markup).toContain("Claude isn&#x27;t signed in yet. Sign in below, then send your message again.");
-    expect(markup).toContain("Sign in to Claude");
+    expect(markup).toContain("Set up Claude");
+    expect(markup).not.toContain("Sign in to Claude");
     expect(markup).not.toContain('data-testid="tool-activity"');
-    expect(markup).not.toContain("truncate font-mono");
     const details = markup.indexOf("<details");
     expect(details).toBeGreaterThan(-1);
     expect(markup.indexOf("Not logged in")).toBeGreaterThan(details);
@@ -74,6 +74,7 @@ describe("a member's failed turn in a room", () => {
       const markup = room(signedOut);
       expect(markup).toContain(">Not logged in · Please run /login</span>");
       expect(markup).not.toContain("Sign in to Claude");
+      expect(markup).not.toContain("Set up Claude");
     } finally {
       fixture.instances = [claude];
     }

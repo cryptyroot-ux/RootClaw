@@ -28,7 +28,7 @@ function ready(patch: Partial<AppState> = {}): AppState {
     hydrated: true,
     routinesLoadState: "ready",
     config: { box: { configured: false }, composio: { configured: false }, vps: { configured: false, sshAlias: "" }, rooms: { turnTimeoutMinutes: 30 }, localVm: { mode: "shared", maxInstances: 1 } } as ConfigStatus,
-    instances: [{ instanceId: "claude", driverKind: "claudeAgent", displayName: "Claude", snapshot: { state: "available", authenticated: true }, models: { default: "", options: [] } } as InstanceInfo],
+    instances: [{ instanceId: "openaiCompat", driverKind: "openai-compat", displayName: "Fixture", snapshot: { state: "available", authenticated: true }, models: { default: "", options: [] } } as InstanceInfo],
     webhookIngress: { available: true, baseUrl: "http://127.0.0.1:8800" },
     ...patch,
   };
@@ -75,7 +75,7 @@ describe("useUsageSnapshot", () => {
   it("sends one snapshot once the app is ready and the viewer owns it", async () => {
     await draw(ready());
     expect(sent()).toHaveLength(1);
-    expect(sent()[0]![1]).toMatchObject({ bots: 0, engines: ["claude"], platform: "browser", remote_client: false });
+    expect(sent()[0]![1]).toMatchObject({ bots: 0, engines: ["openai_compat"], platform: "browser", remote_client: false });
     // Its reads are background reads: nobody is using a Cloud home when the day's snapshot goes (src/state/api.ts).
     expect(fixture.api.mock.calls.length).toBeGreaterThan(0);
     expect(fixture.api.mock.calls.every(([, init]) => (init as { background?: boolean } | undefined)?.background === true)).toBe(true);

@@ -1,5 +1,5 @@
-import { expect, it } from "vitest";
-import { compactBudget, compactionReading, contextWindowFor, shouldCompact, DEFAULT_CONTEXT_WINDOW } from "./context-budget.ts";
+import { describe, expect, it } from "vitest";
+import { compactBudget, learnContextWindow, noteAcceptedRequest, compactionReading, contextWindowFor, shouldCompact, DEFAULT_CONTEXT_WINDOW } from "./context-budget.ts";
 
 it("keeps compaction reachable below small model windows", () => {
   expect(compactBudget(8_000)).toBe(6_400);
@@ -45,4 +45,18 @@ it("times compaction from a driver's reading unless the driver reports it for th
   expect(window).toBe(DEFAULT_CONTEXT_WINDOW);
   expect(shouldCompact({ contextTokens: compactionReading({ contextReading: "meter" }, reading)?.tokens, estimatedBytes: 4_000,
     budget: compactBudget(window), window })).toBe(false);
+});
+
+describe("a learned window the provider later proves too low", () => {
+  it("rises to a larger request the same model took, never above the declared window", () => {
+    learnContextWindow("recover", "m", 6_000);
+    expect(contextWindowFor("m", undefined, 16_384, "recover")).toBe(6_000);
+    noteAcceptedRequest("recover", "m", 9_000);
+    expect(contextWindowFor("m", undefined, 16_384, "recover")).toBe(9_000);
+    noteAcceptedRequest("recover", "m", 40_000);
+    expect(contextWindowFor("m", undefined, 16_384, "recover")).toBe(16_384);
+    noteAcceptedRequest("recover", "other", 50_000);
+    learnContextWindow("recover", "other", 7_000);
+    expect(contextWindowFor("other", undefined, 16_384, "recover")).toBe(7_000);
+  });
 });

@@ -43,7 +43,6 @@ export function snapshotFrom(value: unknown): ProviderSnapshot | null {
     state: raw.state,
     ...(text(raw.reason) ? { reason: raw.reason } : {}),
     ...(flag(raw.authenticated) ? { authenticated: raw.authenticated } : {}),
-    ...(flag(raw.chatgptPlan) ? { chatgptPlan: raw.chatgptPlan } : {}),
     // Until the start-up read reaches it, OpenCode on its free models alone still ranks and reads as the backup it is.
     ...(flag(raw.freeFallback) ? { freeFallback: raw.freeFallback } : {}),
     ...(text(raw.authenticationUnavailableReason) ? { authenticationUnavailableReason: raw.authenticationUnavailableReason } : {}),

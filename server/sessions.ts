@@ -137,7 +137,7 @@ export function generatePairingCode(): string {
 /** A credential is matched byte for byte; only a typed code is normalized. */
 export const PAIRING_CREDENTIAL_PREFIX = "rootclaw_pair_";
 
-/** 9 + 43 characters: the Android companion checks that length exactly. */
+/** `rootclaw_pair_` plus 43 characters: companion parsers check that length exactly. */
 export function generatePairingCredential(): string {
   return `${PAIRING_CREDENTIAL_PREFIX}${randomBytes(32).toString("base64url")}`;
 }

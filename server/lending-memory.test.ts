@@ -322,6 +322,9 @@ describe("a bot's memory and a lent Mac (server/lending-memory.ts)", () => {
     for (let i = 0; i < 3_000; i += 1) mkdirSync(join(tasks, "bot1", `t${i}`), { recursive: true });
     for (let i = 0; i < 3_000; i += 300) writeFileSync(join(tasks, "bot1", `t${i}`, "AGENTS.md"), `folder ${i}`);
     const snapshot = () => botMemoryFiles(bot, { workspace: () => ws, taskWorkspaces: tasks });
+    // Long-lived conversations: let the folders' times age past the racy window, so a folder read in the tick it was
+    // made in (which the next look must read again) is not what this measures.
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
     const cold = snapshot();
     expect(Object.keys(cold).filter((name) => name.endsWith("AGENTS.md"))).toHaveLength(10);
     Object.assign(fsCalls, { lstat: 0, opendir: 0, read: 0 });

@@ -42,7 +42,7 @@ const cleanLabel = (value, fallback) => {
 };
 
 /** Only the control plane's `c-<32 hex>` names: any other name in those zones never receives a pairing code. Ship a new domain here first. */
-const MANAGED_COMPANION_HOSTNAME = /^c-[0-9a-f]{32}\.(?:rootclaw\.com|rootclaw\.si)$/;
+const MANAGED_COMPANION_HOSTNAME = /^c-[0-9a-f]{32}\.(?:rootclaw\.example|rootclaw\.si)$/;
 
 /** HTTPS, or a Tailscale MagicDNS name (WireGuard protects its HTTP); a LAN IP would put the long-lived bearer on Wi-Fi in plaintext. */
 export function normalizeDesktopCompanionEndpoint(value) {

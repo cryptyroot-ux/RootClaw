@@ -1,39 +1,27 @@
 ---
-title: Engine troubleshooting
-description: Fix missing CLIs, failed authentication, model errors, and path differences.
+title: Provider troubleshooting
+description: Fix missing keys, failed authentication, model errors, and bots left on removed engines.
 icon: Wrench
 ---
 
-## “CLI not found”
+## "No API key"
 
-1. Open a terminal and run the CLI directly.
-2. Confirm the command is an executable, not only a shell alias or function.
-3. Restart RootClaw after installation.
-4. Set the exact executable in **Settings → Engines** if automatic detection still fails.
+1. Open **Settings → API keys** and paste the provider's key, then press **Test**.
+2. On a server, check the variable name: RootClaw reads the `ROOTCLAW_` names listed in [Model providers](./index.mdx#built-in-providers). An unprefixed `OLLAMA_API_KEY` or `ANTHROPIC_API_KEY` is only a driver fallback and does not show as configured.
+3. A variable in the server's environment wins over a saved key. Restart the server after changing its environment.
 
-Desktop applications often inherit a different environment than a terminal. This is common on Windows shortcuts, macOS Finder launches, and Linux application menus.
+Keys you export in your shell (`~/.zshrc`, `~/.bashrc`) don't reach the desktop app when you open it from the Dock, Finder or an app menu. Save the key in Settings instead.
 
 ## Authentication failures
 
-Run the provider's own status or login command in a terminal. RootClaw uses the CLI's authenticated session; installing the binary alone is not enough.
-
-A `401 Unauthorized` response from `api.openai.com` means the launched Codex process did not receive valid authentication. Confirm `codex login status`, sign in again if needed, then restart RootClaw. Do not paste a ChatGPT password into RootClaw.
+A `401 Unauthorized` means the provider rejected the key. Check it was copied whole, belongs to the provider you picked, and has not been revoked; then save it again (on a server, `rootclaw engine set KIND --key-env VAR --rotate`).
 
 ## A selected model fails
 
-- Refresh the model picker after updating the CLI.
+- Refresh the provider's models in the model picker.
 - Choose a model actually available to that provider account.
-- Confirm a custom wrapper forwards the model argument and preserves the provider's expected environment.
-- Try the provider CLI directly with the same model to separate an account problem from an RootClaw integration problem.
+- For an OpenAI-compatible service, confirm the base URL ends where the service expects (usually `/v1`) and that the model supports tools; set `config.tools` to `false` for one that does not.
 
-## Codex sandbox mismatch
+## "Provider instance is unavailable"
 
-RootClaw preserves Codex's resolved network and writable-folder settings when
-starting a turn. If Codex returns no resolved sandbox or a different mode from
-the one requested, the turn stops before sending your message. Check the native
-Codex sandbox setup and selected access mode, then retry. RootClaw does not
-silently replace that policy with broader access.
-
-## Windows notes
-
-Use a real `.exe`, `.cmd`, or resolvable command path in the engine override. If a CLI was installed in WSL, the Windows desktop app cannot treat that Linux binary as a native Windows executable without an explicit bridge or wrapper.
+The bot's model belonged to a removed engine (Claude Code, Codex, an ACP agent, OpenCode and the like). Open the bot's settings and choose a model on a configured provider.

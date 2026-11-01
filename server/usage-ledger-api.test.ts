@@ -8,7 +8,8 @@ describe("usage ledger through real turns", () => {
   let session: VerificationServer;
 
   beforeEach(async () => {
-    session = await launchVerificationServer();
+    // Every streamed turn of the native fake reports a $0.01 cost, as the provider would.
+    session = await launchVerificationServer({ ...process.env, FAKE_CHAT_COST: "0.01" });
   }, 60_000);
 
   afterEach(async () => {
@@ -46,7 +47,7 @@ describe("usage ledger through real turns", () => {
     await expect.poll(() => (existsSync(file) ? readFileSync(file, "utf8").trim().split("\n").length : 0), { timeout: 10_000 }).toBe(2);
     const rows = readFileSync(file, "utf8").trim().split("\n").map((line) => JSON.parse(line));
     expect(rows[0]).toMatchObject({
-      botId, botName: "Ledger probe", instanceId: "claude", driverKind: "claudeAgent", costUsd: 0.01, trigger: { kind: "owner" },
+      botId, botName: "Ledger probe", instanceId: "openaiCompat", driverKind: "openai-compat", costUsd: 0.01, trigger: { kind: "owner" },
     });
     expect(rows[0].input).toBeGreaterThanOrEqual(10);
     expect(rows[0].output).toBeGreaterThanOrEqual(1);

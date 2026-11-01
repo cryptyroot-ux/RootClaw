@@ -194,7 +194,7 @@ describe("the card after the update", () => {
     expect(html).not.toContain("money-back"); expect(html).not.toContain("Claude credit");
   });
 
-  it("never to someone new this launch, who pays or may pay, on a branded build, or a desktop signed in with an organization", async () => {
+  it("never to someone new this launch, who pays or may pay, or on a branded build", async () => {
     expect(await launch()).toBe("");
     returning();
     for (const state of [paid(), paid({ trial: trial("active") }), { ...free, purchase: { state: "confirming" as const } },
@@ -203,10 +203,6 @@ describe("the card after the update", () => {
     }
     account = signedOut; f.brand = "file";
     expect(await launch()).toBe("");
-    f.brand = "default";
-    (window.ogb as Record<string, unknown>).organization = { state: async () => ({ status: "connected", organization: { id: "o", name: "Acme" } }), onState: () => () => {} };
-    const org = await launch();
-    expect(org).not.toContain(INTRO); expect(org).toContain(STAR);
   });
 
   it("Start free trial opens the Add a Cloud dialog from the card, and the card is done for good", async () => {

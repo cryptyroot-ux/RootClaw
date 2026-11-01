@@ -12,6 +12,10 @@ import type { SendTurnInput } from "../contracts.ts";
 import { removeTempDir } from "../testing/cleanup.ts";
 import { recordEvents } from "../testing/events.ts";
 import { OpenAICompatDriver } from "./openai-compat.ts";
+import { shellSandbox } from "./workspace-tools.ts";
+
+// CI runners may lack bubblewrap; the shell fails closed there (audit N02), so these tests opt out explicitly.
+if (shellSandbox() === null) process.env.ROOTCLAW_SHELL_SANDBOX = "off";
 
 interface Body { messages: Array<{ role: string; content: unknown; tool_call_id?: string }>; tools?: Array<{ function: { name: string } }> }
 const chunk = (delta: unknown, finish: string | null = null) => ({ choices: [{ index: 0, delta, finish_reason: finish }] });

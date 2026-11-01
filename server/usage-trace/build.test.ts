@@ -15,7 +15,7 @@ const noBot = () => null;
 
 function row(fields: Partial<UsageRow> & Pick<UsageRow, "threadId" | "botId">): UsageRow {
   return {
-    at: iso(10_000), botName: fields.botId[0]!.toUpperCase() + fields.botId.slice(1), instanceId: "claude", driverKind: "claude",
+    at: iso(10_000), botName: fields.botId[0]!.toUpperCase() + fields.botId.slice(1), instanceId: "anthropicApi", driverKind: "anthropic",
     model: "claude-sonnet-5-5", input: 1_000, output: 100, cachedInput: 600, costUsd: 0.1, costSource: "reported", trigger: { kind: "owner" },
     ...fields,
   };
@@ -89,9 +89,9 @@ describe("trace tree", () => {
     const rows = [timed("a", "alpha", "t1", 0, 1_000, { parent: { threadId: "b", turnId: "t2" } }), timed("b", "beta", "t2", 0, 1_000, { parent: { threadId: "a", turnId: "t1" } })];
     expect(linkTurns(rows, [], noBot)).toHaveLength(2);
     const roots = linkTurns([timed("chief", "chief", "c1", 0, 1_000)], [{
-      threadId: "helper", turnId: "h1", provider: "claude", startedAt: T0 + 500, parent: { threadId: "chief", turnId: "c1" },
+      threadId: "helper", turnId: "h1", provider: "anthropic", startedAt: T0 + 500, parent: { threadId: "chief", turnId: "c1" },
       spans: [{ ...step("helper", "h1", 1, 500, 900), endedAt: undefined, running: true } as SpanRecord & { running: boolean }],
-    }], () => ({ botId: "helper", botName: "Helper", model: "gpt-6", driverKind: "codex" }));
+    }], () => ({ botId: "helper", botName: "Helper", model: "gpt-6", driverKind: "openai-compat" }));
     const summary = summarizeRoot(roots[0]!, "", T0 + 5_000);
     expect(summary).toMatchObject({ running: true, durationMs: 5_000, bots: [{ id: "chief", name: "Chief" }, { id: "helper", name: "Helper" }] });
     const child = traceTurn(roots[0]!, new Map()).children.find((node): node is TraceTurn => node.kind === "turn")!;

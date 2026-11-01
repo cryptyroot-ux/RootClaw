@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync, existsSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { backgroundJobs, sandboxedShell, shellSandbox, stopBackgroundJobs, createWorkspacePaths, executeWorkspaceTool, globToRegExp, parseUnifiedDiff, shellEnvironment, workspaceToolReadOnly, workspaceToolView, type WorkspaceToolsConfig } from "./workspace-tools.ts";
+import { basename, dirname, join, resolve } from "node:path";
+import { backgroundJobs, realTarget, sandboxedShell, shellSandbox, stopBackgroundJobs, createWorkspacePaths, executeWorkspaceTool, globToRegExp, parseUnifiedDiff, shellEnvironment, workspaceToolReadOnly, workspaceToolView, type WorkspaceToolsConfig } from "./workspace-tools.ts";
 
 // CI runners may lack bubblewrap; the shell fails closed there (audit N02), so these tests opt out explicitly.
 if (shellSandbox() === null) process.env.ROOTCLAW_SHELL_SANDBOX = "off";
@@ -21,6 +21,18 @@ beforeEach(() => {
 afterEach(() => rmSync(base, { recursive: true, force: true }));
 
 describe("path safety", () => {
+  it("canonicalizes an existing path the same way realpath does", () => {
+    writeFileSync(join(root, "a.txt"), "one\n");
+    expect(realTarget(join(root, "a.txt"))).toBe(realpathSync(join(root, "a.txt")));
+    expect(realTarget(root)).toBe(realpathSync(root));
+  });
+  it("keeps a dangling target inside a realpath'd workspace", () => {
+    const linked = join(base, "linked");
+    symlinkSync(root, linked);
+    const dangling = realTarget(join(linked, "later.txt"));
+    expect(dangling.startsWith(realpathSync(root))).toBe(true);
+    expect(dangling.endsWith("later.txt")).toBe(true);
+  });
   it("refuses traversal and absolute paths outside the root", async () => {
     writeFileSync(join(base, "secret.txt"), "s");
     expect((await run("read_file", { path: "../secret.txt" })).ok).toBe(false);
@@ -48,7 +60,7 @@ describe("path safety", () => {
     expect((await run("write_file", { path: join(skills, "n.md"), content: "x" })).ok).toBe(true);
   });
   it("unrestricted lifts confinement", () => {
-    expect(createWorkspacePaths({ root, unrestricted: true }).resolve("/etc/hosts", "read")).toBe("/etc/hosts");
+    expect(createWorkspacePaths({ root, unrestricted: true }).resolve("/etc/hosts", "read")).toBe(resolve("/etc/hosts"));
   });
 });
 
@@ -132,7 +144,8 @@ describe("shell", () => {
     const result = await run("shell", { command: "pwd; echo err >&2; exit 3" });
     expect(result.ok).toBe(false);
     expect(result.text).toContain("exit code 3");
-    expect(result.text).toContain(root);
+    // Git bash prints a POSIX pwd (`/tmp/.../root`); the workspace folder name is in both spellings.
+    expect(result.text.replaceAll("\\", "/")).toContain(`${basename(dirname(root))}/${basename(root)}`);
     expect(result.text).toContain("err");
     expect((await run("shell", { command: "echo hi", cwd: "." })).ok).toBe(true);
     expect((await run("shell", { command: "true", cwd: ".." })).ok).toBe(false);
@@ -152,8 +165,9 @@ describe("shell", () => {
     const result = await run("shell", { command: "echo bg-out", background: true });
     expect(result.text).toMatch(/pid \d+/);
     const log = /Output goes to (\S+)/.exec(result.text)![1]!;
-    await new Promise((r) => setTimeout(r, 300));
-    expect(readFileSync(join(root, log), "utf8")).toContain("bg-out");
+    await expect.poll(() => {
+      try { return readFileSync(join(root, log), "utf8"); } catch { return ""; }
+    }, { timeout: 5_000 }).toContain("bg-out");
   });
   it("tracks background commands per conversation and stops their whole process groups", async () => {
     const scope = `thread-${Date.now()}`;
@@ -220,7 +234,10 @@ describe("shell", () => {
     } finally { rmSync(outside, { recursive: true, force: true }); }
   });
   it("runs plainly, and says so, without an OS sandbox", () => {
-    expect(sandboxedShell("ls", "/w", ["/w"], null)).toEqual({ file: "/bin/bash", args: ["-c", "ls"] });
+    const plain = sandboxedShell("ls", "/w", ["/w"], null);
+    expect(plain.args).toEqual(["-c", "ls"]);
+    if (process.platform === "win32") expect(plain.file.toLowerCase()).toMatch(/bash(\.exe)?$/);
+    else expect(plain.file).toBe("/bin/bash");
     const bwrap = sandboxedShell("ls", root, [root], "bwrap");
     expect(bwrap.file).toBe("bwrap");
     expect(bwrap.args).toEqual(expect.arrayContaining(["--unshare-net", "--die-with-parent", "--tmpfs", "/tmp", "--", "/bin/bash", "-c", "ls"]));

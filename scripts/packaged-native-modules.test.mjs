@@ -47,6 +47,6 @@ describe("packaged native modules", () => {
     expect(text.indexOf("RUN node scripts/prepare-duckdb.mjs")).toBeGreaterThan(text.indexOf("COPY . ."));
     expect(text).toMatch(/^COPY --from=build \S+ \/src\/dist-native\/duckdb\/linux-x64 \.\/duckdb$/m);
     expect(text).toMatch(/^WORKDIR \/app$/m);
-    expect(text).toMatch(/\bOMB_DUCKDB_DIR=\/app\/duckdb\b/);
+    expect(text).toMatch(/\bROOTCLAW_DUCKDB_DIR=\/app\/duckdb\b/);
   });
 });

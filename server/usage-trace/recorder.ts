@@ -84,9 +84,8 @@ const STALE_MS = 30 * 60_000;
 /** An expected start that never came (a refused dispatch, a held room member) must not adopt a later turn. */
 const EXPECT_TTL_MS = 60_000;
 
-/** Claude reports each model call; Codex a thread's running total; the OpenAI-style chat engines a turn's running total. */
-const PER_CALL = new Set(["claude"]);
-const THREAD_TOTALS = new Set(["codex"]);
+/** Anthropic reports each model call; OpenAI-style chat providers report a turn's running total. */
+const PER_CALL = new Set(["anthropic"]);
 const TURN_TOTALS = new Set(["grok", "groq", "cerebras", "mistral", "minimax", "meta", "openai-compat"]);
 const MAX_LINKS = 5_000;
 const ENDED_GRACE_MS = 120_000;
@@ -133,7 +132,6 @@ export function createTraceRecorder(options: { dataDir: string; now?: () => numb
   const expected = new Map<string, { expectation: Expectation; at: number }>();
   const nodeParents = new Map<string, TraceParent>();
   const nodeTurns = new Map<string, TraceParent>();
-  const threadTotals = new Map<string, TraceTokens>();
   const finished = new Map<string, true>();
 
   const stepId = (turn: Turn) => `${turn.threadId}:${turn.turnId}:step-${turn.steps.length + 1}`;
@@ -253,11 +251,6 @@ export function createTraceRecorder(options: { dataDir: string; now?: () => numb
       if (event.input <= 0 && event.output <= 0) return;
       const cacheWrite = Math.max(0, (event.contextTokens ?? event.input) - event.input);
       step.tokens = { ...reported, output: Math.max(step.tokens?.output ?? 0, reported.output), ...(cacheWrite ? { cacheWrite } : {}) };
-    } else if (THREAD_TOTALS.has(turn.provider)) {
-      const before = threadTotals.get(turn.threadId);
-      threadTotals.set(turn.threadId, reported);
-      const delta = before && difference(reported, before);
-      if (delta) addTokens(step, delta);
     } else if (TURN_TOTALS.has(turn.provider)) {
       const delta = difference(reported, turn.turnTotals ?? zero());
       turn.turnTotals = reported;

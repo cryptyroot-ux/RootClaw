@@ -285,16 +285,14 @@ browser updater in the desktop bundle.
 
 ### Temporary Windows engine backport
 
-Windows uses an explicitly identified RootClaw build of agent-browser
-0.36.0, with the handle-inheritance fix from
-[upstream PR #1781](https://github.com/vercel-labs/agent-browser/pull/1781).
-The official 0.37.0 release does not contain this fix, so Windows stays on the
-native-verified `0.36.0-rootclaw.1` revision and does not yet get the new recording
-options. Do not replace it with the unpatched 0.37.0 Windows binary.
-The original binary can hang when a newly started background browser holds
-the tool call's output connection open. The backport changes that Windows
-startup behavior; it does not include the PR's broader output-reader rewrite
-or unrelated changes from upstream main.
+Windows downloads official agent-browser 0.41.0. The vendor release
+`browser-engine-v0.36.0-rootclaw.1` was never published. Official 0.37.0 did
+not contain the Windows daemon-pipe fix; 0.41.0 does
+([upstream PR #2160](https://github.com/vercel-labs/agent-browser/pull/2160)).
+Do not pin the unpatched 0.37.0 Windows binary.
+Official 0.37.0 could hang when a newly started background browser held the
+tool call's output connection open. That startup behavior is what 0.41.0's
+merged fix changes.
 
 The artifact-only **Windows browser vendor build** workflow builds the pinned
 source and checked-in patch, retains the licenses and build provenance, and
@@ -304,11 +302,9 @@ the normal application packaging workflow consumes it. Candidate testing does
 not replace the packaged-app tests. Published vendor bytes must not be
 overwritten; a changed build needs a new revision and reviewed pins.
 
-The Windows revision has a separate managed installation directory so an old
-0.36.0 download is not mistaken for the patched engine. Desktop packages use
-their bundled engine. Explicit executable overrides remain user-managed.
-Remove the backport when an official release includes the fix and passes the
-same native cold-start and restart tests.
+The Windows revision has its own managed installation directory, so an older
+download is not reused. Desktop packages use their bundled engine. Explicit
+executable overrides remain user-managed.
 
 Complete upstream notices and provenance are in
 [`third_party/browser`](../third_party/browser/README.md). The full Google

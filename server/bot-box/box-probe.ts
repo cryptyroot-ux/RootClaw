@@ -34,8 +34,6 @@ export interface ProbeSpec {
   privatePort: number;
   /** `host:port` on the public internet, or null to skip the "public allowed" check. */
   publicTarget: string | null;
-  /** Checks that apply only when the box has its own network. */
-  isolatedNet: boolean;
   /** T0c: the seccomp filter is on, so a kernel-keyring call must fail with EPERM (an unprivileged process may make it otherwise). */
   seccomp?: boolean;
   /** T0b: a model call through the broker, and the real key's value that must be nowhere in the box. */
@@ -133,12 +131,10 @@ export async function runProbe(spec: ProbeSpec, env: Record<string, string | und
 
   add("harness-internal-allowed", (await httpStatus(spec.harnessPort, "/api/internal/box-probe")) === "200", "GET /api/internal/box-probe");
   add("harness-other-refused", (await httpStatus(spec.harnessPort, "/api/bots")) === "403", "GET /api/bots");
-  if (spec.isolatedNet) {
-    const direct = await connectStatus(spec.privatePort, "127.0.0.1");
-    add("host-loopback-unreachable", direct !== "connected", direct);
-    const outside = await connectStatus(443, "1.1.1.1", 3_000);
-    add("no-direct-internet", outside !== "connected", outside);
-  }
+  const direct = await connectStatus(spec.privatePort, "127.0.0.1");
+  add("host-loopback-unreachable", direct !== "connected", direct);
+  const outside = await connectStatus(443, "1.1.1.1", 3_000);
+  add("no-direct-internet", outside !== "connected", outside);
   add("egress-loopback-refused", (await connectThroughGate(spec.egressPort, `127.0.0.1:${spec.privatePort}`)) === "403", "CONNECT loopback");
   add("egress-metadata-refused", (await connectThroughGate(spec.egressPort, "169.254.169.254:80")) === "403", "CONNECT metadata");
   add("egress-private-refused", (await connectThroughGate(spec.egressPort, "10.0.0.1:443")) === "403", "CONNECT private");

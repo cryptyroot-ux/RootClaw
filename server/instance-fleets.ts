@@ -5,6 +5,7 @@ import type { InstanceConfigMap } from "./contracts.ts";
 
 export const OPENAI_API_INSTANCE = "openai";
 export const OPENROUTER_API_INSTANCE = "openrouter";
+export const OPENROUTER_API_KEY_ENV = "ROOTCLAW_OPENROUTER_API_KEY";
 export const XAI_API_INSTANCE = "xaiApi";
 /** The native engine every new bot starts on, and the one a bot on a removed engine moves to. */
 export const NATIVE_DEFAULT_INSTANCE = "openaiCompat";
@@ -20,7 +21,7 @@ export const API_KEY_FLEET: InstanceConfigMap = {
   ollamaCloud: { driver: "ollama", displayName: "Ollama Cloud", access: "api" },
   [OPENROUTER_API_INSTANCE]: {
     driver: "openai-compat", displayName: "OpenRouter", access: "api", icon: { kind: "preset", preset: "openrouter" },
-    config: { url: "https://openrouter.ai/api/v1", apiKeyEnv: "ROOTCLAW_OPENROUTER_API_KEY" },
+    config: { url: "https://openrouter.ai/api/v1", apiKeyEnv: OPENROUTER_API_KEY_ENV },
   },
 };
 

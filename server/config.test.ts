@@ -875,7 +875,7 @@ describe("default fleet", () => {
     expect(map.grokOwn.environment).toEqual({ XAI_API_KEY: "xai-own" });
   });
 
-  it.each(["openai", "openrouter", "xaiApi", "claudeApi"])("preserves a custom driver's own routing when its id is %s", (id) => {
+  it.each(["openai", "openrouter", "xaiApi", "anthropicApi"])("preserves a custom driver's own routing when its id is %s", (id) => {
     const map = instanceConfigs({
       mistral: { key: "mistral-WORKSPACE" },
       instances: {

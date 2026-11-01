@@ -316,7 +316,8 @@ beforeAll(async () => {
       req.on("end", () => {
         lastCredentialBody = JSON.parse(data);
         res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ messageId: "msg-key", label: "OpenCode API key" }));
+        const label = typeof lastCredentialBody.label === "string" ? lastCredentialBody.label : "Anthropic API key";
+        res.end(JSON.stringify({ messageId: "msg-key", label }));
       });
       return;
     }
@@ -1102,19 +1103,19 @@ describe("agents-proxy MCP surface", () => {
     expect((await callTool("move_bot", { bot_id: "bot-1", section: "Foreign" })).error.message).toContain("Unknown tool");
   });
 
-  it("requests an allowlisted credential without putting a secret in the request", async () => {
+  it("requests a native provider credential without putting a secret in the request", async () => {
     const res = await callTool("request_credential", {
-      credential_id: "opencodeGoApiKey",
+      credential_id: "anthropicApiKey",
       reason: "The selected model needs it.",
     });
-    expect(res.result.content[0].text).toContain("secure OpenCode API key request");
+    expect(res.result.content[0].text).toContain("secure Anthropic API key request");
     expect(res.result.content[0].text).toContain("freshly QR-paired mobile app show its secure entry card");
     expect(res.result.content[0].text).toContain("older mobile pairings explain how to pair again");
     expect(res.result.content[0].text).toContain("End this turn");
     expect(lastCredentialBody).toEqual({
       fromBotId: "bot-asker",
       fromThreadId: "thread-asker-routine",
-      credentialId: "opencodeGoApiKey",
+      credentialId: "anthropicApiKey",
       reason: "The selected model needs it.",
     });
     expect(JSON.stringify(lastCredentialBody)).not.toContain("secret");
@@ -1158,7 +1159,7 @@ describe("agents-proxy MCP surface", () => {
   it("asks for any other secret by its name, reason and delivery, never its value", async () => {
     const res = await callTool("request_credential", { label: "Stripe secret key", reason: "To create test charges.", placeholder: "sk_test_…", delivery: "file" });
     expect(res.result.isError).toBeFalsy();
-    expect(res.result.content[0].text).toMatch(/^A secure card for OpenCode API key is ready in RootClaw, on the computer and on a freshly QR-paired phone\. End this turn now/u);
+    expect(res.result.content[0].text).toMatch(/^A secure card for Stripe secret key is ready in RootClaw, on the computer and on a freshly QR-paired phone\. End this turn now/u);
     expect(lastCredentialBody).toEqual({
       fromBotId: "bot-asker",
       fromThreadId: "thread-asker-routine",

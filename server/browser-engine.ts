@@ -551,13 +551,19 @@ export function browserEngineStatus(options: BrowserLookupOptions = {}): Browser
 const PROFILE_CACHE_ARG = `--disk-cache-size=${64 * 1024 * 1024}`;
 
 /** agent-browser 0.37 relaunches a running Chrome without a word when a command's launch settings differ, so every
- * command for a session must carry these same ones. Chrome fails every connection through port 0. */
+ * command for a session must carry these same ones. Chrome fails every connection through port 0.
+ * 0.41 splits the argument list on newlines, and also on a comma that introduces another `--` flag.
+ * Windows environment blocks drop values that contain newlines, so a comma is the separator there. */
+function joinAgentBrowserArgs(parts: Array<string | undefined>, platform: NodeJS.Platform): string {
+  return parts.filter(Boolean).join(platform === "win32" ? "," : "\n");
+}
+
 function agentBrowserEgressEnv(env: Record<string, string>, port: number, platform: NodeJS.Platform): Record<string, string> {
   const gate = gateChromeSettings(port, platform);
   return {
     AGENT_BROWSER_PROXY: gate.proxy,
     AGENT_BROWSER_PROXY_BYPASS: gate.bypass,
-    AGENT_BROWSER_ARGS: [env.AGENT_BROWSER_ARGS, ...gate.args].filter(Boolean).join("\n"),
+    AGENT_BROWSER_ARGS: joinAgentBrowserArgs([env.AGENT_BROWSER_ARGS, ...gate.args], platform),
   };
 }
 
@@ -594,7 +600,8 @@ export function agentBrowserIntegration(input: {
     })),
   };
   // Headless on a displayless Linux host; an explicit AGENT_BROWSER_HEADED=0 also brings back headless a daemon that kept a headed launch config.
-  const displayless = (input.platform ?? process.platform) === "linux" && !sourceEnv.DISPLAY && !sourceEnv.WAYLAND_DISPLAY;
+  const platform = input.platform ?? process.platform;
+  const displayless = platform === "linux" && !sourceEnv.DISPLAY && !sourceEnv.WAYLAND_DISPLAY;
   if (input.attach) {
     // The person's Chrome keeps its own sign-ins: restoring or saving would copy cookies between it and ROOTCLAW's store.
     if (input.attach.cdpUrl) env.AGENT_BROWSER_CDP = input.attach.cdpUrl;
@@ -622,8 +629,8 @@ export function agentBrowserIntegration(input: {
   if (!input.attach) {
     const launch = { ...env, ...input.launcher };
     // A kept profile's disk cache would otherwise grow to Chrome's default of several hundred megabytes per profile.
-    if (env.AGENT_BROWSER_PROFILE) launch.AGENT_BROWSER_ARGS = [launch.AGENT_BROWSER_ARGS, PROFILE_CACHE_ARG].filter(Boolean).join("\n");
-    Object.assign(env, input.launcher, agentBrowserEgressEnv(launch, input.egressPort ?? 0, input.platform ?? process.platform));
+    if (env.AGENT_BROWSER_PROFILE) launch.AGENT_BROWSER_ARGS = joinAgentBrowserArgs([launch.AGENT_BROWSER_ARGS, PROFILE_CACHE_ARG], platform);
+    Object.assign(env, input.launcher, agentBrowserEgressEnv(launch, input.egressPort ?? 0, platform));
   }
   return { command: input.binaryPath, args: ["mcp", "--tools", "core", "--no-webmcp"], env };
 }

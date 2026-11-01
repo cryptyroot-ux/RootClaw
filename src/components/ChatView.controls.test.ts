@@ -4,8 +4,6 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 import type { Bot, InstanceInfo } from "@/state/store";
 import type { ApprovalModeSelector } from "./ApprovalModeSelector";
 import type { ModelPicker } from "./ModelPicker";
-import { CODEX_USAGE_LIMIT_REACHED, CODEX_USAGE_URL } from "../../shared/codex-usage-limit";
-import { failedTurnTool } from "../../shared/failed-turn";
 
 const fixture = vi.hoisted(() => {
   vi.stubGlobal("window", {});
@@ -17,7 +15,7 @@ vi.mock("@/state/store", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/state/store")>();
   return { ...original, useStore: () => ({
     state: { ...original.initialState, config: fixture.showToolCalls ? { features: { showToolCalls: true } } : null,
-      instances: [{ instanceId: "test", driverKind: "codex", displayName: "Test" } as InstanceInfo] },
+      instances: [{ instanceId: "test", driverKind: "openai-compat", displayName: "Test" } as InstanceInfo] },
     dispatch: fixture.dispatch,
   }) };
 });
@@ -56,7 +54,6 @@ vi.mock("./ApprovalModeSelector", () => ({ ApprovalModeSelector: (props: Compone
 
 const { ChatView, ErrorRow, FailedTurnRow } = await import("./ChatView");
 const { NewConversationInstead } = await import("./NewConversationInstead");
-const { activityPreview } = await import("@/lib/failed-turn");
 afterAll(() => vi.unstubAllGlobals());
 
 const bot: Bot = {
@@ -399,42 +396,6 @@ describe("thread control placement", () => {
     for (const markup of [retry, action]) {
       expect(markup).toContain('class="ui-button ui-button-md ');
       expect(markup).not.toContain("text-[13px]");
-    }
-  });
-  it("directs ChatGPT plan limits to usage settings rather than repeatedly retrying", () => {
-    const markup = renderToStaticMarkup(createElement(ErrorRow, { message: "ChatGPT plan usage limit reached (subscription_sharing_usage_limit_exceeded)", onRetry: () => {} }));
-    expect(markup).toContain("Manage usage");
-    expect(markup).toContain("https://chatgpt.com/settings/usage");
-    expect(markup).not.toContain(">Retry<");
-  });
-  it("sends a Codex usage limit to the account's Codex usage page, not Retry", () => {
-    const codex = { instanceId: "codex", driverKind: "codex", displayName: "Codex", snapshot: { state: "available", authenticated: true } } as unknown as InstanceInfo;
-    const limit = `${CODEX_USAGE_LIMIT_REACHED} This is OpenAI's limit, not your RootClaw plan. It resets at 5:23 PM (UTC).`;
-    const markup = renderToStaticMarkup(createElement(FailedTurnRow, { tool: failedTurnTool(limit), engine: codex, onRetry: () => {} }));
-    expect(markup).toContain(limit.replaceAll("'", "&#x27;"));
-    expect(markup).toContain(`href="${CODEX_USAGE_URL}"`);
-    expect(markup).toContain("Manage usage");
-    expect(markup).not.toContain("<button");
-  });
-  it("opens a signed-out engine's failed turn with one sentence and the sign-in, the CLI's words under Details", () => {
-    const claude = {
-      instanceId: "claude", driverKind: "claudeAgent", displayName: "Claude",
-      snapshot: { state: "available", authenticated: false },
-      install: { command: { darwin: "x", linux: "x", win32: "x" }, signInCommand: "claude /login", server: { package: "@anthropic-ai/claude-code" } },
-      authentication: { method: "paste-code" },
-      models: { default: "sonnet", options: [] },
-    } as InstanceInfo;
-    const markup = renderToStaticMarkup(createElement(FailedTurnRow, { tool: { name: "error: Not logged in · Please run /login", ok: false, setup: true }, engine: claude, onRetry: () => {} }));
-    expect(markup).toContain(">Claude isn&#x27;t signed in yet. Sign in below, then send your message again.</span>");
-    expect(markup).toContain("Sign in to Claude</button>");
-    expect(markup).toMatch(/<summary[^>]*>Details<\/summary><p[^>]*>Not logged in · Please run \/login<\/p>/);
-    expect(markup).not.toContain(">Retry<");
-    const update = { name: "error: Claude Code 2.1.268 does not support this model", ok: false, setup: true, claudeUpdate: true };
-    for (const engine of [claude, { ...claude, readOnly: true }]) {
-      const row = renderToStaticMarkup(createElement(FailedTurnRow, { tool: update, engine }));
-      expect(row).toContain(">Claude Code 2.1.268 does not support this model</span>");
-      expect(row).not.toContain("isn&#x27;t signed in");
-      expect(activityPreview(update, engine)).toBe("Claude Code 2.1.268 does not support this model");
     }
   });
   it("opens a failed turn with a technical cause on one plain line, the engine's words under Details", () => {

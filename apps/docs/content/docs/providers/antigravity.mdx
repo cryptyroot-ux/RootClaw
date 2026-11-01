@@ -1,40 +1,19 @@
 ---
-title: Google Gemini (Antigravity)
-description: Install Google's official ACP runtime and use your Google subscription in RootClaw.
+title: Google Gemini
+description: Use the Gemini API with a key. The Antigravity engine was removed.
 icon: Sparkles
 ---
 
-This is how you use a Google AI subscription (free, Google AI Pro or Google AI Ultra) in RootClaw. On June 18, 2026 Google moved personal Gemini accounts from Gemini CLI to Antigravity, so the engine is listed as **Google Gemini (Antigravity)**. The models your plan includes appear after you sign in.
-
-RootClaw connects to Google Antigravity through Google's official Agent Client Protocol server. It does not ask for your Google password or copy a login from another app.
+RootClaw no longer runs Google Antigravity, Gemini CLI or any other external agent runtime. Gemini models run on RootClaw's built-in engine through the Gemini API.
 
 ## Set up
 
-1. Choose a **Google Gemini (Antigravity)** model in the model picker.
-2. Select **Install official Antigravity**. The download comes from `dl.google.com` and RootClaw verifies its pinned size and SHA-256 before installing it.
-3. Select **Sign in with Google** and finish in your browser.
-4. Return to RootClaw, open the model picker, and select **Refresh**. The account's available models appear after discovery completes.
+1. Create a key in [Google AI Studio](https://ai.google.dev/gemini-api/docs).
+2. Paste it as **Gemini API key** under **Settings → API keys**, or set `ROOTCLAW_GEMINI_API_KEY` in the server's environment.
+3. Choose **Google Gemini** in a bot's model picker.
 
-The runtime download is large because Google ships the ACP server and its local computer harness together. RootClaw stores it in its own data directory; it does not modify a system installation.
+The Gemini API bills your Google AI account; a Google AI Pro or Ultra subscription is not used. Approvals work like every other provider: see [Approvals and inspector](../features/approvals-and-inspector.mdx).
 
-## After upgrading from the older agy integration
+## Moving from Antigravity
 
-Version 0.1.51 switched from the community `agy` CLI to Google's official ACP runtime. An existing Antigravity app or `agy` login does not sign this separate runtime in. Complete **Install official Antigravity** and **Sign in with Google** in the model picker, then refresh and choose a model available to that account.
-
-Saved legacy `agy` paths, including Windows `.cmd` shims, now resolve to the official runtime. Genuine custom ACP executable paths are still respected. The migration does not copy credentials from another app, remove the old CLI, or change which Google account you authorize.
-
-The Google sign-in belongs to the engine instance, not the runtime version, so ordinary app updates do not require signing in again. Cold starts can be slow, particularly on Windows; setup and model discovery allow up to 90 seconds. If Google expires or revokes the saved session, sign in again when prompted.
-
-## Multiple Google accounts
-
-Create another Antigravity engine instance for another account. Each instance has a separate private `GEMINI_HOME`, token, settings file, and model catalog. Signing one instance in never replaces another instance's account.
-
-## Remote servers
-
-When the RootClaw server and browser are on different computers, Google's final redirect points to the server's loopback address and may show a page that cannot load locally. Expand **Signing in from another computer?**, copy the complete redirect URL from the browser address bar, and paste it into RootClaw. The server accepts only the loopback port and OAuth state created by that exact in-progress sign-in.
-
-## Permissions and tools
-
-Antigravity uses the same RootClaw approval cards as other ACP engines. Connected apps, custom MCP servers, the browser, computers, and teammate tools are mounted only for the active session; RootClaw no longer edits the user's global Gemini MCP configuration.
-
-The normal mode asks before protected actions. Full access maps to Antigravity's native `yolo` mode, but native questions still wait for a person instead of being guessed automatically.
+A bot that used the Antigravity engine shows its provider as unavailable. Open the bot's settings and pick a model on Google Gemini or another provider. The old Antigravity runtime and its sign-in under RootClaw's data directory are no longer used.

@@ -200,7 +200,8 @@ export function createTestedAi(deps: TestedAiDeps) {
     if (!to || state(to) !== "passed" || !from) return;
     // Only a plain "signed out" or "turned off" counts as can't run: a status read that timed out says neither, and moves nothing.
     const leave = resultOf(from)?.state === "failed" || signedOut(from) || from.enabled === false;
-    if (!leave && rankAis([from, to])[0] !== to) return;
+    const ranked = rankAis(lastInstances);
+    if (!leave && ranked.indexOf(to) >= ranked.indexOf(from)) return;
     const tasks = store.tasks(bot.id);
     if (tasks.some((task) => task.modelSelection !== undefined)
       || tasks.some((task) => store.messagesFor(task.threadId).some((message) => message.role === "user"))) return clearFollower();

@@ -11,15 +11,18 @@ The desktop application ships two separate components:
   is no root-level NOTICE in that tag. All six official macOS/Linux binaries
   were downloaded and their SHA-256 digests checked against GitHub's release
   metadata on 2026-09-08.
-- **Windows exception: agent-browser 0.36.0-rootclaw.1** is an RootClaw vendor
-  build, not an official or unmodified Vercel executable. It starts from exact
-  v0.36.0 commit `eb05921bad874cd2a1b4fa5d1149f1ed26576cae` and carries
-  the Windows handle-inheritance fix contributed by `holny` in upstream
-  [PR1781](https://github.com/vercel-labs/agent-browser/pull/1781), commit
+- **Windows: official agent-browser 0.41.0.** The vendor release
+  `browser-engine-v0.36.0-rootclaw.1` was never published, so its download 404s.
+  Official 0.41.0 includes the merged Windows daemon-pipe fix
+  ([PR 2160](https://github.com/vercel-labs/agent-browser/pull/2160)).
+  A candidate vendor revision `0.36.0-rootclaw.2` still exists for a later
+  reviewed pin: it starts from exact v0.36.0 commit
+  `eb05921bad874cd2a1b4fa5d1149f1ed26576cae` and carries the Windows
+  handle-inheritance fix from upstream
+  [PR 1781](https://github.com/vercel-labs/agent-browser/pull/1781), commit
   `81a98c349d04195396ffae6898bd375ad64280de`, plus RootClaw's Windows-only
-  `CREATE_NO_WINDOW` flag for Chrome children and a native console regression test
-  in candidate revision `0.36.0-rootclaw.2`. The release resolver retains `0.36.0-rootclaw.1`
-  until the candidate passes native checks and its published digest is reviewed.
+  `CREATE_NO_WINDOW` flag for Chrome children. That candidate is not what the
+  resolver downloads until its digest is reviewed and published.
   The separate MCP output-reader
   rewrite is deliberately excluded. `agent-browser-windows-stdio.patch`
   includes the exact changes and modification notices, plus package-version
@@ -28,9 +31,7 @@ The desktop application ships two separate components:
   the source archive, patch, Rust 1.97.1, pnpm 11.1.3 and Windows GNU target,
   builds the real upstream dashboard, and emits executable and build-input
   digests in `provenance.json`. Native Windows cold-start and close/reopen
-  checks are required before those executable bytes are published and pinned.
-  Upstream 0.37.0 does not include that fix; keep this tested Windows build
-  until an updated official or backported release passes those native checks.
+  checks are required before those executable bytes replace the 0.41.0 pin.
 - **Chromium Headless Shell 153.0.8010.47**, Google's official
   `chrome-headless-shell` assets published through Chrome for Testing:
   <https://googlechromelabs.github.io/chrome-for-testing/153.0.8010.47.json>.

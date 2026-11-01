@@ -32,7 +32,7 @@ describe("skill bench runner", () => {
     expect(report.errors).toEqual([]);
     expect(report.prompts).toHaveLength(3);
 
-    // With the skill: the block rides the system prompt, the scripted
+    // With the skill: the block rides the turn's instructions, the scripted
     // follower dispatches, and every assertion holds.
     expect(report.summary.withSkill.passRate).toBe(1);
     expect(report.summary.withSkill.total).toBe(12);

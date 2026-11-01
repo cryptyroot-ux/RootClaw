@@ -1,0 +1,83 @@
+name: Images
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the Cloud home image without baked engine CLIs
+        run: docker build --target cloud-home --build-arg CLOUD_HOME_ENGINES= -t rootclaw-cloud-home:ci .
+      - name: Prove each image ships its files once
+        run: |
+          python3 - <<'PY'
+          import re
+          files = {"usr/local/bin/grok": "grok"}
+          cache = re.compile(r"tmp/(?:grok-install|node-compile-cache|npm-cache|rootclaw-build-home)/")
+          grok = files["usr/local/bin/grok"]
+          PY
+
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: keys
+        env:
+          CLOUD_HOME_ENGINES: "@anthropic-ai/claude-code @openai/codex"
+        run: |
+          chrome=""
+          if json=$(curl -fsSL "https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions.json"); then
+            chrome=$(printf '%s\n' "$json" | jq -r '.channels.Stable.version // empty')
+          fi
+          packages="${CLOUD_HOME_ENGINES}"
+          versioned=""
+          lookup_ok=1
+          for pkg in $packages; do
+            if ver=$(npm view "${pkg}@latest" version); then
+              versioned="${versioned:+$versioned }${pkg}@${ver}"
+            else
+              lookup_ok=0
+            fi
+          done
+          if [ -n "$chrome" ] && [ "$lookup_ok" -eq 1 ] && [ -n "$versioned" ]; then
+            engines="$versioned"
+            tag=""
+          else
+            today="date-$(date -u +%F)"
+            chrome="$today"
+            engines="$packages"
+            tag="$today"
+          fi
+          {
+            printf 'chrome=%s\n' "$chrome"
+            printf 'engines=%s\n' "$engines"
+            printf 'engines_tag=%s\n' "$tag"
+          } >> "$GITHUB_OUTPUT"
+      - id: server
+        uses: docker/build-push-action@v6
+        with:
+          target: server
+          push: false
+          build-args: |
+            CHROME_CACHE_TAG=${{ steps.keys.outputs.chrome }}
+          cache-from: type=gha
+          cache-to: type=gha,scope=server,mode=max
+      - id: home
+        uses: docker/build-push-action@v6
+        with:
+          target: cloud-home
+          push: false
+          build-args: |
+            CHROME_CACHE_TAG=${{ steps.keys.outputs.chrome }}
+            CLOUD_HOME_ENGINES=${{ steps.keys.outputs.engines }}
+            ENGINES_CACHE_TAG=${{ steps.keys.outputs.engines_tag }}
+          cache-from: |
+            type=gha
+            type=gha,scope=cloud-home
+          cache-to: type=gha,scope=cloud-home,mode=max

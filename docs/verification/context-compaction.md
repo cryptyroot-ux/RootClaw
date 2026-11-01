@@ -135,6 +135,84 @@ selected are the same with the setting on or off. Engines that replay natively
 still named without a target when its preview is arguments that hold none of
 those at the top level. A URL inside a command is left as the command ran.
 
+## API models on the native loop
+
+API-key models (OpenAI-compatible endpoints, Anthropic Messages, Gemini, OpenAI
+Responses) run on RootClaw's own loop, which keeps each request under the model's
+window itself:
+
+- The window comes from what the provider reports, then the catalog, then a
+  registry of known families (DeepSeek, Qwen, Kimi, GLM, Llama, Gemma, gpt-oss,
+  Mistral). An unknown model gets the default and is marked estimated.
+- A refusal that names the limit (OpenAI and vLLM "maximum context length is N",
+  Anthropic "N tokens > M maximum" and "input length and `max_tokens` exceed
+  context limit: A + B > C", Gemini "maximum number of tokens allowed (N)",
+  llama.cpp "available context size (N tokens)") teaches that instance and model
+  the real window: the round is compacted and resent, and later rounds and turns
+  fit it. When the input alone already fits the learned window (only the reply
+  ceiling was refused), the same request is resent with a lower ceiling. A context
+  refusal with no number (OpenAI Responses) lowers the window to
+  `min(0.9 × refused, max(largest accepted, 0.75 × refused))`, both counted in the
+  provider's own tokens (the estimate scaled by its last reported ratio, plus the
+  ceiling sent). A later accepted request larger than the learned window raises it
+  again. A learned window never exceeds the declared one and lives in memory until
+  restart.
+- The input budget leaves room for the reply: `min(8192, W/8)` plus a 1% margin.
+  When less room is left, `max_tokens` (`max_output_tokens`, `maxOutputTokens`)
+  is lowered so input plus output stays within the window, never below
+  `max(256, reserve / 4)`: under that, the turn compacts and shortens the pasted
+  message first, and fails with the request-too-large message if it still does
+  not fit. The compaction summary request carries `max_tokens` too, capped at the
+  reserve.
+- A fold is skipped (no summary request) when it would free under a tenth of the
+  budget, when the turn grew by less than a quarter of the budget since the last
+  fold, or, below the hard limit, when the newest exchange alone (before any
+  summary) is over the budget.
+- When the newest exchange alone is too large to send (for example one round of
+  several tool results, each under the offload threshold), the turn does not ask
+  for a summary. With tool-output offload on, it saves the largest of those
+  results in full, the same way it saves a large tool output, and keeps a head and
+  tail preview with a handle for `read_tool_output`. Then it sends once. If that
+  still does not fit, or offload is off, the turn fails with the request-too-large
+  message. A turn pays for at most two summaries caused by an overflow (a refusal,
+  or a request over the hard limit). After that it shortens without a summary or
+  fails cleanly (`server/drivers/tail-overflow.test.ts`). Only text tool results
+  are saved this way. A multimodal tool result (an array with image or other
+  parts) in the newest exchange is not offloaded, so a turn whose newest exchange
+  is too large because of one still fails cleanly with the request-too-large
+  message.
+- The pinned plan (planner on) counts in every size check: compaction, tail
+  offload, shortening a pasted message, and the window check. It is taken out
+  while older steps are folded and pinned again after, so it is never summarized
+  (`server/drivers/cut01-review.test.ts`). A summary call cut off by an abort
+  ends the turn as aborted; only a failed summary call falls back to the
+  deterministic summary.
+- A user message is shortened only when the request is still over the budget
+  after compaction; it keeps as much head and tail as the budget allows, and the
+  middle is saved like a large tool output, with a handle the model pages through
+  with `read_tool_output`. A later cut starts again from the original, so the
+  saved copy is always the whole message. This needs tool-output offload on.
+- Between turns, `compactConversation` sizes the thread with the model's
+  tokenizer and the learned calibration, against the learned window, instead of
+  bytes / 4.
+
+```sh
+pnpm exec vitest run server/model-context-window-families.test.ts server/drivers/context-learned-window.test.ts server/drivers/output-reserve.test.ts server/thread-compaction-tokens.test.ts server/drivers/request-fit.test.ts server/drivers/compaction-thrash.test.ts server/drivers/cut01-lock.test.ts server/drivers/tail-overflow.test.ts server/drivers/cut01-review.test.ts server/context-budget.test.ts
+npm run eval:context
+```
+
+The eval drives the real driver for each wire against a fake provider that
+enforces an 8k limit and refuses in that provider's own words (OpenAI, Anthropic
+and Responses also refuse input plus `max_tokens` over the limit), with a scripted
+model and planted facts. It writes `evals/reports/context-eval.md`: per scenario,
+requests refused, largest accepted request against the limit, requests whose input
+plus max output went over the limit after the first refusal (must be 0), pairing violations
+(a tool result without its call, or a call without its result, in any request),
+cumulative input and fact retention. `ctx-giant-paste` sends a user message three
+times the limit with a fact in its middle; `ctx-long-thread` runs 24 turns with
+the transcript carried, past 50 times the limit in total input. No real API is
+called.
+
 ## Bounds and limitations
 
 `context` settings in config.json are optional. `autoCompact: false` disables

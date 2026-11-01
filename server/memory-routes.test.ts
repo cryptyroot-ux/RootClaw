@@ -1,6 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -29,30 +28,15 @@ describe("memory routes through an isolated HTTP fixture", () => {
 
   beforeAll(async () => {
     fixture = await launchVerificationServer();
-    // A CLI stand-in that, on a real turn, drops a topic file into the workspace named by memory-target.txt, as a file tool would.
-    const target = join(fixture.info.dataDir, "memory-target.txt");
-    const wrapper = join(fixture.info.dataDir, "memory-fixture.mjs");
-    writeFileSync(wrapper, [
-      "#!/usr/bin/env node",
-      'import { mkdirSync, readFileSync, writeFileSync } from "node:fs";',
-      'import { dirname } from "node:path";',
-      `if (process.argv.includes("stream-json")) {`,
-      `  try {`,
-      `    const target = readFileSync(${JSON.stringify(target)}, "utf8").trim();`,
-      `    mkdirSync(dirname(target), { recursive: true });`,
-      `    writeFileSync(target, "- the user prefers short replies\\n");`,
-      `  } catch {}`,
-      `}`,
-      `await import(${JSON.stringify(pathToFileURL(join(process.cwd(), "server/testing/fake-claude-cli.ts")).href)});`,
-    ].join("\n"), { mode: 0o700 });
-    expect((await api("PATCH", "/api/instances/claude", { cli: wrapper })).status).toBe(200);
-    const catalog = (await api("GET", "/api/instances")).body.instances.find((instance: { instanceId: string }) => instance.instanceId === "claude");
+    const catalog = (await api("GET", "/api/instances")).body.instances.find((instance: { instanceId: string }) => instance.instanceId === "openaiCompat");
     const model = catalog.models.options[0].id;
-    const created = await api("POST", "/api/bots", { name: "Scout", modelSelection: { instanceId: "claude", model } });
+    const created = await api("POST", "/api/bots", { name: "Scout", modelSelection: { instanceId: "openaiCompat", model } });
     expect(created.status).toBe(201);
     botId = created.body.bot.id;
     threadId = created.body.bot.threadId;
-    writeFileSync(target, join(workspace(), "memory", "learned.md"));
+    // The "remember" turn holds open until the test releases it, so the test can land the topic-file write
+    // inside the turn the way the bot's own file tool would.
+    fixture.fakeChat.set({ release: join(fixture.info.dataDir, "release-remember"), routes: [{ match: "remember that I like short replies", mode: "hang" }] });
   });
 
   afterAll(async () => {
@@ -169,6 +153,9 @@ describe("memory routes through an isolated HTTP fixture", () => {
   it("journals what a turn wrote with a file tool as the bot's, tied to the chat", async () => {
     mkdirSync(join(workspace(), "memory"), { recursive: true });
     expect((await api("POST", `/api/bots/${botId}/messages`, { threadId, text: "remember that I like short replies" })).status).toBe(202);
+    await expect.poll(() => fixture.fakeChat.requests.some((request) => JSON.stringify(request.messages ?? []).includes("remember that I like short replies")), { timeout: 15_000 }).toBe(true);
+    writeFileSync(join(workspace(), "memory", "learned.md"), "- the user prefers short replies\n");
+    writeFileSync(join(fixture.info.dataDir, "release-remember"), "");
     await expect.poll(async () => {
       const bots = (await api("GET", "/api/bots?messages=1")).body.bots;
       return bots.find((bot: { id: string }) => bot.id === botId)?.busy;
@@ -191,8 +178,6 @@ describe("memory routes through an isolated HTTP fixture", () => {
     expect((await api("POST", `/api/bots/${botId}/memory/tidy`)).status).toBe(409);
     const before = (await api("GET", `/api/bots/${botId}/memory`)).body;
     const logSizes = (overview: typeof before) => overview.logs.map((log: { path: string; bytes: number }) => [log.path, log.bytes]);
-    const target = join(fixture.info.dataDir, "memory-target.txt");
-    writeFileSync(target, join(fixture.info.dataDir, "scratch.txt"));
 
     expect((await api("POST", `/api/bots/${botId}/messages`, { threadId, text: "Memory is off in this fixture." })).status).toBe(202);
     await runControlOmb(["wait", "--bot", botId, "--timeout", "30"], { env: { ROOTCLAW_URL: fixture.info.url } });

@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { parse } from "yaml";
 import { cloudHomeConfiguration } from "../server/cloud-home.ts";
@@ -11,7 +11,6 @@ import { cloudHomeChildEnvironments } from "../server/cloud-home-start.ts";
 // Cloud home. A pull downloads every layer whose digest changed, and a layer's
 // digest changes when anything beneath it does.
 const dockerfile = readFileSync(new URL("../Dockerfile", import.meta.url), "utf8");
-const workflow = parse(readFileSync(new URL("../.github/workflows/docker.yml", import.meta.url), "utf8"));
 
 interface Step { op: string; args: string }
 interface Stage { name: string; from: string; steps: Step[] }
@@ -43,9 +42,6 @@ function chain(target: string): Step[] {
 const shipped = () => all.filter(s => s.name !== "build" && s.name !== "edge").flatMap(s => s.steps);
 const npmInstall = (step: Step) => step.op === "RUN" && /\bnpm install\b/.test(step.args);
 const browserRun = () => chain("runtime").find(step => step.op === "RUN" && step.args.includes("agent-browser install"))!;
-const grokRun = (steps: Step[]) => steps.findIndex(step => step.op === "RUN" && step.args.includes("https://x.ai/cli/install.sh"));
-// The keys step parses Chrome for Testing's JSON with jq, as on GitHub's runners.
-const jq = process.platform === "win32" ? "" : spawnSync("sh", ["-c", "command -v jq"], { encoding: "utf8" }).stdout.trim();
 
 const temporaryDirectories: string[] = [];
 afterEach(() => {
@@ -61,14 +57,14 @@ describe("container images", () => {
     expect(chain("server")).toContainEqual({ op: "ARG", args: 'ENGINES=""' });
   });
 
-  it("puts the browser and the engines beneath the per-commit app files, so a code change leaves them as they were", () => {
+  it("puts the browser and the tools beneath the per-commit app files, so a code change leaves them as they were", () => {
     for (const target of ["server", "cloud-home"]) {
       const steps = chain(target);
       const heavy = steps.flatMap((step, i) => (npmInstall(step) ? [i] : []));
       const app = steps.flatMap((step, i) => (step.op === "COPY" && !step.args.includes("--from=edge") ? [i] : []));
-      // agent-browser + Chrome, then (Cloud home only) pnpm in the tools layer, then the engines, then the app files
-      // (and the Cloud home's Caddyfile)
-      expect(heavy, target).toHaveLength(target === "cloud-home" ? 3 : 2);
+      // agent-browser + Chrome, then pnpm in the Cloud home's tools layer or the server's opt-in ENGINES step, then
+      // the app files (and the Cloud home's Caddyfile)
+      expect(heavy, target).toHaveLength(2);
       const fromBuild = steps.flatMap((step, i) => (step.op === "COPY" && step.args.includes("--from=build") ? [i] : []));
       expect(fromBuild, target).toHaveLength(4);
       expect(Math.max(...heavy), target).toBeLessThan(Math.min(...app));
@@ -103,42 +99,13 @@ describe("container images", () => {
     expect(home.filter(step => step.args.includes("/usr/local/bin/caddy") && step.op === "COPY")).toEqual([
       { op: "COPY", args: "--from=edge /caddy /usr/local/bin/caddy" },
     ]);
-    // pinned, so beneath the engines: an engine release does not re-pull it
-    expect(home.findIndex(step => step.args.startsWith("--from=edge "))).toBeLessThan(home.findLastIndex(npmInstall));
+    // pinned, so beneath the per-commit app files: a code change does not re-pull it
+    expect(home.findIndex(step => step.args.startsWith("--from=edge "))).toBeLessThan(home.findIndex(step => step.args.includes("--from=build")));
     expect(home.filter(step => step.op === "RUN" && /\b(cp|mv)\b[^&]*caddy/.test(step.args))).toEqual([]);
     expect(home.filter(step => step.args.includes("--from=build")).map(step => step.args)).toEqual([
       "/src/dist-native/duckdb/linux-x64 ./duckdb", "/src/dist-server ./dist-server", "/src/dist ./dist", "/src/skills ./skills",
     ].map(path => `--from=build ${path}`));
     expect(chain("server").filter(step => step.args.includes("--from=build")).every(step => step.args.startsWith("--from=build --chown=rootclaw:rootclaw "))).toBe(true);
-  });
-
-  it("installs the pinned Grok in Cloud home only, beneath the engines and the app, from a home the same step removes", () => {
-    const home = chain("cloud-home");
-    const grok = grokRun(home);
-    expect(grok).toBeGreaterThan(-1);
-    expect(home.slice(0, grok)).toContainEqual({ op: "ARG", args: "GROK_VERSION=1.0.41" });
-    // pinned, so an engine release or a code change does not re-pull it
-    expect(grok).toBeLessThan(home.findLastIndex(npmInstall));
-    expect(grok).toBeGreaterThan(home.indexOf(browserRun()));
-    expect(grok).toBeLessThan(home.findIndex(step => step.args.includes("--from=build")));
-    const { args } = home[grok];
-    // the installer and the version check write only to a throwaway home, gone by the end of the step
-    expect(args.match(/\bHOME=\S+/g)).toEqual(["HOME=/tmp/grok-install", "HOME=/tmp/grok-install"]);
-    expect(args).toMatch(/ && install -m 0755 "\$\(readlink -f \/tmp\/grok-install\/\.grok\/bin\/grok\)" \/usr\/local\/bin\/grok /);
-    expect(args).toContain('grep -qF "grok $GROK_VERSION "');
-    expect(args).toMatch(/ && rm -rf \/tmp\/grok-install; +fi$/);
-    expect(grokRun(chain("server"))).toBe(-1);
-  });
-
-  it("scans the saved images for every throwaway build directory, and for one Grok", () => {
-    const scan = (workflow.jobs["build-and-smoke"].steps as { name?: string; run?: string }[])
-      .find(step => step.name?.startsWith("Prove each image ships its files once"))!.run!;
-    const cache = new RegExp(/cache = re\.compile\(r"(.*)"\)/.exec(scan)![1]);
-    const removed = shipped().flatMap(step => [...step.args.matchAll(/\brm -rf ([^;&|]+)/g)].flatMap(match => match[1].trim().split(/\s+/)));
-    const throwaway = [...new Set(removed.filter(path => path.startsWith("/tmp/")))].sort();
-    expect(throwaway).toEqual(["/tmp/grok-install", "/tmp/node-compile-cache", "/tmp/npm-cache", "/tmp/rootclaw-build-home"]);
-    for (const path of throwaway) expect(cache.test(`${path.slice(1)}/leftover`), path).toBe(true);
-    expect(scan).toContain('grok = files["usr/local/bin/grok"]');
   });
 
   it("keeps each image's runtime contract", () => {
@@ -211,62 +178,34 @@ describe("container images", () => {
     expect(script.left).toEqual(script.names);
   });
 
-  it("builds Cloud home from the same Dockerfile in CI, with its own layer cache", () => {
-    const smoke = workflow.jobs["build-and-smoke"].steps.map((step: { run?: string }) => step.run ?? "").join("\n");
-    expect(smoke).toContain("docker build --target cloud-home --build-arg CLOUD_HOME_ENGINES= -t rootclaw-cloud-home:ci .");
-    const steps = workflow.jobs.publish.steps as { id?: string; uses?: string; with?: Record<string, string> }[];
-    const server = steps.find(step => step.uses?.startsWith("docker/build-push-action@") && step.id !== "home")!;
-    const home = steps.find(step => step.id === "home")!;
-    expect(home.with).not.toHaveProperty("file");
-    expect(home.with!.target).toBe("cloud-home");
-    expect(home.with!["build-args"]).not.toContain("BASE_IMAGE");
-    expect(home.with!["cache-from"].split("\n")).toEqual(expect.arrayContaining(["type=gha", "type=gha,scope=cloud-home"]));
-    expect(home.with!["cache-to"]).toBe("type=gha,scope=cloud-home,mode=max");
-    // Both builds key the browser layer on the same Chrome, so they share it.
-    for (const build of [server, home]) expect(build.with!["build-args"]).toContain("CHROME_CACHE_TAG=${{ steps.keys.outputs.chrome }}");
-    expect(home.with!["build-args"]).toContain("CLOUD_HOME_ENGINES=${{ steps.keys.outputs.engines }}");
-    expect(home.with!["build-args"]).toContain("ENGINES_CACHE_TAG=${{ steps.keys.outputs.engines_tag }}");
-  });
-
-  it("keys the browser and engine layers on the versions they install, so a release rebuilds them", () => {
+  it("keys the browser layer on the Chrome it installs, so a release rebuilds it", () => {
     const runtime = all.find(s => s.name === "runtime")!.steps;
     const declared = runtime.findIndex(step => step.op === "ARG" && step.args.startsWith("CHROME_CACHE_TAG="));
     // declared after the apt step, so a Chrome release rebuilds only the browser layer
     expect(declared).toBeGreaterThan(runtime.findIndex(step => step.op === "RUN" && step.args.startsWith("apt-get update")));
     expect(declared).toBeLessThan(runtime.indexOf(browserRun()));
     expect(browserRun().args).toContain("${CHROME_CACHE_TAG");
-    const home = all.find(s => s.name === "cloud-home")!.steps;
-    expect(home).toContainEqual({ op: "ARG", args: 'CLOUD_HOME_ENGINES="@anthropic-ai/claude-code @openai/codex"' });
-    // the engines' install, not the tools layer's pinned pnpm beneath it
-    const engines = home.find(step => npmInstall(step) && step.args.includes("$CLOUD_HOME_ENGINES"));
-    expect(engines?.args).toContain("${ENGINES_CACHE_TAG");
-    const keys = (workflow.jobs.publish.steps as { id?: string; env?: Record<string, string> }[]).find(step => step.id === "keys")!;
-    expect(keys.env!.CLOUD_HOME_ENGINES).toBe("@anthropic-ai/claude-code @openai/codex");
   });
 
-  it.skipIf(!jq)("resolves the current Chrome and engine releases, and keys on the date when a lookup fails", () => {
-    const keys = (workflow.jobs.publish.steps as { id?: string; run?: string; env?: Record<string, string> }[]).find(step => step.id === "keys")!;
-    const resolve = (ok: boolean) => {
-      const root = mkdtempSync(join(tmpdir(), "rootclaw-docker-keys-"));
-      temporaryDirectories.push(root);
-      const fake = (name: string, body: string) => writeFileSync(join(root, name), `#!/bin/sh\n${ok ? body : "exit 1"}\n`, { mode: 0o755 });
-      fake("curl", `echo '{"channels":{"Stable":{"version":"154.0.8037.92","downloads":{}}}}'`);
-      fake("npm", `case "$2" in @anthropic-ai/claude-code@latest) echo 2.1.291;; @openai/codex@latest) echo 0.160.1;; *) exit 1;; esac`);
-      const output = join(root, "output");
-      writeFileSync(output, "");
-      const result = spawnSync("bash", ["-e", "-c", keys.run!], {
-        env: { ...keys.env, PATH: `${root}:${dirname(jq)}:/usr/bin:/bin`, GITHUB_OUTPUT: output }, encoding: "utf8",
-      });
-      expect(result.status, result.stderr).toBe(0);
-      return Object.fromEntries(readFileSync(output, "utf8").trim().split("\n").map(line => [line.slice(0, line.indexOf("=")), line.slice(line.indexOf("=") + 1)]));
-    };
-    expect(resolve(true)).toEqual({
-      chrome: "154.0.8037.92",
-      engines: "@anthropic-ai/claude-code@2.1.291 @openai/codex@0.160.1",
-      engines_tag: "",
-    });
-    const today = `date-${new Date().toISOString().slice(0, 10)}`;
-    expect(resolve(false)).toEqual({ chrome: today, engines: "@anthropic-ai/claude-code @openai/codex", engines_tag: today });
+  // RootClaw's engine is native: it talks to model providers over their APIs, so no image or compose default installs
+  // an external engine CLI (Claude Code, Codex, Grok Build). ENGINES stays an opt-in, empty by default.
+  it("installs no external engine CLI by default in any image or compose file", () => {
+    const external = /claude-code|@openai\/codex|x\.ai\/cli|\bgrok\b/i;
+    for (const target of ["server", "cloud-home"]) {
+      const steps = chain(target);
+      expect(steps.filter(step => step.op !== "ENV" && external.test(step.args)), target).toEqual([]);
+      expect(steps.filter(step => step.op === "ARG" && /^(CLOUD_HOME_ENGINES|ENGINES_CACHE_TAG|GROK_VERSION)=/.test(step.args)), target).toEqual([]);
+    }
+    expect(chain("cloud-home").filter(step => step.op === "ARG" && step.args.startsWith("ENGINES="))).toEqual([]);
+    const text = (file: string) => readFileSync(new URL(file, import.meta.url), "utf8");
+    for (const file of ["../deploy/local/Dockerfile", "../deploy/podman/Containerfile"]) {
+      expect(text(file), file).toMatch(/^ARG ENGINES=""$/m);
+      expect(text(file).split("\n").filter(line => !/^\s*#/.test(line) && external.test(line)), file).toEqual([]);
+    }
+    for (const file of ["../compose.yaml", "../deploy/docker-compose.yml", "../deploy/podman/compose.yaml"]) {
+      expect(parse(text(file)).services.rootclaw.build.args.ENGINES, file).toBe("${ENGINES:-}");
+    }
+    for (const file of ["../.env.example", "../deploy/.env.example"]) expect(text(file), file).toMatch(/^ENGINES=$/m);
   });
 
   // An init collects browser processes whose parents exit, and Chrome gets the

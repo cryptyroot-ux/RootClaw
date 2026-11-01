@@ -1,23 +1,10 @@
-// What a quiet ACP agent is doing. ACP has no "still working" message, and agents go silent for minutes
-// (Qwen Code 0.24 while it waits out a rate limit, retries, or runs a slow call), so a quiet turn is
-// probed from the agent's debug log and its process tree's connections and CPU.
+// A quiet provider turn can be waiting on a model request or a long-running tool, so activity is inferred from runtime
+// events and the child process tree's connections and CPU.
 
 import { execFile } from "node:child_process";
-import { closeSync, existsSync, fstatSync, openSync, readdirSync, readFileSync, readlinkSync, readSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, readlinkSync } from "node:fs";
 import { join } from "node:path";
 
-import { redactSecretsInText } from "../redact.ts";
-
-// Prompt silence guard (0 disables). Healthy agents go quiet for minutes: Qwen Code 0.24 sends
-// nothing while it compresses history, backs off a rate limit (60 s up to 5 min per wait) or runs
-// one model request (its SDK waits up to 600 s); a wedged OpenCode turn goes silent forever.
-export const DEFAULT_ACP_PROMPT_IDLE_MS = 15 * 60_000;
-export const promptIdleTimeoutMs = (): number => {
-  const raw = process.env.ROOTCLAW_ACP_PROMPT_IDLE_TIMEOUT_MS;
-  if (raw === undefined) return DEFAULT_ACP_PROMPT_IDLE_MS;
-  const ms = Number(raw);
-  return Number.isFinite(ms) && ms > 0 ? ms : 0;
-};
 export const formatQuietLimit = (ms: number): string =>
   ms >= 120_000 && ms % 60_000 === 0 ? `${ms / 60_000} min` : `${Math.round(ms / 1000)} s`;
 
@@ -55,83 +42,6 @@ export interface ProcessSample {
   cpuMs: number | null;
   /** established TCP connections held by the tree, or null when unknown */
   connections: number | null;
-}
-
-/** Qwen Code's debug log (QWEN_DEBUG_LOG_FILE=1), lines like
- *  `2026-10-02T02:50:41.757Z [WARN] [RETRY] Attempt 1 failed with status 429. Retrying after explicit delay of 20000ms...`. */
-export function parseQwenLogLine(line: string): LogSignal | null {
-  if (line.includes("[RETRY]") && /\bAttempt \d+ failed\b/.test(line)) {
-    const attempt = /\bAttempt (\d+) failed/.exec(line);
-    const status = /\bwith status (\d{3})\b/.exec(line);
-    const explicit = /explicit delay of (\d+)\s*ms/.exec(line);
-    const seconds = /Retrying in (\d+)\s*s\b/.exec(line);
-    return {
-      kind: "retry",
-      attempt: attempt ? Number(attempt[1]) : null,
-      status: status ? Number(status[1]) : null,
-      delayMs: explicit ? Number(explicit[1]) : seconds ? Number(seconds[1]) * 1000 : null,
-    };
-  }
-  if (/\[compaction\] hard-tier rescue triggered|Reactive compression|tryCompress/.test(line)
-      && !/succeeded|failed|skipped|stopped/.test(line)) {
-    return { kind: "compressing" };
-  }
-  const gate = /\[compaction\] cheap-gate NOOP: effectiveTokens=(\d+), auto=(\d+)/.exec(line);
-  if (gate) return { kind: "context", tokens: Number(gate[1]), threshold: Number(gate[2]) };
-  return null;
-}
-
-/** OpenCode 1.18's shared log, one logfmt row per failed model call of any session or process, like
- *  `level=ERROR … message="stream error" … session.id=ses_… small=false … error.error="AI_APICallError: Rate limit exceeded."`.
- *  `small=true` is the session's title request, not the turn. */
-export function parseOpenCodeLogLine(line: string, sessionId: string): LogSignal | null {
-  const fields = line.split(" ");
-  if (!fields.includes("level=ERROR") || !fields.includes(`session.id=${sessionId}`) || fields.includes("small=true")) return null;
-  const error = /\berror\.error="((?:[^"\\]|\\.)*)"/.exec(line)?.[1];
-  return error ? { kind: "provider-error", message: redactSecretsInText(error.replace(/^AI_APICallError:\s*/, "")).slice(0, 200) } : null;
-}
-
-export class LogTail {
-  private offset: number | null = null;
-  private partial = "";
-  private readonly path: string;
-  private readonly maxBytes: number;
-  constructor(path: string, maxBytes = 256 * 1024) {
-    this.path = path;
-    this.maxBytes = maxBytes;
-  }
-
-  read(): string[] {
-    let fd: number;
-    try {
-      fd = openSync(this.path, "r");
-    } catch {
-      if (this.offset === null) this.offset = 0;
-      return [];
-    }
-    try {
-      const size = fstatSync(fd).size;
-      if (this.offset === null) {
-        this.offset = size;
-        return [];
-      }
-      if (size < this.offset) { this.offset = 0; this.partial = ""; }
-      if (size === this.offset) return [];
-      const start = Math.max(this.offset, size - this.maxBytes);
-      if (start > this.offset) this.partial = "";
-      const buf = Buffer.alloc(size - start);
-      readSync(fd, buf, 0, buf.length, start);
-      this.offset = size;
-      const text = this.partial + buf.toString("utf8");
-      const lines = text.split(/\r?\n/);
-      this.partial = lines.pop() ?? "";
-      return lines.filter((l) => l.trim());
-    } catch {
-      return [];
-    } finally {
-      try { closeSync(fd); } catch {}
-    }
-  }
 }
 
 const run = (file: string, args: string[], timeoutMs = 4_000): Promise<string | null> =>

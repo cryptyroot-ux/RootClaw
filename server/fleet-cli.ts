@@ -16,8 +16,7 @@ import {
   fleetUser,
   fenceRules,
   initPlan,
-  MANAGED_OPENROUTER,
-  managedOpenRouterModels,
+  openRouterModelIds,
   parseRegistry,
   resumePlan,
   suspendPlan,
@@ -28,6 +27,7 @@ import {
   type FleetRegistry,
   type FleetStep,
 } from "./fleet.ts";
+import { OPENROUTER_API_INSTANCE, OPENROUTER_API_KEY_ENV } from "./instance-fleets.ts";
 
 export interface FleetInput {
   action: "init" | "create" | "list" | "users" | "providers" | "suspend" | "resume" | "delete" | "upgrade";
@@ -344,27 +344,34 @@ export function planFleetAction(input: FleetInput, deps: FleetDeps): FleetStep[]
       const workspace = loadRegistry(layout, deps).workspaces[input.slug];
       if (!workspace) throw new Error(`no workspace "${input.slug}"`);
       assertManagedWorkspace(workspace);
-      const models = managedOpenRouterModels(input.openrouterModels);
+      const models = openRouterModelIds(input.openrouterModels);
       const env = deps.readText(posix.join(layout.instancesDir, `${input.slug}.env`)) ?? "";
       const portal = /^ROOTCLAW_ADMIN_URL=(.+)$/m.exec(env)?.[1];
       if (!portal || !env.split("\n").includes(`ROOTCLAW_ADMIN_WORKSPACE=${input.slug}`)) throw new Error("workspace has no trusted portal configuration; operator recovery is required");
       try { const url = new URL(portal); if (url.protocol !== "https:" || url.origin !== portal) throw new Error(); }
       catch { throw new Error("workspace portal configuration is invalid; operator recovery is required"); }
-      const file = posix.join(workspaceHome(layout, input.slug), ".config", "opencode", "opencode.json");
+      const file = posix.join(workspaceDataDir(layout, input.slug), "config.json");
       const raw = deps.readText(file, fleetUser(input.slug));
       const object = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
       let config: Record<string, unknown>;
       try { const parsed: unknown = JSON.parse(raw ?? "null"); if (!object(parsed)) throw new Error(); config = parsed; }
-      catch { throw new Error("managed OpenRouter configuration is missing or invalid; operator recovery is required"); }
-      const providers = config.provider;
-      const managed = object(providers) ? providers[MANAGED_OPENROUTER] : undefined;
-      const options = object(managed) ? managed.options : undefined;
-      if (!object(managed) || managed.npm !== "@ai-sdk/openai-compatible" || !object(options) || options.baseURL !== `${portal}/api/gateway/${input.slug}/openrouter/v1` || typeof options.apiKey !== "string" || !/^[!-~]+$/.test(options.apiKey)) {
+      catch { throw new Error("native OpenRouter provider configuration is missing or invalid; operator recovery is required"); }
+      const configured = object(config.instances) ? config.instances[OPENROUTER_API_INSTANCE] : undefined;
+      const providerConfig = object(configured) && object(configured.config) ? configured.config : undefined;
+      const keyLine = env.split("\n").find((line) => line.startsWith(`${OPENROUTER_API_KEY_ENV}=`));
+      const apiKey = keyLine?.slice(OPENROUTER_API_KEY_ENV.length + 1);
+      if (!object(configured) || configured.driver !== "openai-compat" || !providerConfig
+        || providerConfig.url !== `${portal}/api/gateway/${input.slug}/openrouter/v1`
+        || providerConfig.apiKeyEnv !== OPENROUTER_API_KEY_ENV || Object.hasOwn(providerConfig, "key")
+        || !apiKey || !/^[!-~]+$/.test(apiKey)) {
         throw new Error("managed OpenRouter configuration does not match the workspace portal; operator recovery is required");
       }
-      managed.models = models;
+      const nextProviderConfig = { ...providerConfig };
+      nextProviderConfig.managedModels = models;
+      const nextInstances = { ...(config.instances as Record<string, unknown>), [OPENROUTER_API_INSTANCE]: { ...configured, config: nextProviderConfig } };
+      const nextConfig = { ...config, instances: nextInstances };
       return [
-        { kind: "write", path: file, content: `${JSON.stringify(config, null, 2)}\n`, mode: 0o600, owner: fleetUser(input.slug) },
+        { kind: "write", path: file, content: `${JSON.stringify(nextConfig, null, 2)}\n`, mode: 0o600, owner: fleetUser(input.slug) },
         { kind: "note", text: "managed OpenRouter models updated; refresh the workspace model picker to load its catalog" },
       ];
     }

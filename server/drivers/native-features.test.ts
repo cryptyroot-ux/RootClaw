@@ -228,7 +228,9 @@ describe("compaction keeps a finding from the middle of a long tool result", () 
     writeFileSync(join(f.cwd, "a.log"), log(300));
     writeFileSync(join(f.cwd, "b.log"), log(300, 211));
     writeFileSync(join(f.cwd, "c.log"), log(300));
-    await f.start({ approvalMode: "full", turnContext: { compactAt: 12_000 } } as Partial<SendTurnInput>);
+    // Each log read is ~11k tokens: the budget holds one kept exchange but not two, so the fold can land under it
+    // (a budget under one exchange is skipped as a summary-every-round thrash).
+    await f.start({ approvalMode: "full", turnContext: { compactAt: 20_000 } } as Partial<SendTurnInput>);
     await f.completed();
     const prompts = f.fake.requests.filter((body) => body.stream === false).map((body) => JSON.stringify(body.messages)).filter((text) => text.includes("You compact"));
     expect(prompts.length).toBeGreaterThan(0);

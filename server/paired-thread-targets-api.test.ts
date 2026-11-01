@@ -20,19 +20,19 @@ describe("paired thread targets through an isolated HTTP fixture", () => {
     return result;
   };
   const paired = (method: string, path: string, body?: unknown) => api(method, path, body, { authorization: `Bearer ${token}` });
-  const selection = (model: string) => ({ instanceId: "claude", model });
+  const selection = (model: string) => ({ instanceId: "openaiCompat", model });
   const botState = async (id: string) => (await api("GET", "/api/bots?messages=30")).body.bots.find((bot: any) => bot.id === id);
   const page = async (id: string) => (await api("GET", `/api/threads/${id}/messages?limit=100`)).body;
   const idle = (id: string) => expect.poll(async () => (await botState(id)).busy, { timeout: 15_000 }).toBe(false);
 
   beforeAll(async () => {
-    fixture = await launchVerificationServer();
+    fixture = await launchVerificationServer({ ...process.env, FAKE_CHAT_MODELS: JSON.stringify(["fixture-model", "fixture-model-b", "fixture-model-c"]) });
     const invitation = await api("POST", "/api/auth/pairing", { label: "Thread compatibility fixture", scopes: ["client", "admin"] });
     expect(invitation.status).toBe(200);
     const accepted = await api("POST", "/api/auth/pair", { code: invitation.body.code, label: "Old paired client" });
     expect(accepted.status).toBe(200);
     token = accepted.body.token;
-    const catalog = (await api("GET", "/api/instances")).body.instances.find((instance: any) => instance.instanceId === "claude");
+    const catalog = (await api("GET", "/api/instances")).body.instances.find((instance: any) => instance.instanceId === "openaiCompat");
     models = catalog.models.options.map((model: any) => model.id);
     expect(models.length).toBeGreaterThanOrEqual(3);
   });

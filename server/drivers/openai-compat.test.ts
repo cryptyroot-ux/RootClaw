@@ -79,6 +79,22 @@ describe("OpenAICompatDriver", () => {
     expect(cfg.apiKeyEnv).toBe("GROQ_KEY");
   });
 
+  it("keeps an explicitly empty managed catalog empty without probing the endpoint", async () => {
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    const instance = await OpenAICompatDriver.create({
+      instanceId: "openrouter", displayName: "OpenRouter", enabled: true,
+      config: OpenAICompatDriver.decodeConfig({ url: "https://admin.example.test/api/gateway/acme/openrouter/v1", apiKeyEnv: "ROOTCLAW_OPENROUTER_API_KEY", managedModels: [] }),
+      environment: { ROOTCLAW_OPENROUTER_API_KEY: "fixture-api-key" },
+    });
+    try {
+      expect(instance.models).toEqual({ default: "", options: [] });
+      expect(fetch).not.toHaveBeenCalled();
+    } finally {
+      await instance.dispose();
+    }
+  });
+
   it("allows an isolated connection to disable an inherited OpenRouter provider pin", () => {
     const before = process.env.OPENAI_COMPAT_PROVIDER;
     process.env.OPENAI_COMPAT_PROVIDER = "fixture-upstream";
@@ -1180,4 +1196,3 @@ describe("how long a turn waits for a reply", () => {
     }
   });
 });
-

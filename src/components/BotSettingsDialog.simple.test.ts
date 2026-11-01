@@ -708,15 +708,6 @@ describe("the Bot settings page", () => {
     },
   );
 
-  it("shows legacy Antigravity Auto as Ask without a third pill or a change to the saved mode", () => {
-    fixture.derived.engine = engine({ driverKind: "antigravityAgent" });
-    fixture.derived.approvalMode = "auto";
-    const rendered = settingsPage(makeBot({ approvalMode: "auto" }));
-    expect(segment(rendered, "data-approval-choice").options).toHaveLength(2);
-    expect(pressed(rendered.html, "data-approval-choice")).toEqual(["ask"]);
-    expect(patch).not.toHaveBeenCalled();
-  });
-
   it("lets the approval level change while the bot is busy and says from when", () => {
     const rendered = settingsPage(makeBot({ busy: true }));
     expect(segment(rendered, "data-approval-choice").options.some((option) => option.disabled)).toBe(false);

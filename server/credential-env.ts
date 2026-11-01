@@ -1,7 +1,7 @@
 // Credential env names and the strippers that keep them out of child processes. Lives apart from
-// config.ts so the lists can grow (one name per engine) without that file growing with them.
+// config.ts so provider credentials can be added without growing that file.
 
-/** Workspace credential env names; spawned engine CLIs must never inherit them. */
+/** Workspace credential env names; spawned tools must never inherit them. */
 export const WORKSPACE_CREDENTIAL_ENV = [
   "XAI_API_KEY",
   "MISTRAL_API_KEY",
@@ -9,6 +9,8 @@ export const WORKSPACE_CREDENTIAL_ENV = [
   "ROOTCLAW_GROQ_API_KEY",
   "ROOTCLAW_META_API_KEY",
   "ROOTCLAW_DEEPSEEK_API_KEY",
+  "ROOTCLAW_GEMINI_API_KEY",
+  "ROOTCLAW_OLLAMA_API_KEY",
   "ROOTCLAW_ANTHROPIC_API_KEY",
   "ROOTCLAW_ANTHROPIC_API_URL",
   "OPENAI_COMPAT_API_KEY",
@@ -68,7 +70,7 @@ export const PROVIDER_CREDENTIAL_ENV = [
   "GROQ_API_KEY",
   "META_API_KEY",
   "DEEPSEEK_API_KEY",
+  "OLLAMA_API_KEY",
   "CURSOR_API_KEY",
   "CURSOR_AUTH_TOKEN",
 ] as const;
-

@@ -387,7 +387,7 @@ describe("cloudHomePrompt", () => {
     const mac = cloudHomePrompt(false, [], [{ name: "Ash’s MacBook", platform: "darwin" }, { name: "ASH-PC", platform: "win32" }]);
     expect(mac).toContain("You cannot see or use their Mac (Ash’s MacBook), its screen or its files from here.");
     for (const text of [pc, mac, cloudHomePrompt(true), cloudHomePrompt(true, [], [{ name: "box", platform: "linux" }])]) {
-      expect(text).not.toMatch(/this Mac|ROOTCLAW Cloud|RootClaw Cloud|Mac or PC/u);
+      expect(text).not.toMatch(/this Mac|ROOTCLAW Cloud|Mac or PC/u);
       if (text.includes("Settings →")) expect(text).toContain("Settings → RootClaw Cloud");
     }
     expect(cloudHomePrompt(true, [], [{ name: "box", platform: "linux" }])).toContain("Call it their computer: never assume it is a Mac.");

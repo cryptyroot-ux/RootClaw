@@ -1,12 +1,15 @@
 # Bring your own engine
 
-Two zero-code ways to run RootClaw bots on an engine the app doesn't ship.
-Both live in `~/.rootclaw/config.json` under `"instances"`; restart the app
-after editing (instance entries are read at boot).
+One zero-code way to run RootClaw bots on an engine the app doesn't ship: an
+`openai-compat` instance pointed at any OpenAI-compatible API. It lives in
+`~/.rootclaw/config.json` under `"instances"`; restart the app after editing
+(instance entries are read at boot). RootClaw runs only its built-in native
+engine, so external agent CLIs (ACP agents such as the former `customAcp`
+instances) are no longer supported; see [migration.md](migration.md).
 
 ## Provider icons
 
-In **Settings → Engines**, expand an instance and choose its **Provider icon**.
+In **Settings → Model providers**, expand an instance and choose its **Provider icon**.
 The built-in choices include OpenAI, Anthropic, Google Gemini, Microsoft Azure,
 Amazon Bedrock (AWS), xAI, DeepSeek, Meta, Mistral AI, Qwen, Moonshot AI,
 Cohere, and OpenRouter. You can also upload a PNG, JPEG, or WebP image up to
@@ -18,48 +21,7 @@ For file-based configuration, add `"icon": { "kind": "preset", "preset": "azure"
 alongside `driver` and `displayName`. Custom uploads are stored as embedded image
 data; the app does not fetch remote icon URLs.
 
-## Any ACP agent (a CLI you spawn)
-
-If an agent CLI speaks [ACP](https://agentclientprotocol.com) over stdio —
-`fx acp`, a Zed-style agent server, your own wrapper — point a `customAcp`
-instance at it:
-
-```json
-{
-  "instances": {
-    "my-agent": {
-      "driver": "customAcp",
-      "displayName": "My Agent",
-      "environment": { "MY_AGENT_TOKEN": "…" },
-      "config": { "cli": "my-agent acp" }
-    }
-  }
-}
-```
-
-- **`config.cli`** is the whole command, args included (`"npx -y some-agent acp"`
-  works). You can also set it from the app: Settings → Engines → *Set CLI…* on
-  the instance's row. An instance without a command shows up with exactly that
-  hint instead of failing at first message.
-- **Sign in first.** The driver has no auth flow of its own — run the CLI once
-  in a terminal and log in there; RootClaw spawns it with your login intact.
-- **Choose models per bot.** Open the bot's model picker and use **Re-detect**
-  to load the models advertised by the agent. Select a model and, when offered,
-  its thinking level. Bot defaults and individual conversation overrides are
-  saved independently. **Agent default** leaves the native session's model
-  unchanged. An agent that does not advertise models still has this option.
-- **Choices come from the agent.** Discovery starts a temporary ACP session
-  without sending a prompt. Only confirmed, model-specific thinking options
-  are shown; a failed refresh keeps the last successful catalog. ZCode,
-  CodeBuddy, Qoder and other custom ACP engines use the same mechanism.
-- **`environment`** is passed to the CLI child. Foreign provider keys
-  (XAI_API_KEY, OPENAI_COMPAT_API_KEY, …) are deliberately stripped so a
-  custom CLI can never bill against another engine's login.
-- **Permissions** ride ACP's own `session/request_permission` — if your agent
-  asks, the request becomes a normal approval card in chat.
-- Multiple instances are fine — one per agent.
-
-## Any OpenAI-compatible endpoint (no process at all)
+## Any OpenAI-compatible endpoint
 
 The built-in `openai-compat` driver supports multiple instances, so a local
 vLLM/LM Studio/Ollama-openai endpoint or any hosted compatible API is one

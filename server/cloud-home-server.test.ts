@@ -1,15 +1,16 @@
 // The full server as a Cloud home over its real HTTP boundary, still sent the ROOTCLAW_HOSTED_* settings an Admin from before
-// Cloud Pro dropped included AI. Disposable home; no network; a synthetic Claude CLI.
+// Cloud Pro dropped included AI. Disposable home; no network; the native engine on a loopback fixture.
 import { randomBytes } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { cloudHomePlaceRefusal, cloudPairingSignature, cloudRequestSignature } from "./cloud-home.ts";
 import { cloudHomePrompt } from "./system-prompt.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { FAKE_OPENAI_MODEL, startFakeOpenAiChat, type FakeOpenAiChat } from "./testing/fake-openai-chat.ts";
 import { freePortBlock } from "./testing/ports.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
@@ -32,9 +33,12 @@ const included = {
   ROOTCLAW_CLOUD_DECIDER_TOKEN: `rootclaw_decide_${randomBytes(32).toString("base64url")}`,
 };
 const includedTokens = [included.ROOTCLAW_CLOUD_BOAT_TOKEN, included.ROOTCLAW_CLOUD_VOICE_TOKEN, included.ROOTCLAW_CLOUD_DECIDER_TOKEN];
+const CAPABILITY_KEY = "cloud-home-server-test-capability";
+const MODEL = { instanceId: "openaiCompat", model: FAKE_OPENAI_MODEL };
 let home: string;
 let base: string;
 let child: ChildProcess;
+let fake: FakeOpenAiChat;
 let log = "";
 
 let ownerToken = "";
@@ -60,31 +64,14 @@ async function api(method: string, path: string, options: { body?: unknown; remo
 
 beforeAll(async () => {
   home = mkdtempSync(join(tmpdir(), "rootclaw-cloud-home-server-"));
+  fake = await startFakeOpenAiChat();
   const dataDir = join(home, ".rootclaw");
   mkdirSync(dataDir, { recursive: true });
-  // A signed-in Claude Code whose turns record the environment they were given.
-  // While the hang marker exists, a new turn records itself elsewhere and
-  // stays running, so its tool token stays live.
-  const cli = join(home, "fixture-claude.mjs");
-  // While the failure marker exists, a turn fails the way it says.
-  writeFileSync(cli, `#!/usr/bin/env node
-import { existsSync, readFileSync } from "node:fs";
-if (process.argv[2] === "auth") {
-  console.log(JSON.stringify({ loggedIn: true, email: "person@example.test" }));
-  process.exit(0);
-}
-const hang = existsSync(${JSON.stringify(join(home, "hang"))});
-if (hang) process.env.FAKE_CLAUDE_MODE = "hang";
-const failure = ${JSON.stringify(join(home, "fail.json"))};
-if (!hang && existsSync(failure)) Object.assign(process.env, JSON.parse(readFileSync(failure, "utf8")));
-if (process.argv[2] !== "--version") process.env.FAKE_CLAUDE_DUMP = ${JSON.stringify(join(home, "spawn"))} + (hang ? "-hang.json" : ".json");
-await import(${JSON.stringify(pathToFileURL(join(SERVER_DIR, "testing", "fake-claude-cli.ts")).href)});
-`, { mode: 0o755 });
   writeFileSync(join(dataDir, "config.json"), JSON.stringify({
     instances: {
       // Pin the fleet's other defaults so this never probes an installed CLI.
-      ...Object.fromEntries(["codex", "cursor", "githubCopilot", "openaiCompat", "qwen", "hermes", "pi"].map((id) => [id, { driver: "not-a-real-driver" }])),
-      claude: { driver: "claudeAgent", displayName: "Claude", config: { cli } },
+      ...Object.fromEntries(["claude", "codex", "cursor", "githubCopilot", "qwen", "hermes", "pi"].map((id) => [id, { driver: "not-a-real-driver" }])),
+      openaiCompat: { driver: "openai-compat", displayName: "Fixture", config: { url: fake.url, key: "fixture-only", model: FAKE_OPENAI_MODEL } },
     },
   }));
   // Moved here from a Windows PC by a release that left the PC's data folder in memory.
@@ -97,7 +84,8 @@ await import(${JSON.stringify(pathToFileURL(join(SERVER_DIR, "testing", "fake-cl
   writeFileSync(join(home, "web", "index.html"), "<!doctype html><title>RootClaw</title>");
   const port = await freePortBlock([0, 1]);
   base = `http://127.0.0.1:${port}`;
-  const offlinePrelude = `data:text/javascript,${encodeURIComponent('globalThis.fetch = async () => new Response("offline fixture", { status: 503 });')}`;
+  const fixtureOrigin = new URL(fake.url).origin;
+  const offlinePrelude = `data:text/javascript,${encodeURIComponent(`const allow=${JSON.stringify(fixtureOrigin)};const real=globalThis.fetch.bind(globalThis);globalThis.fetch=async(input,init)=>{const url=typeof input==="string"?input:input instanceof URL?input.href:input.url;if(url.startsWith(allow))return real(input,init);return new Response("offline fixture",{status:503});};`)}`;
   child = spawn(process.execPath, ["--import", offlinePrelude, join(SERVER_DIR, "index.ts")], {
     cwd: join(SERVER_DIR, ".."),
     env: {
@@ -107,6 +95,7 @@ await import(${JSON.stringify(pathToFileURL(join(SERVER_DIR, "testing", "fake-cl
       HOME: home, USERPROFILE: home, ROOTCLAW_DATA_DIR: dataDir, ROOTCLAW_PORT: String(port), ROOTCLAW_WEBHOOK_PORT: String(port + 1), ROOTCLAW_STATIC_DIR: join(home, "web"),
       ROOTCLAW_CLOUD_ROLE: "home", ROOTCLAW_CLOUD_MACHINE_ID: "3f9c2a4e-8b1d-4c6e-9a7f-2d5e8c1b0a93", ROOTCLAW_CLOUD_ADMIN_URL: "https://cloud.example.test",
       ROOTCLAW_CLOUD_BOOTSTRAP_SECRET: secret, ROOTCLAW_PUBLIC_URL: `https://${HOST}`,
+      ROOTCLAW_TEST_INTERNAL_CAPABILITY_KEY: CAPABILITY_KEY,
       ...gateway,
       ...included,
     },
@@ -140,6 +129,7 @@ async function ownerPairing(): Promise<string> {
 
 afterAll(async () => {
   if (child) await waitForExit(child, { signal: "SIGTERM" });
+  if (fake) await fake.stop();
   if (home) await removeTempDir(home);
 });
 
@@ -185,7 +175,7 @@ it("pairs the app on a signed request and tells it its first run is the engine s
   expect(session.body).not.toHaveProperty("hosted");
   expect((await api("GET", "/api/config", { remote: true, headers: auth })).body.onboarding).not.toHaveProperty("firstTurnAt");
   const { instances } = (await api("GET", "/api/instances", { remote: true, headers: auth })).body;
-  expect(instances.map((instance: any) => instance.instanceId)).toContain("claude");
+  expect(instances.map((instance: any) => instance.instanceId)).toContain("openaiCompat");
   expect(instances.filter((instance: any) => instance.instanceId.startsWith("included.") || "included" in instance || instance.readOnly)).toEqual([]);
   expect(JSON.stringify(instances)).not.toContain("cloud.example.test");
 });
@@ -273,37 +263,20 @@ it("serves its pages to no frame and with no Referer", async () => {
   }
 });
 
-it("never hands the included tokens or the signing secret to a CLI it probes", async () => {
-  // POST /api/cli-test runs `<cli> --version` with a copy of the server's own env, less every shared-list credential.
-  const dump = join(home, "cli-env.json");
-  const cli = join(home, "dump-env.mjs");
-  writeFileSync(cli, `#!/usr/bin/env node
-import { writeFileSync } from "node:fs";
-writeFileSync(${JSON.stringify(dump)}, JSON.stringify(process.env));
-console.log("dump-env 1.0.0");
-`, { mode: 0o755 });
-  const probe = await api("POST", "/api/cli-test", { body: { cli } });
-  expect(probe.body, JSON.stringify(probe.body)).toMatchObject({ ok: true, version: "dump-env 1.0.0" });
-  const env = JSON.parse(readFileSync(dump, "utf8"));
-  // Proves the dump is the server's environment, not an empty one.
-  expect(env.ROOTCLAW_TTS_DEFAULT_VOICE).toBe(included.ROOTCLAW_TTS_DEFAULT_VOICE);
-  for (const key of ["ROOTCLAW_CLOUD_BOAT_TOKEN", "ROOTCLAW_CLOUD_VOICE_TOKEN", "ROOTCLAW_CLOUD_DECIDER_TOKEN", "ROOTCLAW_CLOUD_BOOTSTRAP_SECRET"]) expect(env).not.toHaveProperty(key);
-  for (const value of [...includedTokens, secret]) expect(JSON.stringify(env)).not.toContain(value);
-});
-
 it("does not count a turn that was stopped before it finished", async () => {
-  writeFileSync(join(home, "hang"), "");
+  const dump = join(home, "spawn-hang.json");
+  rmSync(dump, { force: true });
+  fake.set({ mode: "hang", dump, routes: [] });
   const created = await api("POST", "/api/bots", { body: {
-    name: "Stopped fixture", modelSelection: { instanceId: "claude", model: "claude-sonnet-5" }, requireAvailableModel: true,
+    name: "Stopped fixture", modelSelection: MODEL, requireAvailableModel: true,
   } });
   expect(created.status, JSON.stringify(created.body)).toBe(201);
   const botId = created.body.bot.id;
-  const dump = join(home, "spawn-hang.json");
   try {
     expect((await api("POST", `/api/bots/${botId}/messages`, { body: { text: "wait for me" } })).status).toBe(202);
     await expect.poll(() => existsSync(dump), { timeout: 15_000 }).toBe(true);
   } finally {
-    rmSync(join(home, "hang"), { force: true });
+    fake.set({ mode: "happy" });
     await api("POST", `/api/bots/${botId}/interrupt`, { body: {} });
   }
   const busy = async () => {
@@ -312,24 +285,25 @@ it("does not count a turn that was stopped before it finished", async () => {
   };
   await expect.poll(busy, { timeout: 15_000 }).toBe(false);
   expect((await api("GET", "/api/config")).body.onboarding).not.toHaveProperty("firstTurnAt");
-  // A later test reads the next hanging turn's own record.
   rmSync(dump, { force: true });
 });
 
 it("never hands a gateway's settings or the signing secret to an engine", async () => {
+  const dump = join(home, "spawn.json");
+  rmSync(dump, { force: true });
+  fake.set({ mode: "happy", dump, routes: [] });
   const created = await api("POST", "/api/bots", { body: {
-    name: "Cloud fixture", modelSelection: { instanceId: "claude", model: "claude-sonnet-5" }, requireAvailableModel: true,
+    name: "Cloud fixture", modelSelection: MODEL, requireAvailableModel: true,
   } });
   expect(created.status, JSON.stringify(created.body)).toBe(201);
   expect((await api("POST", `/api/bots/${created.body.bot.id}/messages`, { body: { text: "hello" } })).status).toBe(202);
-  const dump = join(home, "spawn.json");
   await expect.poll(() => existsSync(dump), { timeout: 15_000 }).toBe(true);
-  const { env } = JSON.parse(readFileSync(dump, "utf8"));
-  expect(env.HOME).toBe(home);
-  for (const key of ["ROOTCLAW_CLOUD_BOOTSTRAP_SECRET", "ROOTCLAW_CLOUD_BOAT_TOKEN", "ROOTCLAW_CLOUD_VOICE_TOKEN", "ROOTCLAW_CLOUD_DECIDER_TOKEN"]) expect(env).not.toHaveProperty(key);
-  expect(JSON.stringify(env)).not.toContain(token);
-  expect(JSON.stringify(env)).not.toContain(secret);
-  for (const includedToken of includedTokens) expect(JSON.stringify(env)).not.toContain(includedToken);
+  const sent = JSON.parse(readFileSync(dump, "utf8")) as { prompt?: string };
+  expect(sent.prompt).toContain("hello");
+  const body = JSON.stringify(sent);
+  expect(body).not.toContain(token);
+  expect(body).not.toContain(secret);
+  for (const includedToken of includedTokens) expect(body).not.toContain(includedToken);
 });
 
 it("records when a bot's turn first finished here, once, in the Cloud's own settings", async () => {
@@ -338,7 +312,7 @@ it("records when a bot's turn first finished here, once, in the Cloud's own sett
   const recorded = await first();
   expect(JSON.parse(readFileSync(join(home, ".rootclaw", "config.json"), "utf8")).onboarding.firstTurnAt).toBe(recorded);
   const created = await api("POST", "/api/bots", { body: {
-    name: "Second fixture", modelSelection: { instanceId: "claude", model: "claude-sonnet-5" }, requireAvailableModel: true,
+    name: "Second fixture", modelSelection: MODEL, requireAvailableModel: true,
   } });
   expect(created.status, JSON.stringify(created.body)).toBe(201);
   const botId = created.body.bot.id;
@@ -355,27 +329,34 @@ it("records when a bot's turn first finished here, once, in the Cloud's own sett
 it("offers its bots the browser and cloud computers only, and tells them they cannot see the person's computer", async () => {
   const status = await api("GET", "/api/config");
   expect(status.body).toMatchObject({ cloudHome: true, features: { browser: true } });
-  writeFileSync(join(home, "hang"), "");
+  const dump = join(home, "spawn-hang.json");
+  rmSync(dump, { force: true });
+  fake.set({ mode: "hang", dump, routes: [] });
   const created = await api("POST", "/api/bots", { body: {
-    name: "Desk fixture", modelSelection: { instanceId: "claude", model: "claude-sonnet-5" }, requireAvailableModel: true,
+    name: "Desk fixture", modelSelection: MODEL, requireAvailableModel: true,
   } });
   expect(created.status, JSON.stringify(created.body)).toBe(201);
   const botId = created.body.bot.id;
+  const threadId = created.body.bot.threadId as string;
   try {
     expect((await api("POST", `/api/bots/${botId}/messages`, { body: { text: "list the files on my desktop" } })).status).toBe(202);
-    const dump = join(home, "spawn-hang.json");
     await expect.poll(() => existsSync(dump), { timeout: 15_000 }).toBe(true);
-    const { systemPrompt, mcpConfig } = JSON.parse(readFileSync(dump, "utf8"));
-    expect(systemPrompt).toContain(cloudHomePrompt(true));
-    expect(systemPrompt).toContain("check list_shared_computers");
-    expect(systemPrompt).not.toMatch(/Local VM is an isolated desktop|user's host|host desktop|select an available Local VM/);
-    const agents = mcpConfig.mcpServers.agents;
-    expect(agents.env.ROOTCLAW_CLOUD_HOME).toBe("1");
+    const sent = JSON.parse(readFileSync(dump, "utf8")) as { systemPrompt?: string };
+    expect(sent.systemPrompt).toContain(cloudHomePrompt(true));
+    expect(sent.systemPrompt).toContain("check list_shared_computers");
+    expect(sent.systemPrompt).not.toMatch(/Local VM is an isolated desktop|user's host|host desktop|select an available Local VM/);
+    expect(JSON.stringify(sent)).not.toContain(token);
+    expect(JSON.stringify(sent)).not.toContain(secret);
     const preview = (await api("GET", `/api/bots/${botId}/system-prompt`)).body.sections as Array<{ id: string; text: string }>;
     expect(preview.find((section) => section.id === "cloud-home")?.text).toBe(cloudHomePrompt(true));
+    const minted = await api("POST", "/api/testing/internal-capability", {
+      headers: { "x-rootclaw-test-capability": CAPABILITY_KEY },
+      body: { botId, threadId, kind: "agents" },
+    });
+    expect(minted.status, JSON.stringify(minted.body)).toBe(201);
     const select = (surface?: string) => fetch(`${base}/api/internal/computer/select`, {
       method: surface === undefined ? "GET" : "POST",
-      headers: { authorization: `Bearer ${agents.env.ROOTCLAW_COMMS_TOKEN}`, ...(surface === undefined ? {} : { "content-type": "application/json" }) },
+      headers: { authorization: `Bearer ${minted.body.token}`, ...(surface === undefined ? {} : { "content-type": "application/json" }) },
       ...(surface === undefined ? {} : { body: JSON.stringify({ surface }) }),
     });
     const listed = await (await select()).json() as { canSelect: boolean; options: Array<{ surface: string }> };
@@ -388,15 +369,16 @@ it("offers its bots the browser and cloud computers only, and tells them they ca
       expect(((await refused.json()) as { error: string }).error).toBe(cloudHomePlaceRefusal(surface));
     }
   } finally {
-    rmSync(join(home, "hang"), { force: true });
+    fake.set({ mode: "happy" });
     await api("POST", `/api/bots/${botId}/interrupt`, { body: {} });
   }
 });
 
 it("refuses a bot still set to this computer or a Local VM, saying what is true on a Cloud home", async () => {
+  fake.set({ mode: "happy", routes: [] });
   for (const computer of ["local", "vm"] as const) {
     const created = await api("POST", "/api/bots", { body: {
-      name: `Earlier ${computer} fixture`, modelSelection: { instanceId: "claude", model: "claude-sonnet-5" }, requireAvailableModel: true,
+      name: `Earlier ${computer} fixture`, modelSelection: MODEL, requireAvailableModel: true,
     } });
     expect(created.status, JSON.stringify(created.body)).toBe(201);
     const botId = created.body.bot.id;
@@ -412,11 +394,16 @@ it("refuses a bot still set to this computer or a Local VM, saying what is true 
 
 it("tells the Admin's signed health read a failed turn's code, never its words, the bot's name or the request", async () => {
   const words = "You've hit your weekly limit · resets for ada.lovelace@example.test on Secret Merger Plans";
-  writeFileSync(join(home, "fail.json"), JSON.stringify({ FAKE_CLAUDE_MODE: "usage-limit", FAKE_CLAUDE_API_ERROR: words }));
+  fake.set({
+    mode: "happy",
+    routes: [{ match: "Draft the ACME layoffs memo", mode: "error" }],
+    errorStatus: 429,
+    errorMessage: words,
+  });
   let botId = "";
   try {
     const created = await api("POST", "/api/bots", { body: {
-      name: "Tallyspoon Ops", modelSelection: { instanceId: "claude", model: "claude-sonnet-5" }, requireAvailableModel: true,
+      name: "Tallyspoon Ops", modelSelection: MODEL, requireAvailableModel: true,
     } });
     expect(created.status, JSON.stringify(created.body)).toBe(201);
     botId = created.body.bot.id;
@@ -426,7 +413,7 @@ it("tells the Admin's signed health read a failed turn's code, never its words, 
       const { bots } = (await api("GET", "/api/bots?messages=10")).body as { bots: Array<{ id: string; messages: Array<{ kind: string; tool?: { ok: boolean } }> }> };
       return bots.find((bot) => bot.id === botId)?.messages.some((message) => message.kind === "activity" && message.tool?.ok === false);
     }, { timeout: 15_000 }).toBe(true);
-    rmSync(join(home, "fail.json"), { force: true });
+    fake.set({ mode: "happy", routes: [], errorStatus: undefined, errorMessage: undefined });
   }
   const read = async (key = secret) => {
     const target = "/api/cloud/health?after=0", timestamp = String(Math.floor(Date.now() / 1000)), nonce = randomBytes(16).toString("base64url");
@@ -436,9 +423,9 @@ it("tells the Admin's signed health read a failed turn's code, never its words, 
   await expect.poll(async () => (await read()).body.incidents?.some((incident: { botId: string }) => incident.botId === botId), { timeout: 15_000 }).toBe(true);
   const report = await read();
   expect(report.status).toBe(200);
-  expect(report.body).toMatchObject({ v: 1, turns: { failed24h: expect.any(Number) }, engines: expect.arrayContaining([expect.objectContaining({ kind: "claudeAgent", used: true })]) });
-  expect(report.body.incidents).toContainEqual(expect.objectContaining({ kind: "turn", code: "quota", engine: "claudeAgent", botId, count: 1 }));
-  for (const planted of ["weekly limit", "ada.lovelace@example.test", "Secret Merger Plans", "Tallyspoon Ops", "Draft the ACME", "person@example.test"]) {
+  expect(report.body).toMatchObject({ v: 1, turns: { failed24h: expect.any(Number) }, engines: expect.arrayContaining([expect.objectContaining({ kind: "openai-compat", used: true })]) });
+  expect(report.body.incidents).toContainEqual(expect.objectContaining({ kind: "turn", code: "quota", engine: "openai-compat", botId, count: 1 }));
+  for (const planted of ["weekly limit", "ada.lovelace@example.test", "Secret Merger Plans", "Tallyspoon Ops", "Draft the ACME"]) {
     expect(JSON.stringify(report.body), planted).not.toContain(planted);
   }
   expect(log).not.toContain("ada.lovelace@example.test");

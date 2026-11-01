@@ -1,9 +1,8 @@
 // Real harness, real provider/control routes, inert browser executable and
 // throwaway home. No browser, VM, device, or user data is opened.
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-rootclaw.ts";
@@ -35,15 +34,7 @@ describe.skipIf(process.platform === "win32")("direct final-screen settlement", 
   const gate = (name: string) => writeFileSync(join(fixture, name), "ready");
   const beginCapture = async () => {
     expect((await api("POST", `/api/bots/${botId}/messages`, { text: "FIRST_SCREEN", threadId })).status).toBe(202);
-    await expect.poll(() => existsSync(join(fixture, "provider.json")), { timeout: 10_000 }).toBe(true);
-    const dump = JSON.parse(readFileSync(join(fixture, "provider.json"), "utf8"));
-    const token = dump.mcpConfig.mcpServers.browser.env.ROOTCLAW_MCP_TOKEN_BROWSER;
-    expect((await api("POST", "/api/internal/browser/mcp", {
-      method: "tools/call", params: { name: "agent_browser_screenshot", arguments: {} },
-    }, token)).status).toBe(200);
-    gate("tools.gate");
     await expect.poll(() => existsSync(join(fixture, "capture.entered")), { timeout: 10_000 }).toBe(true);
-    gate("finish.gate");
     await expect.poll(async () => (await api("GET", `/api/threads/${threadId}/messages`)).body.messages
       .some((message: any) => typeof message.text === "string" && withoutTurnClock(message.text) === "reply to: FIRST_SCREEN"), { timeout: 5_000 }).toBe(true);
   };
@@ -94,29 +85,12 @@ describe.skipIf(process.platform === "win32")("direct final-screen settlement", 
     ].join("\n"), { mode: 0o700 });
     session = await launchVerificationServer(process.env, undefined, undefined, { binaryPath: browser, executablePath: browser });
     evidence.push({ fixture: session.info });
-    const wrapper = join(fixture, "screen-claude.mjs");
-    writeFileSync(wrapper, [
-      "#!/usr/bin/env node",
-      'import { existsSync } from "node:fs";',
-      `const dir = ${JSON.stringify(fixture)};`,
-      'process.env.FAKE_CLAUDE_MODE = "slow";',
-      'process.env.FAKE_CLAUDE_DUMP = dir + "/provider.json";',
-      'process.env.FAKE_CLAUDE_SLOW_FINISH_GATE = dir + "/finish.gate";',
-      'if (process.argv.includes("--input-format")) {',
-      '  const write = process.stdout.write.bind(process.stdout); let held = false; const buffered = [];',
-      '  process.stdout.write = (chunk, ...args) => {',
-      '    chunk = String(chunk).replaceAll("\\\"name\\\":\\\"Bash\\\"", "\\\"name\\\":\\\"browser__agent_browser_screenshot\\\"");',
-      '    if (held || chunk.includes("\\\"type\\\":\\\"assistant\\\"")) { held = true; buffered.push(chunk); return true; }',
-      '    return write(chunk, ...args);',
-      '  };',
-      '  const timer = setInterval(() => { if (!existsSync(dir + "/tools.gate")) return; clearInterval(timer); process.stdout.write = write; for (const chunk of buffered) write(chunk); }, 10);',
-      '}',
-      `await import(${JSON.stringify(pathToFileURL(join(process.cwd(), "server/testing/fake-claude-cli.ts")).href)});`,
-    ].join("\n"), { mode: 0o700 });
-    expect((await api("PATCH", "/api/instances/claude", { cli: wrapper })).status).toBe(200);
+    // The native engine takes one screenshot with its browser tool, then answers.
+    session.fakeChat.set({ routes: [{ match: "FIRST_SCREEN", reply: "reply to: FIRST_SCREEN",
+      toolCalls: [{ name: "browser_agent_browser_screenshot", input: {} }] }] });
     expect((await api("PATCH", "/api/config", { features: { browser: true } })).status).toBe(200);
     const created = await api("POST", "/api/bots", { name: "Screen settlement", browser: true, computer: "browser",
-      modelSelection: { instanceId: "claude", model: "claude-sonnet-5" } });
+      modelSelection: { instanceId: "openaiCompat", model: "fixture-model" } });
     expect(created.status).toBe(201);
     botId = created.body.bot.id;
     threadId = created.body.bot.threadId;
@@ -145,7 +119,7 @@ describe.skipIf(process.platform === "win32")("direct final-screen settlement", 
     const messages = (await bot()).messages;
     // The follow-up runs in the conversation's warm engine, so its prompt may lead with the instructions that changed.
     expect(messages.some((message: any) => message.role === "bot" && typeof message.text === "string" &&
-      withoutTurnClock(message.text).startsWith("reply to: ") && message.text.endsWith("FOLLOWUP_AFTER_SCREEN"))).toBe(true);
+      withoutTurnClock(message.text) === "Fixture reply: FOLLOWUP_AFTER_SCREEN")).toBe(true);
     expect(messages.some((message: any) => message.tool?.name?.includes("another thread is working"))).toBe(false);
     const screenIndex = messages.findIndex((message: any) => message.kind === "screen");
     expect(screenIndex).toBeGreaterThanOrEqual(0);

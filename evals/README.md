@@ -63,6 +63,12 @@ The `live-reply-*` scenarios grade how a bot talks (answer first, one question a
 
     ROOTCLAW_EVAL_LIVE=1 ROOTCLAW_EVAL_LIVE_CONFIG=/path/to/instance.json pnpm eval --live --scenario live-reply-research --scenario live-reply-plan-week --scenario live-reply-remember --scenario live-reply-routine --scenario live-reply-dead-link
 
+## Context eval (native engine)
+
+    npm run eval:context
+
+Drives the native loop's real drivers (OpenAI chat, Anthropic Messages, Gemini, OpenAI Responses) against fake provider servers that enforce a small context limit and refuse in each provider's own words (OpenAI, Anthropic and Responses also refuse input plus max output over the limit), with a scripted model, large tool outputs and planted facts. No external API is called. The report, `evals/reports/context-eval.md`, gives per scenario the requests refused, the largest accepted request against the limit, input plus max output over the limit after learning (must be 0), pairing violations, cumulative input, read_tool_output paging and fact retention; the run exits non-zero when any scenario fails. Scenarios: `ctx-budget`, `ctx-overflow`, `ctx-giant-paste`, `ctx-wire-{openai,anthropic,gemini,responses}` and `ctx-long-thread`.
+
 ## Skill bench (alpha)
 
 The skill bench measures one fixture skill against its own prompts through the same scripted machinery as tier 1. Each prompt runs twice — with the skill installed as a user skill under the booted server's data dir and without it — so the contrast covers the real seams: trigger-term selection, the `<rootclaw-skill>` block riding the system prompt, and the scripted follower's behavior against a no-skill baseline. It evaluates the harness, never a model.

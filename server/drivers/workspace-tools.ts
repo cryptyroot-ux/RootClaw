@@ -2,8 +2,8 @@
 // list_dir. Paths are confined to the turn's workspace root (plus named extra roots) unless the turn allows more.
 // Engine-level and provider-agnostic: a driver only hands over the turn's folder.
 import { spawn, spawnSync } from "node:child_process";
-import { closeSync, constants as fsConstants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { closeSync, constants as fsConstants, createWriteStream, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, parse as parsePath, relative, resolve, sep } from "node:path";
 import { randomBytes } from "node:crypto";
 import { homedir, tmpdir } from "node:os";
 import type { ChatToolCallView, ChatToolDefinition, ChatToolResult } from "./chat-mcp-tools.ts";
@@ -115,23 +115,63 @@ function realOrSelf(path: string): string {
   try { return realpathSync(path); } catch { return resolve(path); }
 }
 
+/** Same identity as realpathSync, including Windows 8.3 short names. Those names are not symbolic links, so a
+ * component walk keeps them, but containment compares against realpath'd roots (GitHub's Windows runner stores
+ * temp as `C:\Users\RUNNER~1\...`). A missing tail keeps the realpath of the longest existing prefix. */
+function canonicalPath(path: string): string {
+  const absolute = resolve(path);
+  try { return realpathSync(absolute); } catch { /* the tail does not exist yet */ }
+  const missing: string[] = [];
+  let dir = absolute;
+  while (dir !== dirname(dir)) {
+    missing.unshift(basename(dir));
+    dir = dirname(dir);
+    try { return join(realpathSync(dir), ...missing); } catch { /* still missing */ }
+  }
+  return absolute;
+}
+
 /** The real path of `path`, following every symlink component, including dangling ones (a link to a file that does
- * not exist yet still points somewhere, and writing through it would create that target). Missing tails are kept. */
+ * not exist yet still points somewhere, and writing through it would create that target). Missing tails are kept.
+ * The walk starts at the path's own root. Joining a drive letter onto `\` produces `\\C:`, which resolves
+ * from the current drive as `D:\C:\...`. */
 export function realTarget(path: string): string {
-  let pending = resolve(path).split(sep).filter(Boolean);
-  let current: string = sep;
+  const rooted = (from: string) => {
+    const root = parsePath(from).root;
+    return { current: root, pending: from.slice(root.length).split(sep).filter(Boolean) };
+  };
+  let { current, pending } = rooted(resolve(path));
   for (let hops = 0; pending.length;) {
     const next = join(current, pending.shift()!);
     let stat;
-    try { stat = lstatSync(next); } catch { return join(next, ...pending); }
+    try { stat = lstatSync(next); } catch { return canonicalPath(join(next, ...pending)); }
     if (!stat.isSymbolicLink()) { current = next; continue; }
     if (++hops > 40) throw new WorkspacePathError(`${path} has too many symbolic links`);
     const link = readlinkSync(next);
-    const target = isAbsolute(link) ? link : join(current, link);
-    pending = [...resolve(target).split(sep).filter(Boolean), ...pending];
-    current = sep;
+    const target = resolve(isAbsolute(link) ? link : join(current, link));
+    const restarted = rooted(target);
+    current = restarted.current;
+    pending = [...restarted.pending, ...pending];
   }
-  return current;
+  return canonicalPath(current);
+}
+
+/** Unsandboxed shell. Windows runners have Git bash, not `/bin/bash`. The verification
+ * fixture seals ProgramFiles, so the lookup also tries the default install path.
+ * `usr\bin\bash.exe` sits next to msys-2.0.dll; the `bin` copy is only a launcher. */
+function plainShell(): string {
+  if (process.platform !== "win32") return "/bin/bash";
+  const roots = [process.env.ProgramFiles, process.env["ProgramFiles(x86)"], process.env.ProgramW6432, "C:\\Program Files", "C:\\Program Files (x86)"].filter((dir): dir is string => Boolean(dir));
+  const seen = new Set<string>();
+  for (const root of roots) {
+    const key = root.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    for (const candidate of [join(root, "Git", "usr", "bin", "bash.exe"), join(root, "Git", "bin", "bash.exe")]) {
+      if (existsSync(candidate)) return candidate;
+    }
+  }
+  return "bash.exe";
 }
 
 export function createWorkspacePaths(config: WorkspaceToolsConfig) {
@@ -168,7 +208,8 @@ export function createWorkspacePaths(config: WorkspaceToolsConfig) {
     display(path: string): string {
       const rel = relative(root, path);
       if (rel === "") return ".";
-      return !rel.startsWith("..") && !isAbsolute(rel) ? rel : path;
+      // Tool output uses `/` even on Windows, so a model and its tests see one spelling.
+      return !rel.startsWith("..") && !isAbsolute(rel) ? rel.split(sep).join("/") : path;
     },
   };
 }
@@ -245,6 +286,11 @@ export function shellEnvironment(root: string, source: NodeJS.ProcessEnv = proce
 
 function killGroup(pid: number | undefined, signal: NodeJS.Signals) {
   if (!pid) return;
+  // Windows has no negative-pid process groups. taskkill /T stops the shell and the children it started.
+  if (process.platform === "win32") {
+    spawnSync("taskkill", ["/F", "/T", "/PID", String(pid)], { stdio: "ignore", windowsHide: true });
+    return;
+  }
   try { process.kill(-pid, signal); } catch { try { process.kill(pid, signal); } catch {} }
 }
 
@@ -323,7 +369,7 @@ export function sandboxedShell(command: string, cwd: string, writable: readonly 
     const profile = `(version 1)(allow default)(deny file-write*)(allow file-write* ${dirs.map((dir) => `(subpath ${sbString(dir)})`).join(" ")} (literal "/dev/null") (literal "/dev/tty") (regex #"^/dev/fd/"))`;
     return { file: "/usr/bin/sandbox-exec", args: ["-p", profile, "/bin/bash", "-c", command] };
   }
-  return { file: "/bin/bash", args: ["-c", command] };
+  return { file: plainShell(), args: ["-c", command] };
 }
 
 // ---------- background jobs ----------
@@ -334,7 +380,10 @@ const MAX_JOBS = 32;
 const UNSCOPED = "";
 const jobs = new Map<string, Set<number>>();
 /** Whether any process of the group is left: the shell itself may exit while what it started runs on. */
-const groupAlive = (pid: number) => { try { process.kill(-pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === "EPERM"; } };
+const groupAlive = (pid: number) => {
+  try { process.kill(process.platform === "win32" ? pid : -pid, 0); return true; }
+  catch (error) { return (error as NodeJS.ErrnoException).code === "EPERM"; }
+};
 const prune = () => {
   for (const [scope, set] of jobs) {
     for (const pid of set) if (!groupAlive(pid)) set.delete(pid);
@@ -402,9 +451,19 @@ async function runShell(args: Record<string, unknown>, paths: Paths, signal: Abo
     const dir = join(paths.root, ".rootclaw", "bg");
     mkdirSync(dir, { recursive: true });
     const log = join(dir, `${Date.now()}-${randomBytes(3).toString("hex")}.log`);
-    const out = openSync(log, "a");
-    const child = spawn(program.file, program.args, { cwd, env, detached: true, stdio: ["ignore", out, out] });
-    closeSync(out);
+    writeFileSync(log, "");
+    // A pipe, not an inherited file: Windows drops a detached child's file handles, so the log stayed empty.
+    const child = spawn(program.file, program.args, { cwd, env, detached: true, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    const stream = createWriteStream(log, { flags: "a" });
+    const ignore = () => {};
+    stream.on("error", ignore);
+    child.stdout?.on("error", ignore);
+    child.stderr?.on("error", ignore);
+    child.stdout?.pipe(stream, { end: false });
+    child.stderr?.pipe(stream, { end: false });
+    const release = () => stream.end();
+    child.once("exit", release);
+    child.once("error", release);
     child.unref();
     if (child.pid) jobs.set(scope, (jobs.get(scope) ?? new Set()).add(child.pid));
     return ok(`Started in the background${unsandboxed ? ` (${unsandboxed.slice(2)})` : ""}: pid ${child.pid}. Output goes to ${paths.display(log)} (read it with read_file); stop it with \`kill ${child.pid}\`.`);
@@ -733,7 +792,11 @@ async function grepTool(args: Record<string, unknown>, paths: Paths, signal: Abo
       child.once("close", (code) => { signal.removeEventListener("abort", onAbort); done({ code, out, err }); });
     });
     if (result.code === 2 && !result.out) return fail(`grep failed: ${result.err.trim().slice(0, 500)}`);
-    lines = result.out.split("\n").filter(Boolean).map((line) => line.startsWith("./") ? line.slice(2) : line);
+    lines = result.out.split("\n").filter(Boolean).map((line) => {
+      const trimmed = line.startsWith("./") ? line.slice(2) : line.startsWith(".\\") ? line.slice(2) : line;
+      const match = /^(.*?):(\d+)(:.*)$/.exec(trimmed);
+      return match ? `${match[1].replaceAll("\\", "/")}:${match[2]}${match[3]}` : trimmed;
+    });
   } else {
     let regex: RegExp;
     try { regex = new RegExp(pattern, args.ignore_case === true ? "i" : ""); } catch (error) { return fail(`invalid pattern: ${(error as Error).message}`); }
@@ -834,7 +897,7 @@ export function skillReadRoots(...texts: Array<string | undefined>): string[] {
   const roots = new Set<string>();
   for (const text of texts) {
     if (!text) continue;
-    for (const match of text.matchAll(/Read ("(?:[^"\\]|\\.)*\/SKILL\.md")/g)) {
+    for (const match of text.matchAll(/Read ("(?:[^"\\]|\\.)*(?:\/|\\\\)SKILL\.md")/g)) {
       try {
         const file = JSON.parse(match[1]!) as string;
         if (isAbsolute(file)) roots.add(dirname(file));

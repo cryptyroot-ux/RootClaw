@@ -3,21 +3,21 @@
 #
 # Build the renderer + the self-contained server bundle, then ship only those
 # artifacts on a slim Node runtime. The runtime stage holds what changes
-# rarely (Chrome's libraries, agent-browser and its Chrome), and each image
-# adds its engine CLIs before the app files, which change with every commit:
-# a code-only change rebuilds only the small app layers, so a pull downloads
-# only those. The server keeps binding 127.0.0.1 inside the container (the
+# rarely (Chrome's libraries, agent-browser and its Chrome) beneath the app
+# files, which change with every commit: a code-only change rebuilds only the
+# small app layers, so a pull downloads only those. RootClaw's engine is
+# native: it talks to model providers over their APIs, so no external engine
+# CLI is installed. The server keeps binding 127.0.0.1 inside the container (the
 # loopback-trust invariant is the auth model); deploy/docker-compose.yml puts
 # Caddy in the same network namespace to terminate TLS and authentication at
 # the edge.
 #
 #   docker build -t rootclaw .
-#   docker build --build-arg ENGINES="@anthropic-ai/claude-code @openai/codex" -t rootclaw .
+#   docker build --build-arg ENGINES="<npm packages>" -t rootclaw .   # opt-in extra CLIs; none by default
 #   docker build --target cloud-home -t rootclaw-cloud-home .
 #
-# HOME is the /data volume, so engine CLI logins (~/.claude, ~/.codex, ~/.grok,
-# ...) and RootClaw's own state (~/.rootclaw) persist across container
-# restarts.
+# HOME is the /data volume, so RootClaw's own state (~/.rootclaw: config,
+# provider keys, bots) persists across container restarts.
 #
 # A plain `docker run` of either image wants `--init --shm-size=512m`, as the
 # compose files set: the bots' browsers leave exited processes for an init to
@@ -113,36 +113,8 @@ RUN apt-get update \
   && HOME=/tmp/rootclaw-build-home npm install -g pnpm@10.33.0 \
   && bwrap --version && socat -V | head -1 && HOME=/tmp/rootclaw-build-home pnpm --version \
   && rm -rf /tmp/rootclaw-build-home /tmp/node-compile-cache
-# Caddy and Grok are pinned, so they sit beneath the engines, which change
-# more often.
+# Caddy is pinned, so it sits beneath the per-commit app files.
 COPY --from=edge /caddy /usr/local/bin/caddy
-# Grok Build, the grok.com subscription engine: xAI's own installer, pinned to
-# the version the Grok driver is verified against (server/drivers/acp/grok.ts).
-# People sign it in from the app with a device code; its login lands in
-# ~/.grok on the volume. Only the binary goes to /usr/local/bin, on every
-# user's PATH and out of the volume; the installer's PATH links and shell
-# setup stay in a throwaway home that the same step removes. If xAI's
-# installer cannot be reached, the build fails: an image without Grok would
-# offer a sign-in that cannot run. GROK_VERSION= (empty) leaves Grok out on
-# purpose.
-ARG GROK_VERSION=1.0.41
-RUN if [ -n "$GROK_VERSION" ]; then \
-      mkdir -p /tmp/grok-install \
-      && curl -fsSL https://x.ai/cli/install.sh -o /tmp/grok-install/install.sh \
-      && HOME=/tmp/grok-install PATH="/tmp/grok-install/.grok/bin:$PATH" bash /tmp/grok-install/install.sh "$GROK_VERSION" \
-      && install -m 0755 "$(readlink -f /tmp/grok-install/.grok/bin/grok)" /usr/local/bin/grok \
-      && HOME=/tmp/grok-install grok --version | grep -qF "grok $GROK_VERSION " \
-      && rm -rf /tmp/grok-install; \
-    fi
-# Engine CLIs baked into the image (space-separated npm packages). The publish
-# job passes each one's current version, or names only and today's date as
-# ENGINES_CACHE_TAG when it cannot look them up. Build-time CLI caches must
-# not end up in the image or a customer's volume.
-ARG CLOUD_HOME_ENGINES="@anthropic-ai/claude-code @openai/codex"
-ARG ENGINES_CACHE_TAG=""
-RUN echo "engines: ${CLOUD_HOME_ENGINES:-none} ${ENGINES_CACHE_TAG}" \
-  && if [ -n "$CLOUD_HOME_ENGINES" ]; then HOME=/tmp/rootclaw-build-home npm install -g $CLOUD_HOME_ENGINES; fi \
-  && rm -rf /tmp/rootclaw-build-home /tmp/node-compile-cache
 COPY deploy/fly/Caddyfile /app/cloud/Caddyfile
 # The root supervisor runs /app's code and hands the server its secrets, so
 # no file there may be one `rootclaw` can change: unlike the server image's, these
@@ -177,7 +149,8 @@ CMD ["node", "/app/dist-server/cloud-home-start.js"]
 
 # The self-hosted server, last so a plain `docker build .` builds it.
 FROM runtime AS server
-# Optional engine CLIs baked into the image (space-separated npm packages).
+# Opt-in extra npm CLIs for bots' shells (space-separated packages). Empty by
+# default: RootClaw's native engine needs none.
 ARG ENGINES=""
 RUN if [ -n "$ENGINES" ]; then HOME=/tmp/rootclaw-build-home npm install -g $ENGINES && rm -rf /tmp/rootclaw-build-home /tmp/node-compile-cache; fi
 COPY --from=build --chown=rootclaw:rootclaw /src/dist-native/duckdb/linux-x64 ./duckdb

@@ -587,12 +587,12 @@ describe("finding the browser engine", () => {
   it("pins the native-verified Windows revision in both download and desktop manifests", () => {
     const asset = resolveAgentBrowserReleaseAsset("win32", "x64")!;
     expect(asset).toEqual({
-      target: "win32-x64", version: "0.36.0-rootclaw.1",
-      asset: "agent-browser-win32-x64-0.36.0-rootclaw.1.exe",
-      url: "https://github.com/cryptyroot-ux/RootClaw/releases/download/browser-engine-v0.36.0-rootclaw.1/agent-browser-win32-x64-0.36.0-rootclaw.1.exe",
-      bytes: 13806080, sha256: "33bee834f6a6072ec8688b0914726e0262874d758f69f27e8baf7eaac6b5ed15",
+      target: "win32-x64", version: "0.41.0",
+      asset: "agent-browser-win32-x64.exe",
+      url: "https://github.com/vercel-labs/agent-browser/releases/download/v0.41.0/agent-browser-win32-x64.exe",
+      bytes: 18057728, sha256: "dee86b78071cbe7217f71ec1c9df6a50efa73cd44d64a18877bb36556fc8e270",
     });
-    expect(agentBrowserReleaseVersion(asset)).toBe("0.36.0-rootclaw.1");
+    expect(agentBrowserReleaseVersion(asset)).toBe("0.41.0");
     expect(browserBundleSpec("win32-x64").engine).toEqual({
       version: asset.version, asset: asset.asset, url: asset.url,
       bytes: asset.bytes, sha256: asset.sha256, executable: "agent-browser.exe",
@@ -606,12 +606,12 @@ describe("finding the browser engine", () => {
     const dataDir = join(tmpdir(), "rootclaw-versioned-browser-fixture");
     const old = join(dataDir, "tools", "agent-browser", "0.36.0", "agent-browser.exe");
     const revised = pinnedBinaryPath(dataDir, "win32", "x64");
-    expect(revised).toBe(join(dataDir, "tools", "agent-browser", "0.36.0-rootclaw.1", "agent-browser.exe"));
+    expect(revised).toBe(join(dataDir, "tools", "agent-browser", "0.41.0", "agent-browser.exe"));
     const files = new Set([old]);
     const options = { dataDir, platform: "win32" as const, arch: "x64", env: { PATH: "" }, exists: (file: string) => files.has(file) };
     expect(resolveAgentBrowserBinary(options)).toBeNull();
     files.add(revised);
-    expect(browserEngineStatus(options)).toMatchObject({ kind: "ready", binaryPath: revised, version: "0.36.0-rootclaw.1" });
+    expect(browserEngineStatus(options)).toMatchObject({ kind: "ready", binaryPath: revised, version: "0.41.0" });
     expect(resolveAgentBrowserBinary({ ...options, env: { PATH: "", ROOTCLAW_AGENT_BROWSER_PATH: old } })).toBe(old);
   });
 
@@ -909,7 +909,7 @@ describe("what a bot gets", () => {
   it("forwards the explicit Chrome path without copying arbitrary environment or overriding session isolation", () => {
     vi.stubEnv("AGENT_BROWSER_EXECUTABLE_PATH", "/process/chrome");
     const spec = agentBrowserIntegration({
-      binaryPath: "/x/agent-browser", session: "bot-1", encryptionKey: "session-key",
+      binaryPath: "/x/agent-browser", session: "bot-1", encryptionKey: "session-key", platform: "linux",
       env: {
         PATH: "/usr/bin", AGENT_BROWSER_EXECUTABLE_PATH: "/opt/trusted chrome/chrome",
         PRIVATE_WORKSPACE_SECRET: "synthetic-secret",
@@ -931,7 +931,7 @@ describe("what a bot gets", () => {
     vi.stubEnv("PATH", "/usr/bin");
     vi.stubEnv("AGENT_BROWSER_EXECUTABLE_PATH", "/opt/process-chrome/chrome");
     vi.stubEnv("PRIVATE_WORKSPACE_SECRET", "synthetic-process-secret");
-    const spec = agentBrowserIntegration({ binaryPath: "/x/agent-browser", session: "bot-1", encryptionKey: "session-key" });
+    const spec = agentBrowserIntegration({ binaryPath: "/x/agent-browser", session: "bot-1", encryptionKey: "session-key", platform: "linux" });
     expect(spec.env).toEqual({
       AGENT_BROWSER_SESSION: "bot-1", AGENT_BROWSER_NO_WEBMCP: "1", AGENT_BROWSER_RESTORE: browserRestoreKey("bot-1"),
       AGENT_BROWSER_RESTORE_SAVE: "auto", AGENT_BROWSER_ENCRYPTION_KEY: "session-key",
@@ -969,12 +969,12 @@ describe("what a bot gets", () => {
     expect(spec.args).toEqual(["mcp", "--tools", "core", "--no-webmcp"]);
     expect(spec.env).toMatchObject({ AGENT_BROWSER_SESSION: "work", AGENT_BROWSER_AUTO_CONNECT: "1", AGENT_BROWSER_RESTORE_SAVE: "never", AGENT_BROWSER_NO_WEBMCP: "1" });
     for (const name of ["AGENT_BROWSER_RESTORE", "AGENT_BROWSER_CDP", "AGENT_BROWSER_HEADLESS", "AGENT_BROWSER_HEADED"]) expect(spec.env).not.toHaveProperty(name);
-    expect(agentBrowserIntegration({ binaryPath: "/x/agent-browser", session: "work", encryptionKey: "session-key", env: { PATH: "/usr/bin" } }).env)
+    expect(agentBrowserIntegration({ binaryPath: "/x/agent-browser", session: "work", encryptionKey: "session-key", platform: "linux", env: { PATH: "/usr/bin" } }).env)
       .toMatchObject({ AGENT_BROWSER_RESTORE: browserRestoreKey("work"), AGENT_BROWSER_RESTORE_SAVE: "auto", AGENT_BROWSER_HEADLESS: "1" });
   });
 
   it("mounts agent-browser's MCP server with the core tools, an isolated auto-restored session, and WebMCP off", () => {
-    const spec = agentBrowserIntegration({ binaryPath: "/x/agent-browser", session: "bot-1", encryptionKey: "k".repeat(64), env: { PATH: "/usr/bin" } });
+    const spec = agentBrowserIntegration({ binaryPath: "/x/agent-browser", session: "bot-1", encryptionKey: "k".repeat(64), platform: "linux", env: { PATH: "/usr/bin" } });
     expect(spec.command).toBe("/x/agent-browser");
     expect(spec.args).toEqual(["mcp", "--tools", "core", "--no-webmcp"]);
     expect(spec.env).toMatchObject({ AGENT_BROWSER_SESSION: "bot-1", AGENT_BROWSER_RESTORE: browserRestoreKey("bot-1"), AGENT_BROWSER_RESTORE_SAVE: "auto", AGENT_BROWSER_HEADLESS: "1", AGENT_BROWSER_HEADED: "0", PATH: "/usr/bin" });
@@ -989,6 +989,14 @@ describe("what a bot gets", () => {
     expect(agentBrowserIntegration({ ...linux, headless: false, env: { PATH: "/usr/bin", DISPLAY: ":0" } }).env.AGENT_BROWSER_HEADED).toBeUndefined();
     expect(agentBrowserIntegration({ ...linux, headless: false, env: { PATH: "/usr/bin", WAYLAND_DISPLAY: "wayland-0" } }).env.AGENT_BROWSER_HEADED).toBeUndefined();
     expect(agentBrowserIntegration({ ...linux, platform: "darwin", headless: false }).env.AGENT_BROWSER_HEADED).toBeUndefined();
+    const windows = agentBrowserIntegration({
+      binaryPath: "/x", session: "s", encryptionKey: "k", platform: "win32", env: { PATH: "/usr/bin" },
+      launcher: { AGENT_BROWSER_EXECUTABLE_PATH: "C:\\chrome\\chrome.exe", AGENT_BROWSER_ARGS: "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36,--screen-info={1920x1080}" },
+      egressPort: 45123,
+    });
+    expect(windows.env).toMatchObject({ AGENT_BROWSER_HEADLESS: "1", AGENT_BROWSER_HEADED: "0", AGENT_BROWSER_EXECUTABLE_PATH: "C:\\chrome\\chrome.exe" });
+    expect(windows.env.AGENT_BROWSER_ARGS).toContain("(KHTML, like Gecko)");
+    expect(windows.env.AGENT_BROWSER_ARGS).not.toContain("\n");
   });
 
   it("keeps saved state separate for different bots and never saves guest state", () => {

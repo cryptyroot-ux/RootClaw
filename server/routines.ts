@@ -775,7 +775,7 @@ export class RoutineManager {
     const existing = this.webhookRunReceipt(input.webhookId, input.deliveryId);
     if (existing) return existing;
     if (this.options.botState(input.botId) === "missing") {
-      throw Object.assign(new Error("The assigned ROOTCLAW no longer exists"), { status: 410 });
+      throw Object.assign(new Error("The assigned bot no longer exists"), { status: 410 });
     }
     const run: RoutineRun = {
       id: randomUUID(), routineId: input.webhookId, routineName: input.webhookName, prompt: input.prompt, target: "bot",

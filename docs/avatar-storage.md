@@ -26,8 +26,7 @@ avatar**. The image provider is independent of the bot's chat engine.
   it requires. RootClaw sends only the custom key to this connection.
 
 Direct OpenAI and Grok generation require their respective API keys and API
-access. Signing into a ChatGPT, Codex, or Grok subscription does not configure
-these keys. Grok subscription billing and xAI API billing are also separate;
+access. A ChatGPT or Grok chat subscription does not provide these keys. Grok subscription billing and xAI API billing are also separate;
 see [xAI's account FAQ](https://docs.x.ai/developers/faq/accounts#if-i-already-have-an-account-for-grok-can-i-use-the-same-account-for-api-access).
 
 ### Custom gateway compatibility

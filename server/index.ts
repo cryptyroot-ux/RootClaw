@@ -12,7 +12,8 @@ import { authorizeExternalRuntime, externalRuntimeIsActive, type ExternalRuntime
 import { z } from "zod";
 import { selectReplay, replayToolCalls, DEFAULT_REBUILD_BYTES, MAX_SUMMARY_BYTES } from "./context-rebuild.ts";
 import { draftSummary, foldPoint } from "./compaction-summary.ts";
-import { compactBudget, compactionReading, contextWindowFor, shouldCompact } from "./context-budget.ts";
+import { compactBudget, compactionReading, contextWindowFor, shouldCompact, threadTokens } from "./context-budget.ts";
+import { prepareTokenizer } from "./drivers/tokenizer.ts";
 import { RoomContextTracker, roomResetNote } from "./room-context.ts";
 import { createRoomTranscript, GROUP_CONTEXT_MESSAGES } from "./host/room-transcript.ts";
 import { LentComputers, provenRequestPerson, SharedComputers, sharedComputerOperation } from "./shared-computers.ts"; import { lentScreenResult } from "./lent-screen-guidance.ts"; import { DeviceLinks } from "./device-links.ts";
@@ -3418,7 +3419,7 @@ function handleDesktopTrustedApprovalMessage(raw: unknown): boolean {
   }
   const emergencyDowngrade = existing.busy && isEmergencyApprovalDowngrade(currentMode, mode);
   if (!supportsApprovalMode(existing.modelSelection, mode)) {
-    respond({ ok: false, error: "Custom approval settings are available only for Codex bots" });
+    respond({ ok: false, error: "This provider does not support the selected approval level" });
     return true;
   }
   if (
@@ -7071,15 +7072,16 @@ async function compactConversation(input: {
   const history = selected.transcript.filter(entry => entry.id);
   if (!history.length) return;
   const measurement = compactionReading(instance.adapter.capabilities, task.lastContextModel === `${instance.instanceId}:${model}` && !task.rewound ? task.usage?.context : undefined);
-  const window = contextWindowFor(model, instance.models, measurement?.window);
-  const bytes = history.reduce((n, entry) => n + Buffer.byteLength(entry.text), 0);
+  const window = contextWindowFor(model, instance.models, measurement?.window, instance.instanceId);
+  await prepareTokenizer(model);
+  const tokens = threadTokens(history.map(entry => entry.text), model);
   let floor = task.contextFloor;
   if (record && record.id === task.appliedCompactionId && floor === undefined && measurement?.tokens) {
     floor = measurement.tokens;
     store.patchTask(bot.id, threadId, { contextFloor: floor });
   }
   const nativeCompactAt = nativeCompactTokens(instance);
-  if (!manual && !shouldCompact({ contextTokens: measurement?.tokens, estimatedBytes: bytes,
+  if (!manual && !shouldCompact({ contextTokens: measurement?.tokens, estimatedTokens: tokens,
     budget: compactBudget(window, cfg.context?.compactAt, nativeCompactAt), floor, window, nativeCompactAt })) return;
   const fold = manual ? { folded: history, firstKeptId: "" } : foldPoint(history);
   if (!fold) return;
@@ -7101,7 +7103,7 @@ async function compactConversation(input: {
     store.appendMessage(threadId, {
       role: "bot", kind: "compaction",
       compaction: { summary, firstKeptId: fold.firstKeptId, foldedThroughId,
-        tokensBefore: measurement?.tokens ?? Math.ceil(bytes / 4), by: manual ? "person" : "harness" },
+        tokensBefore: measurement?.tokens ?? tokens, by: manual ? "person" : "harness" },
     }, { kind: "compaction.append", key: `${threadId}:${messages.at(-1)?.id}:${fold.firstKeptId}` });
   } finally {
     if (compactionControllers.get(threadId)?.generation === generation) compactionControllers.delete(threadId);
@@ -7858,9 +7860,7 @@ async function startTurn(
         ? task.handedMessages?.[instanceId] : undefined;
       const unseen = handed && handedStateUsable(handed, cursor, contextOrder) ? unseenMessages(replayable, contextOrder, handed) : undefined;
       const externalUpdate = Boolean(opts?.coordination?.resumed || unseen?.some((m) => m.keep));
-      // What a resumed session keeps from its launch; Codex reasserts model and provider on resume, but an in-flight turn and an omitted effort keep the prior selection.
-      const persistentConfig = [bot.name, bot.title, bot.description, sectionContextSystemPrompt(bot.section),
-        ...(instance.driverKind === "codex" ? [model, effort ?? null] : [])];
+      const persistentConfig = [bot.name, bot.title, bot.description, sectionContextSystemPrompt(bot.section)];
       const sessionConfig = (soul: string | undefined) =>
         createHash("sha256").update(JSON.stringify([...persistentConfig, soul])).digest("hex").slice(0, 16);
       const plannedConfig = sessionConfig(bot.soul);
@@ -7878,9 +7878,7 @@ async function startTurn(
         ? extractReplayImages(selection.inline, turnImages)
         : { transcript: selection.inline, images: [] };
       const decideContext = (config: string) => {
-        // A Codex thread keeps the last effort it was sent and no turn can clear it, so one holding a level is rebuilt, not resumed.
-        const effortHeld = !effort && typeof handed?.effort === "string";
-        const handedStale = Boolean(handed && (!unseen || effortHeld || (externalUpdate && handed.config !== config)));
+        const handedStale = Boolean(handed && (!unseen || (externalUpdate && handed.config !== config)));
         const { block: unseenBlock, placed } = unseen && !handedStale ? renderUnseen(unseen) : { block: "", placed: [] };
         const { turnText: contextTurnText, resume } = buildTurnContext({
           text: userTurnText,
@@ -7905,7 +7903,6 @@ async function startTurn(
           resumeCursor, sessionReset: !resume, recoveryText,
           handoff: strictResume ? {
             botId: bot.id, instanceId, config, resumeCursor: typeof resumeCursor === "string" ? resumeCursor : undefined,
-            ...(instance.driverKind === "codex" ? { effort: effort ?? null } : {}),
             started: sessionStart(contextOrder, contextTurnText !== userTurnText ? windowIds : [], carried),
             recovery: sessionStart(contextOrder, recoveryText !== undefined ? windowIds : [], carried),
             resumed: sessionStart(contextOrder, [], [...placed, ...carried]),

@@ -314,6 +314,11 @@ function desktopDataDir() {
   return process.env.ROOTCLAW_DATA_DIR || path.join(app.getPath("home"), ".rootclaw");
 }
 
+function legacyDataDirs() {
+  const home = app.getPath("home");
+  return [".openmausbot", ".opengrokbot"].map((name) => path.join(home, name));
+}
+
 async function stopUtilityServer(proc, timeoutMs = UTILITY_SERVER_STOP_TIMEOUT_MS) {
   if (!proc) return true;
   const exited = utilityServerExits.get(proc);
@@ -1365,7 +1370,7 @@ let rememberedHome = null;
 
 function acquireDataDirLeaseFor(dir) {
   return dir === desktopDataDir()
-    ? acquireDataDirLease(dir, { legacyDataDir: path.join(app.getPath("home"), ".rootclaw") })
+    ? acquireDataDirLease(dir, { legacyDataDir: legacyDataDirs() })
     : acquireDataDirLease(dir);
 }
 
@@ -2593,7 +2598,7 @@ app.whenReady().then(async () => {
     try {
       // Acquire before either plaintext credential migration touches config.json.
       desktopDataDirLease = acquireDataDirLease(bootDataDir, {
-        legacyDataDir: path.join(app.getPath("home"), ".rootclaw"),
+        legacyDataDir: legacyDataDirs(),
       });
       runningDataDir = bootDataDir;
     } catch (error) {
@@ -2726,7 +2731,7 @@ app.whenReady().then(async () => {
       desktopDataDirLease = null;
       try {
         desktopDataDirLease = acquireDataDirLease(desktopDataDir(), {
-          legacyDataDir: path.join(app.getPath("home"), ".rootclaw"),
+          legacyDataDir: legacyDataDirs(),
         });
         runningDataDir = desktopDataDir();
       } catch (error) {
