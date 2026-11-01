@@ -76,7 +76,7 @@ export function createAnthropicAdapter(options: { url: string; apiKey: string; m
       }));
       const response = await postJson(label, `${options.url}/messages`, { "x-api-key": options.apiKey, "anthropic-version": ANTHROPIC_VERSION }, {
         model: request.model, max_tokens: request.maxTokens ?? options.maxTokens ?? DEFAULT_MAX_TOKENS, messages, stream: request.stream,
-        ...(system.length ? { system } : {}), ...(tools.length ? { tools } : {}),
+        ...(system.length ? { system } : {}), ...(tools.length ? { tools, ...(request.toolChoice ? { tool_choice: { type: "none" } } : {}) } : {}),
       }, request.signal);
       if (!request.stream) return fromMessage(parseJson(await response.text()), request);
       return fromStream(response, request);

@@ -14,7 +14,7 @@ let during: ((n: number, steer: (text: string) => Promise<string>) => Promise<vo
 
 const log = (step: number, lines: number) => Array.from({ length: lines }, (_, i) => `2026-10-31T0${step}:${String(i % 60).padStart(2, "0")}:00Z INFO worker-${i % 13} handled request req-${step}${String(i).padStart(5, "0")} in ${(i * 37) % 900}ms`).join("\n");
 
-type Body = { stream?: boolean; messages: OpenAIChatMessage[]; tools?: unknown[]; model: string };
+type Body = { stream?: boolean; messages: OpenAIChatMessage[]; tools?: unknown[]; tool_choice?: unknown; model: string };
 type Event = { type: string; ok?: boolean; stopReason?: string | null; message?: string; itemType?: string; text?: string };
 
 const stream = (delta: object, finish: string, usage: object) =>
@@ -39,7 +39,7 @@ async function runTurn(id: string, files: Record<string, string>, turnContext: o
     if (failed) return failed;
     const usage = { prompt_tokens: Math.ceil(raw.length / 4), completion_tokens: 5 };
     if (!body.stream) return new Response(JSON.stringify({ choices: [{ message: { role: "assistant", content: "## Goal\n- read logs" }, finish_reason: "stop" }], usage }));
-    if (!body.tools?.length) return stream({ content: "Read what fit in the budget; the rest is unread." }, "stop", usage);
+    if (body.tool_choice === "none" || !body.tools?.length) return stream({ content: "Read what fit in the budget; the rest is unread." }, "stop", usage);
     const chats = bodies.filter((entry) => entry.stream).length;
     return stream(readCall(chats, names[(chats - 1) % names.length]), "tool_calls", usage);
   }));
@@ -61,14 +61,16 @@ async function runTurn(id: string, files: Record<string, string>, turnContext: o
 const done = (events: Event[]) => events.find((event) => event.type === "turn.completed")!;
 
 describe("per-turn request budget (engine.maxTurnRequests)", () => {
-  it("stops a tool-calling model at exactly 5 requests, a compaction summary included, with a tool-less final answer", async () => {
+  it("stops a tool-calling model at exactly 5 requests, a compaction summary included, with a final answer that may not call tools", async () => {
     const files = { "a.log": log(1, 70), "b.log": log(2, 70), "c.log": log(3, 70) };
     const { bodies, lines, events } = await runTurn("budget-5", files, { compactAt: 8_000, keepExchanges: 1, maxTurnRequests: 5 });
     expect(bodies).toHaveLength(5);
     expect(bodies.filter((body) => !body.stream)).toHaveLength(1);
     expect(bodies.slice(0, 4).filter((body) => body.stream).every((body) => body.tools?.length)).toBe(true);
     expect(bodies[4]!.stream).toBe(true);
-    expect(bodies[4]!.tools ?? []).toEqual([]);
+    expect(bodies[4]!.tools).toEqual(bodies[3]!.tools);
+    expect(bodies[4]!.tool_choice).toBe("none");
+    expect(bodies.slice(0, 4).some((body) => "tool_choice" in body)).toBe(false);
     expect(JSON.stringify(bodies[4]!.messages.at(-1))).toContain("last model request of this turn");
     expect(done(events)).toMatchObject({ ok: true, stopReason: "request_budget" });
     expect(events.some((event) => event.type === "runtime.error")).toBe(false);
@@ -82,7 +84,8 @@ describe("per-turn request budget (engine.maxTurnRequests)", () => {
     const { bodies, events } = await runTurn("budget-retry", { "a.log": "one line" }, { maxTurnRequests: 3 },
       (n) => (n === 1 ? new Response("upstream down", { status: 503 }) : undefined));
     expect(bodies).toHaveLength(3);
-    expect(bodies[2]!.tools ?? []).toEqual([]);
+    expect(bodies[2]!.tools?.length).toBeGreaterThan(0);
+    expect(bodies[2]!.tool_choice).toBe("none");
     expect(done(events)).toMatchObject({ ok: true, stopReason: "request_budget" });
   });
 

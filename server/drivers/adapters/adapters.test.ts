@@ -160,3 +160,26 @@ describe("OpenAI Responses adapter", () => {
     expect(await failure(createOpenAIResponsesAdapter({ url: "https://oa.test/v1", apiKey: "k" }))).toBeInstanceOf(RequestTooLargeError);
   });
 });
+
+describe("final request under a request budget (toolChoice none)", () => {
+  const sent = async (adapter: ModelAdapter, toolChoice?: "none") => {
+    const calls = stub(() => err(400, { error: { message: "fixture" } }));
+    await adapter.complete({ model: "m", messages: history, tools: [tool], stream: true, ...(toolChoice ? { toolChoice } : {}) }).catch(() => {});
+    return calls[0]!.body;
+  };
+  const adapters: Array<[string, () => ModelAdapter, unknown]> = [
+    ["Anthropic", () => createAnthropicAdapter({ url: "https://a.invalid/v1", apiKey: "k" }), { tool_choice: { type: "none" } }],
+    ["OpenAI Responses", () => createOpenAIResponsesAdapter({ url: "https://o.invalid/v1", apiKey: "k" }), { tool_choice: "none" }],
+    ["Gemini", () => createGeminiAdapter({ url: "https://g.invalid/v1beta", apiKey: "k" }), { toolConfig: { functionCallingConfig: { mode: "NONE" } } }],
+  ];
+  for (const [name, make, wire] of adapters) {
+    it(`${name}: keeps the tools and forbids calling them, and sends no choice otherwise`, async () => {
+      const final = await sent(make(), "none");
+      expect(final.tools).toEqual((await sent(make())).tools);
+      expect(final.tools).toBeDefined();
+      expect(final).toMatchObject(wire as Record<string, unknown>);
+      const usual = await sent(make());
+      for (const key of Object.keys(wire as object)) expect(usual).not.toHaveProperty(key);
+    });
+  }
+});

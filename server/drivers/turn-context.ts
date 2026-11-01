@@ -19,7 +19,7 @@ export interface TurnContextSettings {
   summaryModel?: string;
   /** Most recent assistant exchanges kept verbatim. */
   keepExchanges?: number;
-  /** Provider requests one turn may make (2..64); the last goes without tools. Absent keeps the 64-step cap. */
+  /** Provider requests one turn may make (2..64); the last may not call tools. Absent keeps the 64-step cap. */
   maxTurnRequests?: number;
 }
 

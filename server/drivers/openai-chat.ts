@@ -168,7 +168,7 @@ const MAX_ANNOUNCEMENT_NUDGES = 3;
 const stoppedAfter = (count: string) =>
   `Stopped after ${count} without a final answer. The steps so far already ran, so ask only for what's left.`;
 const requestBudgetNote = (left: number) => left > 1
-  ? `[RootClaw] ${left} model requests are left in this turn; the last one has no tools. Finish the essential steps now.`
+  ? `[RootClaw] ${left} model requests are left in this turn; the last one cannot call tools. Finish the essential steps now.`
   : "[RootClaw] This is the last model request of this turn and tools are off. Answer now from what you have and say plainly what is still undone.";
 const requestBudgetStopped = (cap: number) =>
   `Stopped at this turn's limit of ${cap} model requests. The steps so far already ran, so ask only for what's left.`;
@@ -388,6 +388,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     tools: ChatToolDefinition[] = [],
     onUsage?: TextGenerationOptions["onUsage"],
     maxTokens?: number,
+    toolChoice?: "none",
   ): Promise<Completion> => {
     const timeoutController = new AbortController();
     let idleTimer: NodeJS.Timeout | null = null;
@@ -408,7 +409,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
 
       const payload = JSON.stringify({
         ...options.requestBody(model, messages, stream),
-        ...(tools.length ? { tools } : {}),
+        ...(tools.length ? { tools, ...(toolChoice ? { tool_choice: toolChoice } : {}) } : {}),
         // OpenAI's reasoning families only take max_completion_tokens; everything else the classic field.
         ...(maxTokens ? (/^(o\d|gpt-5|gpt-6)/i.test(model.split("/").pop() ?? "") ? { max_completion_tokens: maxTokens } : { max_tokens: maxTokens }) : {}),
       });
@@ -576,7 +577,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
 
   const adapter: ModelAdapter = options.adapter ?? {
     protocol: "openai-chat",
-    complete: (request) => complete(request.messages, request.model, request.stream, request.signal, request.onDelta, request.tools, request.onUsage, request.maxTokens),
+    complete: (request) => complete(request.messages, request.model, request.stream, request.signal, request.onDelta, request.tools, request.onUsage, request.maxTokens, request.toolChoice),
   };
 
   const seesImages = (turn: SendTurnInput) =>
@@ -945,7 +946,6 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
               const late = turnEntry.asides.splice(0);
               if (late.length) { unread.push(...late); messages.push({ role: "user", content: late.join("\n\n") }); }
             }
-            const offered = finalRequest ? [] : tools.definitions;
             let sentTotal = 0;
             let streamed = false;
             let answerStreamed = false;
@@ -965,7 +965,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
               const visible = safeText(hold ? combined.slice(0, -hold) : combined);
               if (visible) emit({ ...base(turn.threadId, turnId), type: "content.delta", streamKind, delta: visible });
             };
-            const sentRaw = estimateRequestTokens(messages, offered, model);
+            const sentRaw = estimateRequestTokens(messages, tools.definitions, model);
             tookRaw = sentRaw;
             const maxTokens = outputTokensFor(window, calibration.apply(sentRaw));
             if (maxTokens !== undefined && maxTokens < minOutputTokens(window)) {
@@ -975,7 +975,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             sentTotal = calibration.provider(sentRaw) + (maxTokens ?? 0);
             try {
               requests++;
-              completion = await adapter.complete({ messages, model, stream: true, signal: abort.signal, tools: offered, ...(maxTokens ? { maxTokens } : {}), onDelta: (text, streamKind) => {
+              completion = await adapter.complete({ messages, model, stream: true, signal: abort.signal, tools: tools.definitions, ...(finalRequest ? { toolChoice: "none" as const } : {}), ...(maxTokens ? { maxTokens } : {}), onDelta: (text, streamKind) => {
                 streamed = true;
                 produced = true;
                 if (streamKind === "assistant_text") answerStreamed = true;
@@ -1106,7 +1106,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             ok = true;
             break;
           }
-          // The last request had no tools: its reply ends the turn (a failed tool still ends it as tool_error below).
+          // The last request could not call tools: its reply ends the turn (a failed tool still ends it as tool_error below).
           if (finalRequest && (completion.toolCalls.length || !toolFailed)) {
             console.info(`${options.driverKind}: [context] request budget reached (${ctx.maxTurnRequests} requests)`);
             stopReason = "request_budget";
