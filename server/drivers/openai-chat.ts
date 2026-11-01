@@ -73,6 +73,8 @@ interface RuntimeOptions<Config> {
   adapter?: ModelAdapter;
   driverKind: string;
   apiKey: string;
+  /** Sees a key refused with 401/403; true resends that request once, with the key apiKey now gives. */
+  onRefusedKey?(key: string, status: number): boolean;
   apiUrl: string;
   models: () => ModelCatalog;
   requestBody(model: string, messages: OpenAIChatMessage[], stream: boolean): Record<string, unknown>;
@@ -209,6 +211,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
   };
 
   let parallelToolCalls = true;
+  const sentKeys = new Set<string>();
   const complete = async (
     messages: OpenAIChatMessage[],
     model: string,
@@ -243,16 +246,21 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         ...(pastLimit ? { headersTimeout: 0, bodyTimeout: 0 } : {}),
         onStale: () => console.warn(`${options.driverKind}: ${model} stale keep-alive socket; resending once on a fresh connection`),
       });
+      const key = options.apiKey;
+      if (key) sentKeys.add(key);
       const response = await send(`${options.apiUrl}/chat/completions`, {
         method: "POST",
         ...(messages.some(message => Array.isArray(message.content) && message.content.some(part => part.type === "image_url")) ? { redirect: "error" as const } : {}),
-        headers: { authorization: `Bearer ${options.apiKey}`, "content-type": "application/json" },
+        headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
         body: payload,
         signal: activeSignal,
       });
       if (!response.ok) {
         const body = await response.text().catch(() => "");
-        if (rejectsKey(response.status, body)) noteKeyRejected(options.apiUrl, options.apiKey);
+        if (rejectsKey(response.status, body)) noteKeyRejected(options.apiUrl, key);
+        if ((response.status === 401 || response.status === 403) && options.onRefusedKey?.(key, response.status)) {
+          return complete(messages, model, stream, signal, onDelta, tools, onUsage, maxTokens, toolChoice);
+        }
         const message = `${options.httpErrorLabel} HTTP ${response.status}${body ? `: ${httpErrorDetail(body)}` : ""}`;
         if (parallel && rejectsParallelToolCalls(response.status, body)) refusedParallelToolCalls(options.driverKind, model, message, () => { parallelToolCalls = false; });
         if (refusesRequestSize(response.status, body) || refusesContextLength(response.status, body)) throw new RequestTooLargeError(message, Buffer.byteLength(payload));
@@ -264,7 +272,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         }
         throw new HttpStatusError(message, response.status, parseRetryAfter(response.headers.get("retry-after")));
       }
-      noteKeyAccepted(options.apiUrl, options.apiKey);
+      noteKeyAccepted(options.apiUrl, key);
 
       if (!stream || response.headers.get("content-type")?.includes("application/json")) {
         const json = await response.json() as CompletionJson;
@@ -464,7 +472,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     }
     const safeText = (text: string) => {
       let safe = text;
-      for (const secret of secrets) if (secret) safe = safe.split(secret).join("[redacted]");
+      for (const secret of [...secrets, ...sentKeys]) if (secret) safe = safe.split(secret).join("[redacted]");
       return redactSecretsInText(safe);
     };
     const preview = (value: unknown) => toolDetailPreview(JSON.parse(JSON.stringify(value, (_key, part) =>
@@ -779,10 +787,10 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             const delta = (text: string, streamKind: keyof typeof pending, flush = false) => {
               let combined = pending[streamKind] + text;
               // Mask whole matches before holding a suffix, or "abab" could split at its own repeated prefix.
-              for (const secret of secrets) if (secret) combined = combined.split(secret).join("[redacted]");
+              for (const secret of [...secrets, ...sentKeys]) if (secret) combined = combined.split(secret).join("[redacted]");
               let hold = 0;
               // A configured credential can straddle chunks: hold any suffix that could be its prefix.
-              if (!flush) for (const secret of secrets) {
+              if (!flush) for (const secret of [...secrets, ...sentKeys]) {
                 for (let length = Math.min(secret.length - 1, combined.length); length > hold; length--) {
                   if (combined.endsWith(secret.slice(0, length))) { hold = length; break; }
                 }

@@ -12,7 +12,7 @@ export type NestedKeyName = "ttsKey" | "fishAudioKey" | "jevApiKey" | "openroute
 export interface ConfigStatus {
   /** The workspace's banner picture (GET /api/workspace/banner), by a version that changes with it; null without one. */
   workspaceBanner?: import("@/lib/place-banner").BannerSummary | null;
-  xai?: SavedKey;
+  xai?: SavedKey & { subscription?: { signedIn: boolean; reconnect: boolean } };
   mistral?: SavedKey;
   cerebras?: SavedKey;
   groq?: SavedKey;

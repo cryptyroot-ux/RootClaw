@@ -1,11 +1,13 @@
 // The API driver rides fetch, so the fake is a stubbed globalThis.fetch scripting HTTP failures and SSE bodies.
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ensureDirs, NATIVE_DIR } from "../config.ts";
 import type { ProviderInstance } from "../contracts.ts";
+import { disconnectGrok, grokStoreFile, grokSubscriptionStatus } from "../grok-subscription.ts";
+import { forgetKey } from "../key-rejections.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { GrokDriver } from "./grok.ts";
 
@@ -250,5 +252,136 @@ describe("GrokDriver server key", () => {
     await turn({});
     await turn({ url: "https://proxy.example.invalid/v1" }, { XAI_API_KEY: "xai-workspace" });
     expect(authorizations).toEqual(["Bearer xai-server-secret", "Bearer xai-workspace"]);
+  });
+});
+
+describe("GrokDriver SuperGrok sign-in", () => {
+  let previousFetch: typeof globalThis.fetch;
+  let sent: Headers[] = [];
+  let tokenCalls: Record<string, string>[] = [];
+  let chat: (authorization: string) => Response = () => sseResponse(SSE_BODY("ok"));
+  let renewal: () => Response = () => Response.json({ access_token: "supergrok-token-b", refresh_token: "refresh-b", expires_in: 10_800 });
+  const authorizations = () => sent.map((headers) => headers.get("authorization") ?? "");
+  const signIn = (token: string, expiresInMs: number, refreshToken: string | null = null) => writeFileSync(grokStoreFile(), JSON.stringify({
+    access_token: token, refresh_token: refreshToken, expires_at: new Date(Date.now() + expiresInMs).toISOString(),
+  }), { mode: 0o600 });
+  const storedRefresh = () => (JSON.parse(readFileSync(grokStoreFile(), "utf8")) as { refresh_token?: string }).refresh_token;
+  beforeEach(() => {
+    ensureDirs();
+    previousFetch = globalThis.fetch;
+    sent = [];
+    tokenCalls = [];
+    chat = () => sseResponse(SSE_BODY("ok"));
+    renewal = () => Response.json({ access_token: "supergrok-token-b", refresh_token: "refresh-b", expires_in: 10_800 });
+    globalThis.fetch = (async (url, init) => {
+      if (String(url) === "https://auth.x.ai/oauth2/token") {
+        tokenCalls.push(Object.fromEntries(new URLSearchParams(String(init?.body))));
+        return renewal();
+      }
+      const headers = new Headers(init?.headers);
+      sent.push(headers);
+      return chat(headers.get("authorization") ?? "");
+    }) as typeof fetch;
+  });
+  afterEach(() => {
+    globalThis.fetch = previousFetch;
+    disconnectGrok();
+    for (const key of ["supergrok-token-a", "supergrok-token-b", "xai-fallback"]) forgetKey(key);
+  });
+  const turn = async (config: Record<string, unknown> = {}, environment: Record<string, string> = { XAI_API_KEY: "xai-fallback" }) => {
+    const threadId = `t-sub-${Math.random()}`;
+    const instance = await GrokDriver.create({ instanceId: "grok-sub", displayName: "Grok Sub", environment, enabled: true, config: GrokDriver.decodeConfig(config) });
+    const recorder = recordEvents(instance.adapter);
+    await instance.adapter.sendTurn({ threadId, text: "hi" });
+    await recorder.until((event) => event.type === "turn.completed");
+    recorder.stop();
+    await instance.dispose();
+    return threadId;
+  };
+  const refusing = (status: number, body: string) => (authorization: string) =>
+    authorization === "Bearer supergrok-token-a" ? new Response(body, { status }) : sseResponse(SSE_BODY("ok"));
+
+  it("sends RootClaw's stored sign-in as a bare Bearer to xAI, with no Grok CLI headers and no token in the log", async () => {
+    signIn("supergrok-token-a", 3 * 3_600_000);
+    const threadId = await turn();
+    expect(authorizations()).toEqual(["Bearer supergrok-token-a"]);
+    for (const headers of sent) {
+      expect(headers.has("x-xai-token-auth")).toBe(false);
+      expect([...headers.values()].join(" ")).not.toContain("xai-grok-cli");
+    }
+    expect(readFileSync(join(NATIVE_DIR, `${threadId}.ndjson`), "utf8")).not.toContain("supergrok-token-a");
+  });
+
+  it("a 401 on the sign-in renews it once and stays signed in: refresh token kept, no reconnect, the new token next", async () => {
+    signIn("supergrok-token-a", 3 * 3_600_000, "refresh-a");
+    chat = refusing(401, JSON.stringify({ error: "unauthorized" }));
+    await turn();
+    await vi.waitFor(() => expect(storedRefresh()).toBe("refresh-b"));
+    await turn();
+    expect(authorizations()).toEqual(["Bearer supergrok-token-a", "Bearer xai-fallback", "Bearer supergrok-token-b"]);
+    expect(tokenCalls).toEqual([expect.objectContaining({ grant_type: "refresh_token", refresh_token: "refresh-a" })]);
+    expect(grokSubscriptionStatus()).toEqual({ signedIn: true, reconnect: false });
+  });
+
+  it("a 401 whose renewal gets invalid_grant asks to reconnect and uses the API key", async () => {
+    signIn("supergrok-token-a", 3 * 3_600_000, "refresh-a");
+    chat = refusing(401, JSON.stringify({ error: "unauthorized" }));
+    renewal = () => Response.json({ error: "invalid_grant" }, { status: 400 });
+    await turn();
+    await vi.waitFor(() => expect(grokSubscriptionStatus()).toEqual({ signedIn: false, reconnect: true }));
+    await turn();
+    expect(authorizations()).toEqual(["Bearer supergrok-token-a", "Bearer xai-fallback", "Bearer xai-fallback"]);
+    expect(tokenCalls).toHaveLength(1);
+  });
+
+  it("a 403 on the sign-in (one model off the tier) resends only that request with the API key; the next turn tries the sign-in again", async () => {
+    signIn("supergrok-token-a", 3 * 3_600_000, "refresh-a");
+    chat = refusing(403, JSON.stringify({ error: "This model requires a SuperGrok subscription" }));
+    await turn();
+    await turn();
+    expect(authorizations()).toEqual(["Bearer supergrok-token-a", "Bearer xai-fallback", "Bearer supergrok-token-a", "Bearer xai-fallback"]);
+    expect(tokenCalls).toEqual([]);
+    expect(storedRefresh()).toBe("refresh-a");
+    expect(grokSubscriptionStatus()).toEqual({ signedIn: true, reconnect: false });
+  });
+
+  it("a 403 on the sign-in sends exactly two requests: the sign-in, then the API key once", async () => {
+    signIn("supergrok-token-a", 3 * 3_600_000, "refresh-a");
+    chat = () => new Response(JSON.stringify({ error: "forbidden" }), { status: 403 });
+    await turn();
+    expect(authorizations()).toEqual(["Bearer supergrok-token-a", "Bearer xai-fallback"]);
+  });
+
+  it("a 403 on the sign-in with no API key fails that turn only; the next turn still sends the sign-in", async () => {
+    const serverKey = process.env.XAI_API_KEY;
+    delete process.env.XAI_API_KEY;
+    signIn("supergrok-token-a", 3 * 3_600_000, "refresh-a");
+    chat = refusing(403, JSON.stringify({ error: "This model requires a SuperGrok subscription" }));
+    try {
+      await turn({}, {});
+      chat = () => sseResponse(SSE_BODY("ok"));
+      await turn({}, {});
+    } finally {
+      if (serverKey !== undefined) process.env.XAI_API_KEY = serverKey;
+    }
+    expect(authorizations()).toEqual(["Bearer supergrok-token-a", "Bearer supergrok-token-a"]);
+    expect(tokenCalls).toEqual([]);
+    expect(storedRefresh()).toBe("refresh-a");
+    expect(grokSubscriptionStatus()).toEqual({ signedIn: true, reconnect: false });
+  });
+
+  it("an API key refused with 403 still fails the turn once, with no retry and no sign-in involved", async () => {
+    chat = () => new Response(JSON.stringify({ error: "This model requires a higher tier" }), { status: 403 });
+    await turn();
+    expect(authorizations()).toEqual(["Bearer xai-fallback"]);
+    expect(tokenCalls).toEqual([]);
+  });
+
+  it("falls back to the key for an expired sign-in it cannot renew, and never sends the sign-in elsewhere", async () => {
+    signIn("supergrok-token-old", -60_000);
+    await turn();
+    signIn("supergrok-token-b", 3 * 3_600_000);
+    await turn({ url: "https://proxy.example.invalid/v1" });
+    expect(authorizations()).toEqual(["Bearer xai-fallback", "Bearer xai-fallback"]);
   });
 });
