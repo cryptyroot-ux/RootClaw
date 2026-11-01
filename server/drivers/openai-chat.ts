@@ -37,7 +37,7 @@ import { compactTurnMessages, DEFAULT_KEEP_EXCHANGES, estimateRequestTokens, off
 import { contextWindowFor, learnContextWindow, noteAcceptedRequest, windowBelowRefusal } from "../context-budget.ts";
 import { fingerprint, replayDelivered, type DeliveredUserMessage } from "./delivered-replay.ts";
 import { deferTools, lazyToolsEnabled, LOAD_TOOLS_TOOL, loadToolsResult } from "./tool-loading.ts";
-import { TOOL_LOOP_NOTE, TOOL_LOOP_NOTICE, ToolLoopGuard } from "./tool-loop-guard.ts";
+import { chatCompletionRequest, refusedParallelToolCalls, rejectsParallelToolCalls, reuseOrRun, TOOL_LOOP_NOTE, TOOL_LOOP_NOTICE, ToolLoopGuard, UnsupportedParallelToolCallsError } from "./openai-chat-orchestration.ts";
 import { executeWorkspaceTool, skillReadRoots, validateWorkspaceArgs, WORKSPACE_TOOL_DEFINITIONS, WORKSPACE_TOOLS_PROMPT, workspaceToolReadOnly, workspaceToolView, shellCommandScope, SHELL_TOOL, stopBackgroundJobs, type WorkspaceToolsConfig } from "./workspace-tools.ts";
 import { runToolBatch } from "./tool-batch.ts";
 import { requestTooLargeMessage } from "../../shared/request-too-large.ts";
@@ -147,13 +147,6 @@ export function announcesAction(text: string): boolean {
 const TEXT_ONLY_ATTACHMENT_NOTE = "[The person attached image(s), but this model cannot see images. Say so if the request depends on them.]";
 const TEXT_ONLY_SCREENSHOT_NOTE = "[Screenshot not shown: this model cannot see images. Read the page with a snapshot or a text tool instead.]";
 
-class UnsupportedParallelToolCallsError extends Error {}
-
-/** `parallel_tool_calls` is optional in Chat Completions; a provider that does not know it may refuse the request over it. */
-function rejectsParallelToolCalls(status: number, body: string): boolean {
-  return (status === 400 || status === 422) && /\bparallel_tool_calls\b/.test(body);
-}
-
 const envNumber = (name: string) => {
   const value = Number(process.env[name]);
   return Number.isFinite(value) && value > 0 ? value : undefined;
@@ -254,15 +247,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         ? AbortSignal.any([signal, timeoutController.signal])
         : timeoutController.signal;
 
-      const request: Record<string, unknown> = {
-        ...options.requestBody(model, messages, stream),
-        ...(tools.length ? { tools, ...(toolChoice ? { tool_choice: toolChoice } : {}) } : {}),
-        // OpenAI's reasoning families only take max_completion_tokens; everything else the classic field.
-        ...(maxTokens ? (/^(o\d|gpt-5|gpt-6)/i.test(model.split("/").pop() ?? "") ? { max_completion_tokens: maxTokens } : { max_tokens: maxTokens }) : {}),
-      };
-      const parallel = parallelToolCalls && tools.length > 0 && request.tool_choice !== "none";
-      if (parallel) request.parallel_tool_calls = true;
-      const payload = JSON.stringify(request);
+      const { payload, parallel } = chatCompletionRequest(options.requestBody(model, messages, stream), { tools, toolChoice, maxTokens, model, allowParallel: parallelToolCalls });
       const pastLimit = options.timeoutMs > FETCH_LIMIT_MS;
       const send = (url: string, init: RequestInit) => fetchFresh(url, init, pastLimit ? fetchPastLimit : fetch, {
         ...(pastLimit ? { headersTimeout: 0, bodyTimeout: 0 } : {}),
@@ -279,11 +264,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         const body = await response.text().catch(() => "");
         if (rejectsKey(response.status, body)) noteKeyRejected(options.apiUrl, options.apiKey);
         const message = `${options.httpErrorLabel} HTTP ${response.status}${body ? `: ${httpErrorDetail(body)}` : ""}`;
-        if (parallel && rejectsParallelToolCalls(response.status, body)) {
-          parallelToolCalls = false;
-          console.warn(`${options.driverKind}: ${model} refused parallel_tool_calls; resending without it from now on`);
-          throw new UnsupportedParallelToolCallsError(message);
-        }
+        if (parallel && rejectsParallelToolCalls(response.status, body)) refusedParallelToolCalls(options.driverKind, model, message, () => { parallelToolCalls = false; });
         if (refusesRequestSize(response.status, body) || refusesContextLength(response.status, body)) throw new RequestTooLargeError(message, Buffer.byteLength(payload));
         if (rejectsToolsParameter(response.status, body)) throw new UnsupportedChatToolsError(message);
         const refusal = refusedToolCall(response.status, body);
@@ -1228,13 +1209,10 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           // Read-only calls run concurrently (bounded); mutating ones one at a time, in order. Results reach the model in call order.
           await runToolBatch(completion.toolCalls, {
             readOnly: (call) => readOnlyTool(call.function.name),
-            run: async (call) => {
-              const reused = loopGuard.reuse(call, readOnlyTool(call.function.name));
-              if (!reused) return runCall(call);
+            run: (call) => reuseOrRun(loopGuard, call, readOnlyTool(call.function.name), runCall, (parsed) => {
               emit({ ...base(turn.threadId, turnId), type: "item.started", itemType: "tool", itemId: call.id, title: call.function.name });
-              emit({ ...base(turn.threadId, turnId), type: "item.completed", itemType: "tool", itemId: call.id, ok: true, output: preview(JSON.parse(reused)) });
-              return { call, result: { ok: true, text: "" }, content: reused, fatal: undefined };
-            },
+              emit({ ...base(turn.threadId, turnId), type: "item.completed", itemType: "tool", itemId: call.id, ok: true, output: preview(parsed) });
+            }),
             signal: abort.signal,
             commit: ({ call, result, content, fatal }) => {
               // A failed read changed nothing, so it cannot make the answer a false receipt (a probe such as git_status

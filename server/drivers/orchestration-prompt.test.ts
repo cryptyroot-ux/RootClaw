@@ -37,7 +37,8 @@ describe("workspace tool prompt", () => {
   });
 
   it("leaves the eval task texts and the harness system prompt unchanged", () => {
-    const tasks = readFileSync(new URL("../../evals/engine-tasks/tasks.ts", import.meta.url));
+    // Git on Windows checks the file out with CRLF; the pin is the LF text in the repo.
+    const tasks = readFileSync(new URL("../../evals/engine-tasks/tasks.ts", import.meta.url), "utf8").replaceAll("\r\n", "\n");
     expect(createHash("sha256").update(tasks).digest("hex")).toBe("d49d96dc1266243e02143023e4fd9a14f647dbe0f8d009fc851980ca46ec352a");
     expect(readFileSync(new URL("../../evals/engine-tasks/run-engine-tasks.ts", import.meta.url), "utf8"))
       .toContain("system: `You are a careful software engineer working in the given folder with workspace tools. Verify your work before answering.${extras.system}`,");
