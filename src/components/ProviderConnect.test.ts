@@ -2,7 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { StoreProvider } from "@/state/store";
+import { initialState, StoreContext, StoreProvider, type AppState } from "@/state/store";
 import { PROVIDER_KEYS, ProviderConnect, startOAuth } from "./ProviderConnect";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -14,9 +14,26 @@ describe("ProviderConnect", () => {
     const markup = renderToStaticMarkup(createElement(StoreProvider, null, createElement(ProviderConnect)));
     expect(markup).toContain('data-provider-connect');
     expect(markup).toContain('data-oauth="openrouter"');
-    expect(markup).toContain('data-oauth="google"');
+    expect(markup).not.toContain('data-oauth="google"');
     for (const id of PROVIDER_KEYS) expect(markup).toContain(`data-provider-key="${id}"`);
     expect(markup).not.toMatch(/Claude Pro|ChatGPT plan|Codex/);
+  });
+
+  const withConfig = (config: AppState["config"]) => {
+    vi.stubGlobal("window", { ogb: { platform: "linux" } });
+    const value = { state: { ...initialState, config } as AppState, dispatch: vi.fn(), refreshInstances: vi.fn() } as never;
+    return renderToStaticMarkup(createElement(StoreContext.Provider, { value }, createElement(ProviderConnect)));
+  };
+
+  it("hides Google sign-in until the person's own OAuth client is set, then offers it enabled", () => {
+    const none = withConfig({ gemini: { oauth: { client: false, signedIn: false } } } as AppState["config"]);
+    expect(none).not.toContain('data-oauth="google"');
+    expect(none).not.toMatch(/OAuth client id|Sign in with Google/);
+    expect(none).toContain('data-oauth="openrouter"');
+    const ready = withConfig({ gemini: { oauth: { client: true, signedIn: false } } } as AppState["config"]);
+    expect(ready).toMatch(/<button type="button" data-oauth="google" class="[^"]*">.*Sign in with Google \(Gemini\)<\/button>/);
+    const signedIn = withConfig({ gemini: { oauth: { client: true, signedIn: true } } } as AppState["config"]);
+    expect(signedIn).toContain("Signed in with Google");
   });
 
   it("starts a sign-in through the server and opens the provider's page", async () => {

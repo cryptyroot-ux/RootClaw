@@ -8,7 +8,7 @@ describe("API providers in the fleet", () => {
     expect(fleet.anthropicApi).toMatchObject({ driver: "anthropic", access: "api" });
     expect(fleet.geminiApi).toMatchObject({ driver: "gemini", access: "api" });
     expect(fleet.openaiResponses).toMatchObject({ driver: "openai-responses", access: "api" });
-    expect(fleet.ollamaCloud).toMatchObject({ driver: "ollama", access: "api" });
+    expect(fleet.ollamaCloud).toMatchObject({ driver: "ollama", access: "api", icon: { kind: "preset", preset: "ollama" } });
   });
 
   it("hands each saved key only to its own provider's driver", () => {

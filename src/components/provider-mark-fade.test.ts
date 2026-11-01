@@ -54,3 +54,19 @@ describe("the faded provider mark", () => {
     expect(html).not.toContain("data-provider-mark");
   });
 });
+
+describe("the Ollama mark", () => {
+  it("draws the llama in ink for the ollama engine and preset, never the letter fallback", () => {
+    for (const html of [
+      renderToStaticMarkup(createElement(ProviderMark, { driverKind: "ollama", size: 14 })),
+      renderToStaticMarkup(createElement(PresetProviderMark, { preset: "ollama", size: 14 })),
+      renderToStaticMarkup(createElement(InstanceProviderMark, { instance: { driverKind: "ollama" }, size: 14 })),
+    ]) {
+      expect(html).toMatch(/^<svg width="14" height="14" viewBox="0 0 24 24" class="fill-\[var\(--color-ink\)\]"/);
+      expect(html).toContain('fill-rule="evenodd"');
+      expect(coloured(html)).toBe(false);
+    }
+    expect(providerMarkTone({ driverKind: "ollama" })).toBe("mono");
+    expect(providerMarkTone({ driverKind: "ollama", icon: { kind: "preset", preset: "ollama" } })).toBe("mono");
+  });
+});
