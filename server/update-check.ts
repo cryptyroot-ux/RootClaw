@@ -8,13 +8,24 @@ const CACHE_MS = 60 * 60_000;
 /** "managed" is a hosted or Cloud server that is updated for its owner. */
 export type InstallKind = "desktop" | "managed" | "docker" | "podman" | "npm" | "git" | "unknown";
 
-/** As docs/self-hosting.md and deploy/podman/README.md give them. */
+/** A clone is updated in place: pull, then rebuild the web app and the server it serves. */
+export const CLONE_UPGRADE = "git pull && pnpm install && pnpm build && pnpm build:server";
+
+/** The rootclaw npm package is private and unpublished, so an install that is not a clone has nothing to update from. */
+export const NOT_A_CLONE = `This RootClaw install is not a git clone, so it cannot update itself: the rootclaw npm package is not published. Clone https://github.com/cryptyroot-ux/RootClaw, build it (pnpm install && pnpm build && pnpm build:server) and run it from there; later updates are \`${CLONE_UPGRADE}\` in that clone.`;
+
+/** As docs/self-hosting.md and deploy/podman/README.md give them. A non-clone install gets NOT_A_CLONE instead of a command. */
 export const UPDATE_COMMANDS: Partial<Record<InstallKind, { command: string; restart: boolean }>> = {
   docker: { command: "docker compose pull rootclaw && docker compose up -d", restart: false },
   podman: { command: "git pull && cd deploy/podman && PODMAN_COMPOSE_PROVIDER=podman-compose podman compose --env-file .env -f compose.yaml up -d --build", restart: false },
-  npm: { command: "npm install -g rootclaw@latest", restart: true },
-  git: { command: "git pull && pnpm install", restart: true },
+  git: { command: CLONE_UPGRADE, restart: true },
 };
+
+/** The git clone a server runs from: the folder above its own (server/ or dist-server/) when that holds .git; null otherwise. */
+export function cloneRoot(serverRoot: string, exists: (path: string) => boolean = existsSync): string | null {
+  const root = join(serverRoot, "..");
+  return exists(join(root, ".git")) ? root : null;
+}
 
 export function installKind(input: {
   desktopManaged: boolean;
@@ -28,7 +39,7 @@ export function installKind(input: {
   if (exists("/.dockerenv")) return "docker";
   if (exists("/run/.containerenv")) return "podman";
   if (input.serverRoot.split(sep).includes("node_modules")) return "npm";
-  if (exists(join(input.serverRoot, "..", ".git"))) return "git";
+  if (cloneRoot(input.serverRoot, exists)) return "git";
   return "unknown";
 }
 
@@ -67,6 +78,8 @@ export interface UpdateCheck {
   releaseUrl?: string;
   command?: string;
   restart?: boolean;
+  /** Why there is no command: this install is not a clone (NOT_A_CLONE). */
+  note?: string;
 }
 
 /** One cached GitHub lookup an hour, shared by every caller. */
@@ -85,6 +98,7 @@ export function createUpdateChecker(options: {
     install: options.install,
     available: false,
     ...UPDATE_COMMANDS[options.install],
+    ...(options.install === "npm" || options.install === "unknown" ? { note: NOT_A_CLONE } : {}),
   });
 
   return async function check(): Promise<UpdateCheck> {

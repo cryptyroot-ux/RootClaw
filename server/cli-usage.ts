@@ -68,7 +68,8 @@ browser install: the bots' browser engine (agent-browser, pinned) into the
 fleet   many client workspaces on one Linux server, each its own account,
         service, data folder, brand, sign-in list and keys at NAME.HOST
         behind the system Caddy. Plans are printed unless run as root;
-        --dry-run always prints. Install the package permanently first.
+        --dry-run always prints. Run it from a built git clone;
+        upgrade does git pull, pnpm install, build and build:server there.
         init --operator USER also installs the fleet agent, a root service
         on a Unix socket only USER may open, so the workspace running as
         USER manages the others from Settings → Installations.

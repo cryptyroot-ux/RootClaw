@@ -138,7 +138,7 @@ export type FleetStep =
   | { kind: "write"; path: string; content: string; mode: number; owner?: string }
   | { kind: "append-once"; path: string; line: string }
   | { kind: "remove"; path: string }
-  | { kind: "run"; argv: string[]; why: string }
+  | { kind: "run"; argv: string[]; why: string; ifFailed?: string }
   | { kind: "health"; url: string; why: string }
   | { kind: "note"; text: string };
 
@@ -475,10 +475,18 @@ export function deletePlan(input: { registry: FleetRegistry; slug: string; keepD
   };
 }
 
-export function upgradePlan(input: { registry: FleetRegistry }): FleetStep[] {
+/** `cloneRoot`: the git clone every workspace runs from (update-check.ts cloneRoot); null when the install is not a clone. */
+export function upgradePlan(input: { registry: FleetRegistry; cloneRoot: string | null }): FleetStep[] {
+  const root = input.cloneRoot;
+  if (!root) throw new Error("fleet upgrade updates the git clone RootClaw runs from, and this install is not a git clone (the rootclaw npm package is not published). Clone https://github.com/cryptyroot-ux/RootClaw, build it with pnpm install && pnpm build && pnpm build:server, run fleet init from that clone, then upgrade from there");
   const running = Object.values(input.registry.workspaces).filter((workspace) => workspace.status === "running").sort((a, b) => a.slug.localeCompare(b.slug));
   return [
-    { kind: "run", argv: ["npm", "install", "-g", "rootclaw@latest"], why: "install the release every workspace runs from" },
+    // executePlan stops at the first failed step, so a refused pull leaves the build and every workspace untouched.
+    { kind: "run", argv: ["git", "-C", root, "pull", "--ff-only"], why: "pull the release every workspace runs from",
+      ifFailed: `git pull --ff-only refused: the clone at ${root} has diverged or has local changes; resolve it by hand there. Nothing was changed: no rebuild, no restart` },
+    { kind: "run", argv: ["pnpm", "--dir", root, "install"], why: "install its dependencies" },
+    { kind: "run", argv: ["pnpm", "--dir", root, "build"], why: "rebuild the web app" },
+    { kind: "run", argv: ["pnpm", "--dir", root, "build:server"], why: "rebuild the server" },
     ...running.map((workspace) => ({ kind: "run" as const, argv: ["systemctl", "restart", `rootclaw@${workspace.slug}.service`], why: `restart ${workspace.slug} on the new release` })),
     ...running.map((workspace) => ({ kind: "health" as const, url: `http://127.0.0.1:${workspace.port}/api/health`, why: `wait for ${workspace.slug}` })),
   ];
