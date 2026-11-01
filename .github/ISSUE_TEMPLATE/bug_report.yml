@@ -36,7 +36,7 @@ body:
     attributes:
       label: Version and install
       description: RootClaw version or commit, how you run it (source build, Docker, desktop build) and your OS
-      placeholder: 0.1.135 (b2d2849) · source build · Ubuntu 24.04
+      placeholder: 0.1.136 (0eefa6e) · source build · Ubuntu 24.04
     validations:
       required: true
   - type: textarea
