@@ -1,6 +1,6 @@
 # Sentinel
 
-Sentinel is an opt-in health scanner for an RootClaw data dir. It reads the
+Sentinel is an opt-in health scanner for a RootClaw data dir. It reads the
 data dir's databases and logs without modifying them, groups failures into
 issues, and writes those issues to its own folder outside the data dir (see
 [Privacy model](#privacy-model)). An `--out` inside the data dir is refused.

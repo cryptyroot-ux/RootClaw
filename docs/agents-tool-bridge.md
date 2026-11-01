@@ -98,7 +98,7 @@ Claude Code is not bridged when any of these holds:
 - A settings file's `permissions.deny` or `permissions.ask` list (keys in any
   case) holds a rule with a wildcard in a tool's name, even one about another
   server (`mcp__github__*`, `*exec*`). Claude Code matches a deny or ask
-  rule's whole tool name as a glob, so such a rule can reach an RootClaw
+  rule's whole tool name as a glob, so such a rule can reach a RootClaw
   tool by pattern when it is called directly and miss the same call made as
   `use_tool`. Allow rules do not glob and are not given this test.
 - The machine's managed policy, or a drop-in beside it, holds

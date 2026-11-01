@@ -44,3 +44,18 @@ before the next turn once the hold has passed. Any other engine instance may be 
   that already arrived still lands. A turn whose daily allowance is already used up is refused at start (HTTP 409,
   `budget_cap`).
 - `monthlyUsd` is the older workspace cap, enforced only with the `budgets` entitlement.
+
+## Per-turn request cap (`config.json` → `engine.maxTurnRequests`)
+
+```json
+{ "engine": { "maxTurnRequests": 24 } }
+```
+
+- A whole number from 2 to 64: the most provider calls one native turn may make. Every call counts: tool rounds,
+  retries, resends, compaction summaries and the verifier. Unset means no cap. Without a saved value,
+  `ROOTCLAW_MAX_TURN_REQUESTS` in the server environment sets it (same range; anything else is ignored).
+- With two requests left the model is told to finish; the last request is sent with tools off
+  (`toolChoice: "none"`) and its reply ends the turn cleanly (`stopReason: "request_budget"`, ok) with the notice
+  "Stopped at this turn's limit of N model requests. The steps so far already ran, so ask only for what's left."
+  It is not an error, so the fallback chain does not take over.
+- This counts requests, not tokens or money; use `budgets` above for those.

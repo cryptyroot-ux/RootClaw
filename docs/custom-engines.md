@@ -50,13 +50,25 @@ entry:
   `model` as a custom option either way.
 - OpenAI-compatible instances support structured tools and image input. With a
   model that accepts both, the harness can mount the approved host, Local VM,
-  VPS, Boat cloud or built-in browser tools and return their screenshots to the model.
+  VPS, Boat (a cloud desktop in your connected boat.dev account) or built-in
+  browser tools and return their screenshots to the model.
   The existing platform, computer-selection and approval checks still apply.
-  Boat turns retain the selected API model in direct chats, rooms and cloud
-  routines, as they do for every engine with computer tools.
+  Turns on a Boat desktop keep the selected API model in direct chats, rooms and
+  cloud routines, as they do for every engine with computer tools.
 - Set `config.tools` to `false` for a model without tool support. Image support
   also depends on the chosen model; the driver cannot add vision to a text-only
   model. See [tool verification](verification/openai-tools.md) for scope and tests.
+
+Other `config` keys (all optional; a wrong type or value makes the instance
+unavailable with the reason):
+
+| Key | Meaning |
+| --- | --- |
+| `key` | The API key itself, instead of naming it with `apiKeyEnv`. |
+| `catalog` | `"openai"`: list OpenAI's own chat models (non-chat models are filtered out, newest first). `"lmstudio"`: for an LM Studio server on this machine, read its native `/api/v1/models` first, then fall back to `/models`. |
+| `managedModels` | A fixed list of model ids (non-empty strings). The first is the default and `/models` is not queried. |
+| `provider` | OpenRouter only: pin routing to this provider (`provider.order` with fallbacks off). `""` turns off a pin inherited from `OPENAI_COMPAT_PROVIDER`. |
+| `replyWaitMinutes` | Whole minutes, 1–60: how long a turn waits for the next piece of a reply before giving up. Unset uses the server default (3 minutes, or `ROOTCLAW_OPENAI_COMPAT_IDLE_TIMEOUT_MS`). |
 
 ## Notes
 

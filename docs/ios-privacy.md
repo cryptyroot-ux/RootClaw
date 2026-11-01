@@ -1,7 +1,7 @@
 # RootClawMobile privacy
 
-RootClawMobile is a companion for an RootClaw service chosen and operated
-by the user. Local Wi-Fi and Tailscale connections work without an RootClaw
+RootClawMobile is a companion for a RootClaw service chosen and operated
+by the user. Local Wi-Fi and Tailscale connections work without a RootClaw
 account. A user may separately sign in on the desktop to enable the optional
 **Use your phone anywhere** HTTPS connection.
 
@@ -74,7 +74,7 @@ account. A user may separately sign in on the desktop to enable the optional
   In-chat selections remain in memory until the message succeeds or the draft
   is discarded. Temporary Share-extension copies are removed after a completed
   send or cancellation. If iOS terminates the extension mid-transfer, the next
-  Share sheet session removes the abandoned copy immediately; an RootClawMobile
+  Share sheet session removes the abandoned copy immediately; a RootClawMobile
   foreground launch removes it once it is at least 60 minutes old.
 - Opening a file link sent by a bot requests that exact file from the paired
   computer over the selected authenticated companion connection. The app keeps
