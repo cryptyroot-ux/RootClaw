@@ -174,6 +174,8 @@ export async function withBotBrowser<T>(options: BotBrowserOptions, work: (call:
   const launcher = new ChromeLauncher({ dataDir: join(scratch, "data"), env: { ...process.env, HOME: home, USERPROFILE: home, ROOTCLAW_CHROME_PATH: options.chrome }, log });
   // Where the launcher adds nothing (ROOTCLAW_BROWSER_LEGACY_SHELL=1, a headless shell), agent-browser would otherwise look for a
   // browser of its own, such as an installed Google Chrome, instead of the one named here.
+  // Windows publishes Chrome's own path only after prepare, because that path is not known before.
+  await launcher.prepare();
   const launcherEnv = launcher.env();
   // Like every bot browser, this one browses through an egress gate; desktop rules let it reach loopback pages.
   const decided = new Set<number>();

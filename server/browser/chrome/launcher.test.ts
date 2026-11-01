@@ -59,6 +59,28 @@ function launcher(machine: ReturnType<typeof mac>, overrides: Partial<Constructo
 const headless = (path: string) => ({ command: "/engine/agent-browser", env: { AGENT_BROWSER_EXECUTABLE_PATH: path, AGENT_BROWSER_HEADLESS: "1" } });
 
 describe("the Chrome launcher", () => {
+  it("gives Windows agent-browser chrome.exe and the identity flags, not a batch file", async () => {
+    const root = mkdtempSync(join(tmpdir(), "rootclaw-launcher-win-"));
+    folders.push(root);
+    const chromeExe = join(root, "chrome.exe");
+    writeFileSync(chromeExe, "");
+    const dataDir = join(root, "data");
+    const env = { USERPROFILE: root, HOME: root, ROOTCLAW_CHROME_PATH: chromeExe };
+    const real = chromeHost({ dataDir, env, platform: "win32", arch: "x64" });
+    const host = { ...real, exists: (path: string) => path === chromeExe || (path.startsWith(root) && existsSync(path)), list: () => [], registryValue: () => null, registryKeyExists: () => false, appForBundleId: () => null };
+    const chrome = new ChromeLauncher({
+      dataDir, env, platform: "win32", arch: "x64", host, engine: () => ({ managed: true }),
+      calibrate: vi.fn(async () => identity("156")), screen: async () => ({ width: 1536, height: 864 }),
+      sidecars: sidecars(), log: () => {}, install: async () => { throw new Error("offline"); }, checkLauncher: async () => {},
+    });
+    await chrome.prepare();
+    const published = chrome.env();
+    expect(published.AGENT_BROWSER_EXECUTABLE_PATH).toBe(chromeExe);
+    expect(published.AGENT_BROWSER_ARGS).toContain(`--user-agent=${identity("156").userAgent}`);
+    expect(published.AGENT_BROWSER_ARGS).toContain("--screen-info={1536x864}");
+    expect(published.AGENT_BROWSER_EXECUTABLE_PATH.endsWith(".cmd")).toBe(false);
+  });
+
   it("gives agent-browser a launcher for the installed Google Chrome, with the identity read from that binary", async () => {
     const machine = mac();
     const calibrate = vi.fn(async () => identity("155"));

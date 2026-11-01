@@ -909,7 +909,7 @@ describe("what a bot gets", () => {
   it("forwards the explicit Chrome path without copying arbitrary environment or overriding session isolation", () => {
     vi.stubEnv("AGENT_BROWSER_EXECUTABLE_PATH", "/process/chrome");
     const spec = agentBrowserIntegration({
-      binaryPath: "/x/agent-browser", session: "bot-1", encryptionKey: "session-key",
+      binaryPath: "/x/agent-browser", session: "bot-1", encryptionKey: "session-key", platform: "linux",
       env: {
         PATH: "/usr/bin", AGENT_BROWSER_EXECUTABLE_PATH: "/opt/trusted chrome/chrome",
         PRIVATE_WORKSPACE_SECRET: "synthetic-secret",
@@ -931,7 +931,7 @@ describe("what a bot gets", () => {
     vi.stubEnv("PATH", "/usr/bin");
     vi.stubEnv("AGENT_BROWSER_EXECUTABLE_PATH", "/opt/process-chrome/chrome");
     vi.stubEnv("PRIVATE_WORKSPACE_SECRET", "synthetic-process-secret");
-    const spec = agentBrowserIntegration({ binaryPath: "/x/agent-browser", session: "bot-1", encryptionKey: "session-key" });
+    const spec = agentBrowserIntegration({ binaryPath: "/x/agent-browser", session: "bot-1", encryptionKey: "session-key", platform: "linux" });
     expect(spec.env).toEqual({
       AGENT_BROWSER_SESSION: "bot-1", AGENT_BROWSER_NO_WEBMCP: "1", AGENT_BROWSER_RESTORE: browserRestoreKey("bot-1"),
       AGENT_BROWSER_RESTORE_SAVE: "auto", AGENT_BROWSER_ENCRYPTION_KEY: "session-key",
@@ -969,12 +969,12 @@ describe("what a bot gets", () => {
     expect(spec.args).toEqual(["mcp", "--tools", "core", "--no-webmcp"]);
     expect(spec.env).toMatchObject({ AGENT_BROWSER_SESSION: "work", AGENT_BROWSER_AUTO_CONNECT: "1", AGENT_BROWSER_RESTORE_SAVE: "never", AGENT_BROWSER_NO_WEBMCP: "1" });
     for (const name of ["AGENT_BROWSER_RESTORE", "AGENT_BROWSER_CDP", "AGENT_BROWSER_HEADLESS", "AGENT_BROWSER_HEADED"]) expect(spec.env).not.toHaveProperty(name);
-    expect(agentBrowserIntegration({ binaryPath: "/x/agent-browser", session: "work", encryptionKey: "session-key", env: { PATH: "/usr/bin" } }).env)
+    expect(agentBrowserIntegration({ binaryPath: "/x/agent-browser", session: "work", encryptionKey: "session-key", platform: "linux", env: { PATH: "/usr/bin" } }).env)
       .toMatchObject({ AGENT_BROWSER_RESTORE: browserRestoreKey("work"), AGENT_BROWSER_RESTORE_SAVE: "auto", AGENT_BROWSER_HEADLESS: "1" });
   });
 
   it("mounts agent-browser's MCP server with the core tools, an isolated auto-restored session, and WebMCP off", () => {
-    const spec = agentBrowserIntegration({ binaryPath: "/x/agent-browser", session: "bot-1", encryptionKey: "k".repeat(64), env: { PATH: "/usr/bin" } });
+    const spec = agentBrowserIntegration({ binaryPath: "/x/agent-browser", session: "bot-1", encryptionKey: "k".repeat(64), platform: "linux", env: { PATH: "/usr/bin" } });
     expect(spec.command).toBe("/x/agent-browser");
     expect(spec.args).toEqual(["mcp", "--tools", "core", "--no-webmcp"]);
     expect(spec.env).toMatchObject({ AGENT_BROWSER_SESSION: "bot-1", AGENT_BROWSER_RESTORE: browserRestoreKey("bot-1"), AGENT_BROWSER_RESTORE_SAVE: "auto", AGENT_BROWSER_HEADLESS: "1", AGENT_BROWSER_HEADED: "0", PATH: "/usr/bin" });
@@ -989,6 +989,9 @@ describe("what a bot gets", () => {
     expect(agentBrowserIntegration({ ...linux, headless: false, env: { PATH: "/usr/bin", DISPLAY: ":0" } }).env.AGENT_BROWSER_HEADED).toBeUndefined();
     expect(agentBrowserIntegration({ ...linux, headless: false, env: { PATH: "/usr/bin", WAYLAND_DISPLAY: "wayland-0" } }).env.AGENT_BROWSER_HEADED).toBeUndefined();
     expect(agentBrowserIntegration({ ...linux, platform: "darwin", headless: false }).env.AGENT_BROWSER_HEADED).toBeUndefined();
+    expect(agentBrowserIntegration({ binaryPath: "/x", session: "s", encryptionKey: "k", platform: "win32" }).env).toMatchObject({ AGENT_BROWSER_HEADED: "1" });
+    expect(agentBrowserIntegration({ binaryPath: "/x", session: "s", encryptionKey: "k", platform: "win32" }).env.AGENT_BROWSER_HEADLESS).toBeUndefined();
+    expect(agentBrowserIntegration({ binaryPath: "/x", session: "s", encryptionKey: "k", platform: "win32", headless: true }).env).toMatchObject({ AGENT_BROWSER_HEADLESS: "1", AGENT_BROWSER_HEADED: "0" });
   });
 
   it("keeps saved state separate for different bots and never saves guest state", () => {

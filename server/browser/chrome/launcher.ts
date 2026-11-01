@@ -13,7 +13,7 @@ import { needsNoSandbox, type ChromeIdentity } from "./identity.ts";
 import { installChromeForTesting, type ChromeForTestingPin, type DownloadProgress } from "./install.ts";
 import { chromeHost, resolveChromePlan, type ChromeEngine, type ChromeHost, type ChromePlan, type FoundChrome } from "./resolve.ts";
 import { IdentitySidecars } from "./sidecar.ts";
-import { browserLanguage, browserTimeZone, languageList, launcherPath, primaryScreen, writeLauncher, type LauncherBox, type LauncherSettings, type Screen } from "./wrapper.ts";
+import { browserLanguage, browserTimeZone, languageList, launcherFlags, launcherPath, primaryScreen, writeLauncher, type LauncherBox, type LauncherSettings, type Screen } from "./wrapper.ts";
 
 type Ready = { kind: "ready"; chrome: FoundChrome; identity: ChromeIdentity; product: string; fingerprint: string; launcher?: LauncherSettings };
 type State =
@@ -109,11 +109,22 @@ export class ChromeLauncher implements BrowserLaunch {
     return resolveChromePlan(this.host, this.options.engine ? this.options.engine() : this.managedEngine());
   }
 
-  /** What agent-browser's environment gains: nothing while the engine keeps its own browser. */
+  /** What agent-browser's environment gains: nothing while the engine keeps its own browser.
+   * agent-browser 0.41 starts the executable with CreateProcessW, which cannot run a `.cmd`.
+   * On Windows the executable is Chrome itself and the identity flags travel in AGENT_BROWSER_ARGS
+   * (newlines separate flags; commas inside a user agent stay intact). */
   env(): Record<string, string> {
     if (this.state.kind === "failed" || this.plan().kind === "legacy") return {};
     void this.prepare();
     this.followTimeZone();
+    const ready = this.state.kind === "ready" ? this.state : null;
+    if (this.options.platform === "win32" && ready?.launcher) {
+      return {
+        AGENT_BROWSER_EXECUTABLE_PATH: ready.chrome.path,
+        AGENT_BROWSER_ARGS: launcherFlags(ready.launcher, "win32").join("\n"),
+        AGENT_BROWSER_HIDE_SCROLLBARS: "0",
+      };
+    }
     return { AGENT_BROWSER_EXECUTABLE_PATH: this.path, AGENT_BROWSER_HIDE_SCROLLBARS: "0" };
   }
 
@@ -201,7 +212,10 @@ export class ChromeLauncher implements BrowserLaunch {
   }
 
   private uses(spec: LaunchSpec): boolean {
-    return spec.env?.AGENT_BROWSER_EXECUTABLE_PATH === this.path && !attachesToChrome(spec.env);
+    if (!spec.env || attachesToChrome(spec.env)) return false;
+    const executable = spec.env.AGENT_BROWSER_EXECUTABLE_PATH;
+    if (executable === this.path) return true;
+    return this.options.platform === "win32" && this.state.kind === "ready" && executable === this.state.chrome.path;
   }
 
   private fresh(state: Ready): boolean {

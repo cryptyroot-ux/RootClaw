@@ -594,7 +594,10 @@ export function agentBrowserIntegration(input: {
     })),
   };
   // Headless on a displayless Linux host; an explicit AGENT_BROWSER_HEADED=0 also brings back headless a daemon that kept a headed launch config.
-  const displayless = (input.platform ?? process.platform) === "linux" && !sourceEnv.DISPLAY && !sourceEnv.WAYLAND_DISPLAY;
+  // agent-browser 0.41's headless Windows path creates a private desktop. Chrome then exits
+  // with "The system cannot find the file specified." A Windows desktop session launches headed.
+  const platform = input.platform ?? process.platform;
+  const displayless = platform === "linux" && !sourceEnv.DISPLAY && !sourceEnv.WAYLAND_DISPLAY;
   if (input.attach) {
     // The person's Chrome keeps its own sign-ins: restoring or saving would copy cookies between it and ROOTCLAW's store.
     if (input.attach.cdpUrl) env.AGENT_BROWSER_CDP = input.attach.cdpUrl;
@@ -605,7 +608,9 @@ export function agentBrowserIntegration(input: {
     env.AGENT_BROWSER_RESTORE = browserRestoreKey(input.session);
     env.AGENT_BROWSER_RESTORE_SAVE = input.persistent === false ? "never" : "auto";
     if (input.persistent !== false) env.AGENT_BROWSER_PROFILE = browserProfileDirectory(input.session, input.dataDir);
-    if (input.headless !== false || displayless) {
+    if (platform === "win32" && input.headless !== true) {
+      env.AGENT_BROWSER_HEADED = "1";
+    } else if (input.headless !== false || displayless) {
       env.AGENT_BROWSER_HEADLESS = "1";
       env.AGENT_BROWSER_HEADED = "0";
     }
@@ -623,7 +628,7 @@ export function agentBrowserIntegration(input: {
     const launch = { ...env, ...input.launcher };
     // A kept profile's disk cache would otherwise grow to Chrome's default of several hundred megabytes per profile.
     if (env.AGENT_BROWSER_PROFILE) launch.AGENT_BROWSER_ARGS = [launch.AGENT_BROWSER_ARGS, PROFILE_CACHE_ARG].filter(Boolean).join("\n");
-    Object.assign(env, input.launcher, agentBrowserEgressEnv(launch, input.egressPort ?? 0, input.platform ?? process.platform));
+    Object.assign(env, input.launcher, agentBrowserEgressEnv(launch, input.egressPort ?? 0, platform));
   }
   return { command: input.binaryPath, args: ["mcp", "--tools", "core", "--no-webmcp"], env };
 }
