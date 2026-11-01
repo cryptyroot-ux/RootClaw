@@ -39,7 +39,13 @@ export function createAuth(
         // supplied x-forwarded-for chain for rate limits or session metadata.
         ipAddressHeaders: ["cf-connecting-ip"],
       },
-      database: { generateId: "uuid" },
+      database: {
+        generateId: "uuid",
+        // Kysely validates by reading sqlite_master and pragma_table_info.
+        // Auth is built per request, so the default check adds those D1
+        // round trips to every route. Migrations own the schema.
+        validateSchema: false,
+      },
       backgroundTasks: {
         handler(promise) {
           ctx.waitUntil(promise);
