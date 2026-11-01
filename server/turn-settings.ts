@@ -79,6 +79,7 @@ export function settingsTurnFields(cfg: AppConfig, dataDir: string, restrictsMcp
       ...(cfg.context?.turnCompactAt ? { compactAt: cfg.context.turnCompactAt } : {}),
       ...(cfg.context?.toolOffloadBytes ? { offloadBytes: cfg.context.toolOffloadBytes } : {}),
       ...(cfg.context?.turnSummaryModel ? { summaryModel: cfg.context.turnSummaryModel } : {}),
+      ...(cfg.engine?.maxTurnRequests ? { maxTurnRequests: cfg.engine.maxTurnRequests } : {}),
     },
   };
 }
