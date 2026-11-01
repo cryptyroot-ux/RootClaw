@@ -5,15 +5,14 @@
 # declared on the `rootclaw` service (the namespace owner).
 #
 #   cp .env.example .env   # set DOMAIN
-#   docker compose pull rootclaw && docker compose up -d     # prebuilt image
-#   docker compose up -d --build                        # or build from source
+#   docker compose up -d --build   # builds the image locally from this checkout
 services:
   rootclaw:
     build:
       context: ..
       args:
         ENGINES: ${ENGINES:-}
-    # prebuilt on every main push; `docker compose up --build` builds from source instead
+    # local tag for the image built above; no prebuilt image is published (docker.yml has push: false)
     image: ghcr.io/cryptyroot-ux/rootclaw:latest
     restart: unless-stopped
     # The bots' browsers (docs/browser-packaging.md, "Process hygiene"): an
