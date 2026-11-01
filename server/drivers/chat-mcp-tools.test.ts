@@ -776,6 +776,17 @@ describe("Chat MCP schema validation", () => {
     expect(result).toEqual({ ok: true, text: "Screenshot captured.", images: [{ type: "image_url", image_url: { url: `data:image/png;base64,${data}` } }] });
   });
 
+  it("returns a note instead of a screenshot over 2048 px, without failing the call", async () => {
+    const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jBv0AAAAASUVORK5CYII=", "base64");
+    png.writeUInt32BE(4000, 16);
+    png.writeUInt32BE(3000, 20);
+    const f = fixture('if(message.method === "tools/call") { reply(message,{content:[{type:"image",mimeType:"image/png",data:process.env.IMAGE}]}); continue; }');
+    f.server.env.IMAGE = png.toString("base64");
+    const session = await f.mount(true);
+    const result = await session.execute("audit_write", { value: "screenshot" }, f.controller.signal);
+    expect(result).toEqual({ ok: true, text: "[Image not sent: 4000x3000 px is over the 2048 px limit for model input.]" });
+  });
+
   it("keeps a bounded frame limit for image-enabled custom servers", async () => {
     const f = fixture('if(message.method === "tools/call") { process.stdout.write("x".repeat(32*1024*1024+1)); continue; }');
     const session = await f.mount(true);

@@ -1,6 +1,12 @@
 // Handwritten wire fixtures per adapter: streaming text, tool calls, usage, and errors mapped into failover.
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { ensureDirs, NATIVE_DIR } from "../../config.ts";
+import { recordEvents } from "../../testing/events.ts";
+import { AnthropicDriver } from "../api-providers.ts";
 import { RequestTooLargeError } from "../chat-size-limit.ts";
 import { failoverKind } from "../failover.ts";
 import type { ChatToolDefinition } from "../chat-mcp-tools.ts";
@@ -158,6 +164,67 @@ describe("OpenAI Responses adapter", () => {
     expect(failoverKind(await failure(createOpenAIResponsesAdapter({ url: "https://oa.test/v1", apiKey: "k" })) as Error, { aborted: false, produced: false })).toBe("quota");
     stub(() => sse([["response.failed", { type: "response.failed", response: { status: "failed", error: { code: "context_length_exceeded", message: "Your input exceeds the context window" } } }]]));
     expect(await failure(createOpenAIResponsesAdapter({ url: "https://oa.test/v1", apiKey: "k" }))).toBeInstanceOf(RequestTooLargeError);
+  });
+});
+
+describe("images in each wire format (fixture rootclaw-04.png)", () => {
+  const FIXTURE = join(import.meta.dirname, "../../../evals/fixtures/multimodal/rootclaw-04.png");
+  const b64 = readFileSync(FIXTURE).toString("base64");
+  const url = `data:image/png;base64,${b64}`;
+  const withImages: OpenAIChatMessage[] = [
+    { role: "system", content: "Be brief." },
+    { role: "user", content: [{ type: "text", text: "Read it" }, { type: "image_url", image_url: { url } }] },
+    { role: "assistant", content: null, tool_calls: [{ id: "call_1", type: "function", function: { name: "computer_screenshot", arguments: "{}" } }] },
+    { role: "tool", tool_call_id: "call_1", content: "Screenshot captured" },
+    { role: "user", content: [{ type: "text", text: "Screenshot result from tool call call_1:" }, { type: "image_url", image_url: { url } }] },
+  ];
+
+  it("Anthropic sends the attachment and the screenshot as base64 image blocks with alternating roles", () => {
+    const image = { type: "image", source: { type: "base64", media_type: "image/png", data: b64 } };
+    const { messages } = anthropicRequest(withImages);
+    expect(messages.map((m) => m.role)).toEqual(["user", "assistant", "user"]);
+    expect(messages[0]!.content).toEqual([{ type: "text", text: "Read it" }, image]);
+    expect(messages[2]!.content).toEqual([
+      { type: "tool_result", tool_use_id: "call_1", content: "Screenshot captured" }, { type: "text", text: "Screenshot result from tool call call_1:" }, image,
+    ]);
+  });
+
+  it("Gemini sends both as inlineData", () => {
+    const { contents } = geminiRequest(withImages);
+    expect(contents.map((c) => c.role)).toEqual(["user", "model", "user"]);
+    expect(contents[0]!.parts[1]).toEqual({ inlineData: { mimeType: "image/png", data: b64 } });
+    expect(contents[2]!.parts.at(-1)).toEqual({ inlineData: { mimeType: "image/png", data: b64 } });
+  });
+
+  it("Responses sends both as input_image data URLs", () => {
+    const images = responsesInput(withImages).input.flatMap((item) => ("content" in item && Array.isArray(item.content) ? item.content : []))
+      .filter((part) => part.type === "input_image");
+    expect(images).toEqual([{ type: "input_image", image_url: url }, { type: "input_image", image_url: url }]);
+  });
+
+  it("keeps base64 out of the native log while the request carries it", async () => {
+    const calls = stub(() => sse([
+      ["message_start", { type: "message_start", message: { usage: { input_tokens: 10, output_tokens: 1 } } }],
+      ["content_block_start", { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }],
+      ["content_block_delta", { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "RC04 in red." } }],
+      ["message_delta", { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 5 } }],
+      ["message_stop", { type: "message_stop" }],
+    ]));
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    ensureDirs();
+    const threadId = `native-images-${Date.now()}`;
+    const inst = await AnthropicDriver.create({ instanceId: threadId, displayName: "Anthropic", enabled: true, config: { url: "https://api.anthropic.test/v1" }, environment: { ANTHROPIC_API_KEY: "sk-ant-fixture" } });
+    const recorder = recordEvents(inst.adapter);
+    try {
+      await inst.adapter.sendTurn({ threadId, text: "What does it say?", model: "claude-sonnet-5-5", approvalMode: "full",
+        cwd: mkdtempSync(join(tmpdir(), "rootclaw-native-")), images: [{ path: FIXTURE, mime: "image/png", bytes: readFileSync(FIXTURE).length }] });
+      expect(await recorder.until((event) => event.type === "turn.completed")).toBeTruthy();
+    } finally { recorder.stop(); await inst.dispose(); }
+    const sent = calls.find((call) => call.url.endsWith("/messages"))!;
+    expect(JSON.stringify(sent.body)).toContain(b64);
+    const log = readFileSync(join(NATIVE_DIR, `${threadId}.ndjson`), "utf8");
+    expect(log.length).toBeGreaterThan(0);
+    expect(log).not.toContain(b64.slice(0, 64));
   });
 });
 

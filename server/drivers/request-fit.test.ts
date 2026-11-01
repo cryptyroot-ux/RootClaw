@@ -142,3 +142,19 @@ describe("calibration after an overflow retry", () => {
     expect(new TokenCalibration(model, "calib").apply(1_000)).toBeGreaterThanOrEqual(1_900);
   });
 });
+
+describe("screenshots in the request estimate", () => {
+  const shot = (() => {
+    const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jBv0AAAAASUVORK5CYII=", "base64");
+    png.writeUInt32BE(1920, 16);
+    png.writeUInt32BE(1080, 20);
+    return `data:image/png;base64,${png.toString("base64")}`;
+  })();
+  const labels = ["a", "b", "c"].map((id) => ({ type: "text" as const, text: `Screenshot result from tool call ${id}:` }));
+  const shots = [{ role: "user" as const, content: labels.flatMap((label) => [label, { type: "image_url" as const, image_url: { url: shot } }]) }];
+  const textOnly = [{ role: "user" as const, content: labels }];
+
+  it.each([["openai-chat", 1105], ["anthropic-messages", 1600], ["gemini", 1548]] as const)("counts three 1920x1080 screenshots as %s bills them", (protocol, each) => {
+    expect(estimateRequestTokens(shots, [], MODEL, protocol)).toBe(estimateRequestTokens(textOnly, [], MODEL, protocol) + 3 * each);
+  });
+});

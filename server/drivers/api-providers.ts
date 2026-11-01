@@ -12,6 +12,7 @@ import { createGeminiAdapter } from "./adapters/gemini.ts";
 import { createOpenAIResponsesAdapter } from "./adapters/openai-responses.ts";
 import type { ModelAdapter } from "./model-adapter.ts";
 import { googleAccessToken } from "../oauth/oauth.ts";
+import { visionInput } from "./model-vision.ts";
 import { createOpenAIChatRuntime } from "./openai-chat.ts";
 
 const configSchema = z.object({
@@ -30,6 +31,8 @@ interface Spec {
   defaultUrl: string;
   keyEnv: string;
   docsUrl: string;
+  /** models.dev provider id that says which models take images. */
+  visionCatalog: string;
   models: ModelCatalog;
   adapter?: (url: string, key: string, environment: Record<string, string>) => ModelAdapter;
   /** GET the provider's catalog: [id, label] pairs, chat models only. */
@@ -92,7 +95,7 @@ function apiProvider(spec: Spec): ProviderDriver<ApiProviderConfig> {
       return createOpenAIChatRuntime({
         input, driverKind: spec.driverKind, apiKey, apiUrl: config.url, tools: config.tools,
         ...(spec.adapter ? { adapter: spec.adapter(config.url, apiKey, env) } : {}),
-        models: () => catalog, refreshModels, reasoning: true, computerUse: true,
+        models: () => catalog, refreshModels, reasoning: true, computerUse: true, imageInput: (model) => visionInput(spec.visionCatalog, model),
         requestBody: (model, messages, stream) => ({ model, messages, stream, ...(stream ? { stream_options: { include_usage: true } } : {}) }),
         httpErrorLabel: spec.label,
         missingKeyError: `Save a ${spec.label} API key in Settings → API keys, or set ${spec.keyEnv}.`,
@@ -109,7 +112,7 @@ function apiProvider(spec: Spec): ProviderDriver<ApiProviderConfig> {
 }
 
 export const AnthropicDriver = apiProvider({
-  driverKind: "anthropic", displayName: "Anthropic (API)", label: "Anthropic", keyEnv: "ANTHROPIC_API_KEY",
+  driverKind: "anthropic", visionCatalog: "anthropic", displayName: "Anthropic (API)", label: "Anthropic", keyEnv: "ANTHROPIC_API_KEY",
   defaultUrl: "https://api.anthropic.com/v1", docsUrl: "https://docs.anthropic.com/en/api/messages",
   // Model ids checked against docs.anthropic.com "Models overview" on 2026-10-31.
   models: { default: "claude-sonnet-5-5", options: [
@@ -122,7 +125,7 @@ export const AnthropicDriver = apiProvider({
 });
 
 export const GeminiDriver = apiProvider({
-  driverKind: "gemini", displayName: "Google Gemini (API)", label: "Gemini", keyEnv: "GEMINI_API_KEY",
+  driverKind: "gemini", visionCatalog: "google", displayName: "Google Gemini (API)", label: "Gemini", keyEnv: "GEMINI_API_KEY",
   defaultUrl: "https://generativelanguage.googleapis.com/v1beta", docsUrl: "https://ai.google.dev/gemini-api/docs",
   // Model ids checked against ai.google.dev/gemini-api/docs/models on 2026-10-31 (2.5 models are limited to past users).
   models: { default: "gemini-3.8-flash", options: [
@@ -140,7 +143,7 @@ export const GeminiDriver = apiProvider({
 });
 
 export const OpenAIResponsesDriver = apiProvider({
-  driverKind: "openai-responses", displayName: "OpenAI Responses (API)", label: "OpenAI", keyEnv: "OPENAI_API_KEY",
+  driverKind: "openai-responses", visionCatalog: "openai", displayName: "OpenAI Responses (API)", label: "OpenAI", keyEnv: "OPENAI_API_KEY",
   defaultUrl: "https://api.openai.com/v1", docsUrl: "https://platform.openai.com/docs/api-reference/responses",
   // Model ids checked against platform.openai.com/docs/models on 2026-10-31.
   models: { default: "gpt-6.1-sol", options: [{ id: "gpt-6.1-sol", label: "GPT-6.1 Sol" }, { id: "gpt-6-astra", label: "GPT-6 Astra" }] },
@@ -149,7 +152,7 @@ export const OpenAIResponsesDriver = apiProvider({
 });
 
 export const OllamaCloudDriver = apiProvider({
-  driverKind: "ollama", displayName: "Ollama Cloud (API)", label: "Ollama", keyEnv: "OLLAMA_API_KEY",
+  driverKind: "ollama", visionCatalog: "ollama-cloud", displayName: "Ollama Cloud (API)", label: "Ollama", keyEnv: "OLLAMA_API_KEY",
   defaultUrl: "https://ollama.com/v1", docsUrl: "https://docs.ollama.com/cloud",
   // docs.ollama.com/cloud (2026-10-31) names gemma4:31b; the live list comes from the catalog.
   models: { default: "gemma4:31b", options: [{ id: "gemma4:31b", label: "Gemma 4 31B" }] },
