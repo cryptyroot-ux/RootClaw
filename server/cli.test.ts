@@ -5,7 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { applyStartupPreferences, formatSessions, parseArgs, runAccess, runLogin, runOnboardingCommand, serverEntry, type CliOptions, verifyPhoneEndpoint } from "./cli.ts";
+import { applyStartupPreferences, formatSessions, parseArgs, runAccess, runLogin, runOnboardingCommand, serverEntry, serverExitCode, type CliOptions, verifyPhoneEndpoint } from "./cli.ts";
 import { browserSignInLines, pairingBlock, qrToString } from "./cli-pairing.ts";
 import { readAdminActivityRange } from "./admin-activity.ts";
 import { SetupCancelled } from "./cli-prompts.ts";
@@ -184,6 +184,17 @@ describe("rootclaw command line", () => {
     }
     expect(dead).toBe(true);
   }, 90_000);
+});
+
+describe("the server's exit as the launcher reads it", () => {
+  it("counts a kill after the person asked to stop as a stop, and any other kill as a failure", () => {
+    expect(serverExitCode(null, "SIGKILL", true)).toBe(0);
+    expect(serverExitCode(null, "SIGKILL", false)).toBe(1);
+    expect(serverExitCode(null, "SIGTERM", false)).toBe(0);
+    expect(serverExitCode(null, "SIGINT", false)).toBe(0);
+    expect(serverExitCode(75, null, false)).toBe(75);
+    expect(serverExitCode(1, null, false)).toBe(1);
+  });
 });
 
 describe("terminal onboarding commands", () => {

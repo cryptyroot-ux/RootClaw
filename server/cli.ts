@@ -790,7 +790,7 @@ export async function runServe(options: CliOptions, log: (line: string) => void 
   let exited: number | null = null;
   const childExit = new Promise<number>((done) => {
     child.once("error", () => { exited = 1; done(1); });
-    child.once("exit", (code, signal) => { exited = code ?? (signal === "SIGTERM" || signal === "SIGINT" ? 0 : 1); done(exited); });
+    child.once("exit", (code, signal) => { exited = serverExitCode(code, signal, stopping !== null); done(exited); });
   });
   let tunnel: RunningTunnel | null = null;
   let caddy: RunningCaddy | null = null;
@@ -901,6 +901,11 @@ export async function runServe(options: CliOptions, log: (line: string) => void 
     process.removeListener("SIGINT", onSignal);
     process.removeListener("SIGTERM", onSignal);
   }
+}
+
+/** A stop or Ctrl+C ends the server with SIGTERM or SIGINT, or SIGKILL when it does not go in time; none is a failed start. */
+export function serverExitCode(code: number | null, signal: NodeJS.Signals | null, stopping: boolean): number {
+  return code ?? (stopping || signal === "SIGTERM" || signal === "SIGINT" ? 0 : 1);
 }
 
 /** A server exiting with RESTART_EXIT_CODE is started again here at the same address, without a second pairing code. */
