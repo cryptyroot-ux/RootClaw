@@ -26,7 +26,7 @@ import { appendAdminAction, flushAdminActivity, sharedSignIn } from "./admin-act
 import { bindDecisionRetention, decisionRetentionDays } from "./decision-log.ts";
 import { hostedWorkspaceConfigured } from "./enterprise.ts";
 import { resolveLoopbackTrust } from "./request-auth.ts";
-import { restartPolicy } from "./restart.ts";
+import { restartPolicy } from "./restart.ts"; import { recoverFailedUpdate } from "./update-apply.ts";
 import { writeFileAtomic } from "./atomic.ts";
 import { ensureCaddy, normalizeDomainOption, startCaddy, type RunningCaddy } from "./caddy.ts";
 import { runServiceCommand } from "./service-cli.ts";
@@ -904,12 +904,12 @@ export async function runServe(options: CliOptions, log: (line: string) => void 
 }
 
 /** A server exiting with RESTART_EXIT_CODE is started again here at the same address, without a second pairing code. */
-export async function serveUntilStopped(options: CliOptions, run: (options: CliOptions) => Promise<number> = runServe, now: () => number = Date.now): Promise<number> {
+export async function serveUntilStopped(options: CliOptions, run: (options: CliOptions) => Promise<number> = runServe, now: () => number = Date.now, recover: (dataDir: string, code: number) => Promise<boolean> = recoverFailedUpdate): Promise<number> {
   const policy = restartPolicy(now);
   let launch = options;
   for (;;) {
     const code = await run(launch);
-    if (!policy.again(code)) return code;
+    if (!policy.again(code) && !(await recover(options.dataDir, code))) return code; // recover: a new version that fails to start goes back
     console.log("\nRootClaw is starting again (an update or a restored copy asked for a fresh start)…");
     launch = { ...options, pair: false, open: false };
   }

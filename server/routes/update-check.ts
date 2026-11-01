@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { serverVersion } from "../environment.ts";
 import { SERVER_ROOT } from "../proxy-paths.ts";
 import { ownerOrAdmin } from "../request-auth.ts";
-import { createUpdateApplier, restartMode, type UpdateApplier } from "../update-apply.ts";
+import { ApplyRefused, createUpdateApplier, RELEASE_VERSION, restartMode, STATUS_FILE, type UpdateApplier } from "../update-apply.ts";
 import { cloneRoot, createUpdateChecker, installKind, type UpdateCheck } from "../update-check.ts";
 import { PASS, type RouteHandler } from "./table.ts";
 
@@ -53,8 +53,18 @@ export function createUpdateCheckRoutes(deps: UpdateCheckRouteDeps): RouteHandle
       if (last.phase === "done" && last.restart === "manual" && last.to === check.latest) {
         return json(res, 409, { error: `v${check.latest} is already installed. Restart RootClaw to run it.`, status: last });
       }
+      if (!RELEASE_VERSION.test(check.latest)) {
+        return json(res, 502, { error: `The newest release (${check.latest}) is not a version number RootClaw can install. Update by hand from the release page.` });
+      }
       // A second click that raced past busy() above still gets one run: start() is the lock.
-      if (!applier.start(check.latest)) return json(res, 409, { error: "An update is already running.", status: applier.status() });
+      let started: boolean;
+      try {
+        started = applier.start(check.latest);
+      } catch (error) {
+        if (error instanceof ApplyRefused) return json(res, 409, { error: error.message, status: applier.status() });
+        throw error;
+      }
+      if (!started) return json(res, 409, { error: "An update is already running.", status: applier.status() });
       return json(res, 202, applier.status());
     }
     return PASS;
@@ -69,6 +79,6 @@ export function serverUpdateRouteDeps(where: { desktopManaged: boolean; managed:
   if (selfUpdateRefusal({ install }) || !root) return { check, applier: null };
   return {
     check,
-    applier: createUpdateApplier({ root, current: serverVersion(), statusFile: join(where.dataDir, "update-apply.json"), restartMode: restartMode(), restart: where.restart }),
+    applier: createUpdateApplier({ root, current: serverVersion(), statusFile: join(where.dataDir, STATUS_FILE), restartMode: restartMode(), restart: where.restart }),
   };
 }

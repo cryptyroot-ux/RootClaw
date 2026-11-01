@@ -1,5 +1,6 @@
 // One-click update end to end: a real clone of a local bare remote, real git and pnpm, the real container launcher
-// (server-launcher.ts) restarting a server on exit code 75. The project is a small stand-in for RootClaw with the same
+// (server-launcher.ts) restarting a server on exit code 75, and the `rootclaw serve` launcher (cli.ts) going back from a
+// version that does not start. The project is a small stand-in for RootClaw with the same
 // build scripts and outputs, so the run takes seconds instead of a full RootClaw build.
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -9,12 +10,23 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterAll, expect, it } from "vitest";
 
+import { serveUntilStopped, type CliOptions } from "./cli.ts";
 import { superviseServer } from "./server-launcher.ts";
-import { BACKUP_DIR } from "./update-apply.ts";
+import { BACKUP_DIR, diskShortage, PREVIOUS_DIR, STATUS_FILE } from "./update-apply.ts";
 
 const pnpmFound = (() => { try { execFileSync("pnpm", ["--version"], { stdio: "ignore" }); return true; } catch { return false; } })();
 const base = mkdtempSync(join(tmpdir(), "rootclaw-oneclick-e2e-"));
-afterAll(() => rmSync(base, { recursive: true, force: true }));
+const servers = new Set<ChildProcess>();
+afterAll(() => {
+  for (const server of servers) server.kill("SIGKILL");
+  rmSync(base, { recursive: true, force: true });
+});
+const serve = (env: NodeJS.ProcessEnv) => {
+  const server = spawn(process.execPath, [join(base, "RootClaw", "dist-server", "index.js")], { env, stdio: "ignore" });
+  servers.add(server);
+  server.once("exit", () => servers.delete(server));
+  return server;
+};
 
 const git = (cwd: string, ...args: string[]) => execFileSync("git", ["-c", "user.name=e2e", "-c", "user.email=e2e@example.test", "-c", "init.defaultBranch=main", ...args], { cwd, encoding: "utf8" }).trim();
 
@@ -33,11 +45,12 @@ if (process.argv[2] === "web") {
 `;
 // The server reads its version once at start, as RootClaw's serverVersion() does, and wires the real applier.
 const SERVER = `import { createServer } from "node:http";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 const { createUpdateApplier, restartMode } = await import(process.env.E2E_APPLIER);
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+if (existsSync(join(root, "crash-on-boot"))) { console.error("boot: forced crash"); process.exit(1); }
 const version = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
 const server = createServer((req, res) => {
   const url = new URL(req.url, "http://x");
@@ -48,8 +61,7 @@ const server = createServer((req, res) => {
   res.statusCode = 404; res.end();
 });
 const applier = createUpdateApplier({
-  root, current: version, statusFile: join(root, "data", "update-apply.json"), restartMode: restartMode(), restartDelayMs: 100,
-  ...(process.env.E2E_REAL_DISK_CHECK ? {} : { diskCheck: () => null }),
+  root, current: version, statusFile: join(root, "data", "update-apply.json"), restartMode: restartMode(), restartDelayMs: 100, healthyAfterMs: 300, diskCheck: () => null,
   restart: () => server.close(() => process.exit(75)),
 });
 server.listen(Number(process.env.PORT), "127.0.0.1");
@@ -76,7 +88,7 @@ it.skipIf(!pnpmFound || process.platform === "win32")("updates a clone to the ne
   mkdirSync(seed);
   git(seed, "init", "-q");
   git(seed, "remote", "add", "origin", remote);
-  writeFileSync(join(seed, ".gitignore"), "node_modules\ndist\ndist-server\ndata\n.rootclaw-update-backup\n");
+  writeFileSync(join(seed, ".gitignore"), "node_modules\ndist\ndist-server\ndata\n.rootclaw-update-backup\n.rootclaw-update-previous\n");
   writeFileSync(join(seed, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n\nsettings:\n  autoInstallPeers: true\n  excludeLinksFromLockfile: false\n\nimporters:\n\n  .: {}\n");
   writeFileSync(join(seed, "build.mjs"), BUILD);
   writeFileSync(join(seed, "server.mjs"), SERVER);
@@ -96,28 +108,22 @@ it.skipIf(!pnpmFound || process.platform === "win32")("updates a clone to the ne
   const evidence: string[] = [];
   const note = (line: string) => { evidence.push(line); console.log(`[e2e] ${line}`); };
 
-  // 1. Under the launcher. The real disk check refuses first on this nearly full box, then the run goes ahead without it.
+  // 1. The real disk check, on this box as it is now (the server below runs without it).
+  note(`real disk check on this box: ${diskShortage(clone) ?? "passed"}`);
   let child: ChildProcess | undefined;
-  let realDisk = true;
-  const supervised = superviseServer(() => (child = spawn(process.execPath, [join(clone, "dist-server", "index.js")], { env: env(true, realDisk ? { E2E_REAL_DISK_CHECK: "1" } : {}), stdio: "ignore" })), { signals: { on: () => process, off: () => process } });
-  await expect.poll(() => get("/version"), { timeout: 15_000 }).toMatchObject({ version: "1.0.0", mode: "launcher" });
-  const firstPid = (await get("/version"))!.pid;
-  expect(await get("/apply?to=1.1.0")).toEqual({ started: true });
-  await expect.poll(async () => (await get("/status"))?.phase, { timeout: 30_000 }).toMatch(/failed|restarting|done/);
-  const disk = (await get("/status")) as { error?: string };
-  note(`real disk check on this box: ${disk.error ?? "passed"}`);
-  if (/Not enough free/.test(disk.error ?? "")) {
-    realDisk = false;
-    // Restart by hand through the same exit code so the next server skips the disk check.
-    child!.kill("SIGTERM");
-  }
+  const firstPidOf = async () => (await get("/version"))!.pid;
+  const statusFile = join(clone, "data", STATUS_FILE);
+  const pending = () => { try { return JSON.parse(readFileSync(statusFile, "utf8")).boot ?? null; } catch { return null; } };
 
   // 2. A real update: fetch, fast-forward, install, build, exit 75, the launcher starts the new build.
-  const supervised2 = realDisk ? supervised : superviseServer(() => (child = spawn(process.execPath, [join(clone, "dist-server", "index.js")], { env: env(true), stdio: "ignore" })), { signals: { on: () => process, off: () => process } });
-  if (!realDisk) await supervised;
+  const supervised = superviseServer(() => (child = serve(env(true))), { signals: { on: () => process, off: () => process } });
   await expect.poll(() => get("/version"), { timeout: 15_000 }).toMatchObject({ version: "1.0.0" });
+  const firstPid = await firstPidOf();
   expect(await get("/apply?to=1.1.0")).toEqual({ started: true });
   await expect.poll(() => get("/version"), { timeout: 60_000, interval: 200 }).toMatchObject({ version: "1.1.0" });
+  // The new version stayed up, so the way back is let go.
+  await expect.poll(pending, { timeout: 10_000, interval: 100 }).toBeNull();
+  expect(existsSync(join(clone, PREVIOUS_DIR))).toBe(false);
   const updated = (await get("/version"))!;
   expect(updated.pid).not.toBe(firstPid);
   expect(await get("/status")).toMatchObject({ phase: "done", from: "1.0.0", to: "1.1.0", current: "1.1.0", restart: "auto" });
@@ -154,10 +160,10 @@ it.skipIf(!pnpmFound || process.platform === "win32")("updates a clone to the ne
 
   // Only exit code 75 restarts: a killed server ends the launcher.
   child!.kill("SIGTERM");
-  expect(await supervised2).toBe(1);
+  expect(await supervised).toBe(1);
 
   // 5. A bare `node dist-server/index.js` with nothing to restart it: installs and says to restart by hand.
-  const bare = spawn(process.execPath, [join(clone, "dist-server", "index.js")], { env: env(false), stdio: "ignore" });
+  const bare = serve(env(false));
   try {
     await expect.poll(() => get("/version"), { timeout: 15_000 }).toMatchObject({ version: "1.1.0", mode: "none" });
     expect(await get("/apply?to=1.3.0")).toEqual({ started: true });
@@ -166,9 +172,44 @@ it.skipIf(!pnpmFound || process.platform === "win32")("updates a clone to the ne
     expect(await get("/version")).toMatchObject({ version: "1.1.0", pid: bare.pid });
     expect(git(clone, "rev-parse", "HEAD")).toBe(v130);
     expect(readFileSync(join(clone, "dist", "index.html"), "utf8")).toBe("web 1.3.0");
-    note(`plain node: v1.3.0 (${v130.slice(0, 8)}) installed and built, server kept running v1.1.0 (pid ${bare.pid}), status restart=manual`);
+    expect(pending()).toMatchObject({ prev: v110, branch: "main", attempts: 0 });
+    // Nothing here goes back by itself if v1.3.0 does not start, so the log says how.
+    expect((await get("/status"))!.log!.join("\n")).toContain(`If v1.3.0 does not start, go back with: git reset --hard ${v110}`);
+    note(`plain node: v1.3.0 (${v130.slice(0, 8)}) installed and built, server kept running v1.1.0 (pid ${bare.pid}), status restart=manual, previous build kept in ${PREVIOUS_DIR}`);
   } finally {
     bare.kill("SIGTERM");
   }
-  writeFileSync(join(base, "evidence.txt"), evidence.join("\n"));
+  await expect.poll(() => get("/version"), { timeout: 10_000 }).toBeNull();
+
+  // 6. Under `rootclaw serve`: v1.3.0 starts and proves itself; v1.4.0 builds fine but crashes on boot, twice, and the
+  // launcher puts v1.3.0's commit, build and dependencies back and starts it again.
+  const options = { command: "serve", port, dataDir: join(clone, "data"), tailscale: false, tunnel: false, client: false, pair: false, json: false } as CliOptions;
+  const starts: number[] = [];
+  const launcher = serveUntilStopped(options, () => new Promise<number>((done) => {
+    child = serve(env(true));
+    starts.push(child.pid ?? 0);
+    child.once("exit", (code) => done(code ?? 143));
+  }));
+  await expect.poll(() => get("/version"), { timeout: 15_000 }).toMatchObject({ version: "1.3.0", mode: "launcher" });
+  await expect.poll(pending, { timeout: 10_000, interval: 100 }).toBeNull();
+  expect(existsSync(join(clone, PREVIOUS_DIR))).toBe(false);
+  note("v1.3.0 started under the rootclaw serve launcher and stayed up: the pending boot check cleared and the previous build was removed");
+  const v140 = release(seed, "1.4.0", { "crash-on-boot": "1" });
+  expect(await get("/apply?to=1.4.0")).toEqual({ started: true });
+  await expect.poll(async () => (await get("/status"))?.phase, { timeout: 90_000, interval: 300 }).toBe("failed");
+  const back = (await get("/status"))!;
+  expect(back).toMatchObject({ phase: "failed", rolledBack: true, to: "1.4.0", current: "1.3.0", error: "v1.4.0 was installed but stopped while starting, twice." });
+  expect(await get("/version")).toMatchObject({ version: "1.3.0" });
+  expect(git(clone, "rev-parse", "HEAD")).toBe(v130);
+  expect(git(clone, "status", "--porcelain", "--untracked-files=no")).toBe("");
+  expect(readFileSync(join(clone, "dist", "index.html"), "utf8")).toBe("web 1.3.0");
+  expect(existsSync(join(clone, "crash-on-boot"))).toBe(false);
+  expect(existsSync(join(clone, PREVIOUS_DIR))).toBe(false);
+  expect(pending()).toBeNull();
+  // The v1.3.0 server, the build that crashed twice, and v1.3.0 again.
+  expect(starts).toHaveLength(4);
+  note(`v1.4.0 (${v140.slice(0, 8)}) built, crashed on boot twice (pids ${starts.slice(1, 3).join(", ")}), launcher rolled back to v1.3.0 (${v130.slice(0, 8)}) and started it (pid ${starts[3]}); dist "web 1.3.0"; status: ${back.error}`);
+  child!.kill("SIGTERM");
+  expect(await launcher).toBe(143);
+  writeFileSync(process.env.E2E_EVIDENCE ?? join(base, "evidence.txt"), evidence.join("\n"));
 });

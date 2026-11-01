@@ -222,6 +222,16 @@ sudo systemctl restart rootclaw
 
 Your data in `~/.rootclaw` is kept; back it up before upgrading.
 
+The owner can also click **Update now** in the profile menu: RootClaw runs the
+same steps, puts the old commit and build back if one fails, and restarts. The
+old build is kept in `.rootclaw-update-previous` until the new version has
+started. Under `rootclaw serve` (which `rootclaw service install` sets up), a new
+version that stops while starting twice is replaced by the old one again. A
+server started some other way (`node dist-server/index.js`, your own unit) does
+not go back by itself: the update log shows the `git reset --hard` commit to
+return to. If an update leaves `.rootclaw-update-backup` behind, the next one
+refuses to start until you have restored what you need from it and removed it.
+
 ## Troubleshooting
 
 | Symptom | Fix |

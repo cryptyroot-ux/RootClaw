@@ -40,3 +40,7 @@ deploy/podman/.env
 deploy/podman/.env.*
 !deploy/podman/.env.example
 /.env
+
+# One-click update: a build kept for rolling back
+.rootclaw-update-backup/
+.rootclaw-update-previous/
