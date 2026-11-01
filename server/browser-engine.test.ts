@@ -989,9 +989,14 @@ describe("what a bot gets", () => {
     expect(agentBrowserIntegration({ ...linux, headless: false, env: { PATH: "/usr/bin", DISPLAY: ":0" } }).env.AGENT_BROWSER_HEADED).toBeUndefined();
     expect(agentBrowserIntegration({ ...linux, headless: false, env: { PATH: "/usr/bin", WAYLAND_DISPLAY: "wayland-0" } }).env.AGENT_BROWSER_HEADED).toBeUndefined();
     expect(agentBrowserIntegration({ ...linux, platform: "darwin", headless: false }).env.AGENT_BROWSER_HEADED).toBeUndefined();
-    expect(agentBrowserIntegration({ binaryPath: "/x", session: "s", encryptionKey: "k", platform: "win32" }).env).toMatchObject({ AGENT_BROWSER_HEADED: "1" });
-    expect(agentBrowserIntegration({ binaryPath: "/x", session: "s", encryptionKey: "k", platform: "win32" }).env.AGENT_BROWSER_HEADLESS).toBeUndefined();
-    expect(agentBrowserIntegration({ binaryPath: "/x", session: "s", encryptionKey: "k", platform: "win32", headless: true }).env).toMatchObject({ AGENT_BROWSER_HEADLESS: "1", AGENT_BROWSER_HEADED: "0" });
+    const windows = agentBrowserIntegration({
+      binaryPath: "/x", session: "s", encryptionKey: "k", platform: "win32", env: { PATH: "/usr/bin" },
+      launcher: { AGENT_BROWSER_EXECUTABLE_PATH: "C:\\chrome\\chrome.exe", AGENT_BROWSER_ARGS: "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36,--screen-info={1920x1080}" },
+      egressPort: 45123,
+    });
+    expect(windows.env).toMatchObject({ AGENT_BROWSER_HEADLESS: "1", AGENT_BROWSER_HEADED: "0", AGENT_BROWSER_EXECUTABLE_PATH: "C:\\chrome\\chrome.exe" });
+    expect(windows.env.AGENT_BROWSER_ARGS).toContain("(KHTML, like Gecko)");
+    expect(windows.env.AGENT_BROWSER_ARGS).not.toContain("\n");
   });
 
   it("keeps saved state separate for different bots and never saves guest state", () => {

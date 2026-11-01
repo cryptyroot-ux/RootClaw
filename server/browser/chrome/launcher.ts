@@ -121,7 +121,7 @@ export class ChromeLauncher implements BrowserLaunch {
     if (this.options.platform === "win32" && ready?.launcher) {
       return {
         AGENT_BROWSER_EXECUTABLE_PATH: ready.chrome.path,
-        AGENT_BROWSER_ARGS: launcherFlags(ready.launcher, "win32").join("\n"),
+        AGENT_BROWSER_ARGS: launcherFlags(ready.launcher, "win32").join(","),
         AGENT_BROWSER_HIDE_SCROLLBARS: "0",
       };
     }
