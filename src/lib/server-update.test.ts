@@ -17,10 +17,10 @@ describe("self-hosted update row", () => {
   });
 
   it("names the new version and how this install is updated", () => {
-    const docker = check({ available: true, latest: "0.1.93", command: "docker compose pull rootclaw && docker compose up -d", restart: false });
+    const docker = check({ available: true, latest: "0.1.93", command: "git pull && docker compose up -d --build", restart: false });
     expect(serverUpdateRow("available", docker)).toEqual({
       label: "Version 0.1.93 available (release notes)",
-      subtitle: "Update with: docker compose pull rootclaw && docker compose up -d",
+      subtitle: "Update with: git pull && docker compose up -d --build",
     });
     const npm = check({ install: "npm", available: true, latest: "0.1.93", command: "npm install -g rootclaw@latest", restart: true });
     expect(serverUpdateRow("available", npm).subtitle).toBe("Update with: npm install -g rootclaw@latest, then restart the app");
@@ -28,6 +28,12 @@ describe("self-hosted update row", () => {
     expect(serverUpdateRow("available", check({ install: "unknown", available: true, latest: "0.1.93" }))).toEqual({
       label: "Version 0.1.93 available (release notes)",
       subtitle: undefined,
+    });
+    // a server that is not a clone says why it has no command instead of leaving the row bare
+    const note = "This RootClaw install is not a git clone, so it cannot update itself.";
+    expect(serverUpdateRow("available", check({ install: "unknown", available: true, latest: "0.1.93", note }))).toEqual({
+      label: "Version 0.1.93 available (release notes)",
+      subtitle: note,
     });
   });
 
@@ -73,9 +79,9 @@ describe("the update row for another server the app shows", () => {
       label: "Office Mac can update to 0.1.127",
       subtitle: "Whoever runs that server updates it with: npm install -g rootclaw@latest, then restarts it",
     });
-    const docker = check({ available: true, latest: "0.1.127", command: "docker compose pull rootclaw && docker compose up -d", restart: false });
+    const docker = check({ available: true, latest: "0.1.127", command: "git pull && docker compose up -d --build", restart: false });
     expect(serverUpdateRow("available", docker, "0.1.116", "Office Mac").subtitle).toBe(
-      "Whoever runs that server updates it with: docker compose pull rootclaw && docker compose up -d",
+      "Whoever runs that server updates it with: git pull && docker compose up -d --build",
     );
     expect(serverUpdateRow("up-to-date", check({ current: "0.1.127" }), "0.1.127", "Office Mac")).toEqual({
       label: "Office Mac is up to date",

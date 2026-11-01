@@ -28,16 +28,18 @@ describe("server update check", () => {
     expect(cloneRoot(join(root, "dist-server"), () => false)).toBeNull();
     expect(cloneRoot("/srv/RootClaw/dist-server", (path) => path === "/srv/RootClaw/.git", posix)).toBe("/srv/RootClaw");
     expect(cloneRoot("C:\\RootClaw\\dist-server", (path) => path === "C:\\RootClaw\\.git", win32)).toBe("C:\\RootClaw");
-    expect(UPDATE_COMMANDS.git).toEqual({ command: "git pull && pnpm install && pnpm build && pnpm build:server", restart: true });
+    expect(UPDATE_COMMANDS.git).toEqual({ command: "git pull && pnpm install --frozen-lockfile && pnpm build && pnpm build:server", restart: true });
     for (const install of ["npm", "git", "docker", "podman", "unknown"] as const) {
       expect(UPDATE_COMMANDS[install]?.command ?? "").not.toMatch(/npm (install|i) -g/);
+      // no RootClaw image is published (docs/self-hosting.md), so a pull has nothing to fetch
+      expect(UPDATE_COMMANDS[install]?.command ?? "").not.toMatch(/docker compose pull/);
     }
     const check = createUpdateChecker({ current: "0.1.92", install: "npm", fetch: vi.fn(async () => release("v0.1.93")) });
     const result = await check();
     expect(result).toMatchObject({ available: true, latest: "0.1.93", note: NOT_A_CLONE });
     expect(result.command).toBeUndefined();
     expect(NOT_A_CLONE).toMatch(/not a git clone/);
-    expect(NOT_A_CLONE).toContain("git pull && pnpm install && pnpm build && pnpm build:server");
+    expect(NOT_A_CLONE).toContain("git pull && pnpm install --frozen-lockfile && pnpm build && pnpm build:server");
   });
 
   it("compares release versions numerically and never reports a malformed one", () => {
@@ -65,7 +67,7 @@ describe("server update check", () => {
       latest: "0.1.93",
       available: true,
       releaseUrl: "https://github.com/cryptyroot-ux/RootClaw/releases/tag/v0.1.93",
-      command: "docker compose pull rootclaw && docker compose up -d",
+      command: "git pull && docker compose up -d --build",
       restart: false,
     });
     expect(fetch).toHaveBeenCalledWith(LATEST_RELEASE_URL, expect.anything());
@@ -97,6 +99,6 @@ describe("server update check", () => {
     const check = createUpdateChecker({ current: "0.1.92", install: "git", fetch });
     await expect(check()).rejects.toThrow("GitHub answered 403");
     fetch.mockImplementation(async () => release("v0.1.93"));
-    expect(await check()).toMatchObject({ available: true, command: "git pull && pnpm install && pnpm build && pnpm build:server", restart: true });
+    expect(await check()).toMatchObject({ available: true, command: "git pull && pnpm install --frozen-lockfile && pnpm build && pnpm build:server", restart: true });
   });
 });
