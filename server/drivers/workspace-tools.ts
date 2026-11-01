@@ -3,7 +3,7 @@
 // Engine-level and provider-agnostic: a driver only hands over the turn's folder.
 import { spawn, spawnSync } from "node:child_process";
 import { closeSync, constants as fsConstants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { randomBytes } from "node:crypto";
 import { homedir, tmpdir } from "node:os";
 import type { ChatToolCallView, ChatToolDefinition, ChatToolResult } from "./chat-mcp-tools.ts";
@@ -115,6 +115,22 @@ function realOrSelf(path: string): string {
   try { return realpathSync(path); } catch { return resolve(path); }
 }
 
+/** Same identity as realpathSync, including Windows 8.3 short names. Those names are not symbolic links, so a
+ * component walk keeps them, but containment compares against realpath'd roots (GitHub's Windows runner stores
+ * temp as `C:\Users\RUNNER~1\...`). A missing tail keeps the realpath of the longest existing prefix. */
+function canonicalPath(path: string): string {
+  const absolute = resolve(path);
+  try { return realpathSync(absolute); } catch { /* the tail does not exist yet */ }
+  const missing: string[] = [];
+  let dir = absolute;
+  while (dir !== dirname(dir)) {
+    missing.unshift(basename(dir));
+    dir = dirname(dir);
+    try { return join(realpathSync(dir), ...missing); } catch { /* still missing */ }
+  }
+  return absolute;
+}
+
 /** The real path of `path`, following every symlink component, including dangling ones (a link to a file that does
  * not exist yet still points somewhere, and writing through it would create that target). Missing tails are kept. */
 export function realTarget(path: string): string {
@@ -123,7 +139,7 @@ export function realTarget(path: string): string {
   for (let hops = 0; pending.length;) {
     const next = join(current, pending.shift()!);
     let stat;
-    try { stat = lstatSync(next); } catch { return join(next, ...pending); }
+    try { stat = lstatSync(next); } catch { return canonicalPath(join(next, ...pending)); }
     if (!stat.isSymbolicLink()) { current = next; continue; }
     if (++hops > 40) throw new WorkspacePathError(`${path} has too many symbolic links`);
     const link = readlinkSync(next);
@@ -131,7 +147,18 @@ export function realTarget(path: string): string {
     pending = [...resolve(target).split(sep).filter(Boolean), ...pending];
     current = sep;
   }
-  return current;
+  return canonicalPath(current);
+}
+
+/** Unsandboxed shell. Windows runners have Git bash, not `/bin/bash`. */
+function plainShell(): string {
+  if (process.platform !== "win32") return "/bin/bash";
+  const roots = [process.env.ProgramFiles, process.env["ProgramFiles(x86)"]].filter((dir): dir is string => Boolean(dir));
+  for (const root of roots) {
+    const candidate = join(root, "Git", "bin", "bash.exe");
+    if (existsSync(candidate)) return candidate;
+  }
+  return "bash.exe";
 }
 
 export function createWorkspacePaths(config: WorkspaceToolsConfig) {
@@ -323,7 +350,7 @@ export function sandboxedShell(command: string, cwd: string, writable: readonly 
     const profile = `(version 1)(allow default)(deny file-write*)(allow file-write* ${dirs.map((dir) => `(subpath ${sbString(dir)})`).join(" ")} (literal "/dev/null") (literal "/dev/tty") (regex #"^/dev/fd/"))`;
     return { file: "/usr/bin/sandbox-exec", args: ["-p", profile, "/bin/bash", "-c", command] };
   }
-  return { file: "/bin/bash", args: ["-c", command] };
+  return { file: plainShell(), args: ["-c", command] };
 }
 
 // ---------- background jobs ----------
