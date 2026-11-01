@@ -120,6 +120,11 @@ const MAX_TURN_TOOL_CALLS = 200;
 const MAX_ANNOUNCEMENT_NUDGES = 3;
 const stoppedAfter = (count: string) =>
   `Stopped after ${count} without a final answer. The steps so far already ran, so ask only for what's left.`;
+const requestBudgetNote = (left: number) => left > 1
+  ? `[RootClaw] ${left} model requests are left in this turn; the last one has no tools. Finish the essential steps now.`
+  : "[RootClaw] This is the last model request of this turn and tools are off. Answer now from what you have and say plainly what is still undone.";
+const requestBudgetStopped = (cap: number) =>
+  `Stopped at this turn's limit of ${cap} model requests. The steps so far already ran, so ask only for what's left.`;
 
 interface DeliveredUserMessage {
   text: string;
@@ -188,13 +193,19 @@ const envNumber = (name: string) => {
   return Number.isFinite(value) && value > 0 ? value : undefined;
 };
 
-/** Settings first, then ROOTCLAW_TURN_COMPACT_AT / ROOTCLAW_TOOL_OFFLOAD_BYTES / ROOTCLAW_TOOL_OFFLOAD_DIR. */
+const requestCapFromEnv = () => {
+  const value = Number(process.env.ROOTCLAW_MAX_TURN_REQUESTS);
+  return Number.isInteger(value) && value >= 2 && value <= 64 ? value : undefined;
+};
+
+/** Settings first, then ROOTCLAW_TURN_COMPACT_AT / ROOTCLAW_TOOL_OFFLOAD_BYTES / ROOTCLAW_TOOL_OFFLOAD_DIR / ROOTCLAW_MAX_TURN_REQUESTS. */
 export function turnContextSettings(fromTurn: TurnContextSettings | undefined): TurnContextSettings {
   return {
     ...fromTurn,
     compactAt: fromTurn?.compactAt ?? envNumber("ROOTCLAW_TURN_COMPACT_AT"),
     offloadBytes: fromTurn?.offloadBytes ?? envNumber("ROOTCLAW_TOOL_OFFLOAD_BYTES"),
     offloadDir: fromTurn?.offloadDir ?? (process.env.ROOTCLAW_TOOL_OFFLOAD_DIR || undefined),
+    maxTurnRequests: fromTurn?.maxTurnRequests ?? requestCapFromEnv(),
   };
 }
 
@@ -662,6 +673,15 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         const calibration = new TokenCalibration(model, input.instanceId);
         // Exact counts for known encodings; loads lazily (once per process) and falls back to the estimate.
         await prepareTokenizer(model);
+        // Every provider call of the turn counts: rounds, retries, resends, compaction summaries and the verifier.
+        let requests = 0;
+        let budgetNoted = Infinity;
+        const requestsLeft = () => (ctx.maxTurnRequests ?? Infinity) - requests;
+        const noteRequestBudget = () => {
+          if (requestsLeft() > 2 || requestsLeft() >= budgetNoted) return;
+          budgetNoted = requestsLeft();
+          messages.push({ role: "user", content: requestBudgetNote(budgetNoted) });
+        };
         let compactions = 0;
         let overflowCompactions = 0;
         let compactedAfter: number | undefined;
@@ -689,6 +709,8 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
                 const room = outputTokensFor(window, calibration.apply(estimateRequestTokens([{ role: "user", content: prompt }], [], summaryModel)));
                 const maxTokens = Math.min(outputReserve(window), room ?? DEFAULT_OUTPUT_TOKENS);
                 if (maxTokens < minOutputTokens(window)) throw new Error("no room left for a summary");
+                if (requestsLeft() <= 1) throw new Error("no request left for a summary");
+                requests++;
                 const { text, reasoning } = await adapter.complete({ messages: [{ role: "user", content: prompt }], model: summaryModel, stream: false, signal: abort.signal, tools: [], maxTokens });
                 return text.trim() ? text : reasoning;
               },
@@ -774,6 +796,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
               throw new ChatProtocolError(requestTooLargeMessage(modelLabel()));
             }
           }
+          noteRequestBudget();
           const sentEstimate = estimateRequestTokens(messages, tools.definitions, model);
           // Budget pre-check: after the first round, a call whose prompt alone would overrun the cap is not made.
           if (round > 0 && meter?.wouldExceed(calibration.apply(sentEstimate))) {
@@ -792,7 +815,12 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           let malformedRetried = false;
           let completion: Completion;
           let tookRaw = sentEstimate;
+          let finalRequest = false;
           for (;;) {
+            if (requestsLeft() < 1) throw new ChatProtocolError(requestBudgetStopped(ctx.maxTurnRequests!));
+            noteRequestBudget();
+            finalRequest = requestsLeft() === 1;
+            const offered = finalRequest ? [] : tools.definitions;
             let sentTotal = 0;
             let streamed = false;
             let answerStreamed = false;
@@ -812,7 +840,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
               const visible = safeText(hold ? combined.slice(0, -hold) : combined);
               if (visible) emit({ ...base(turn.threadId, turnId), type: "content.delta", streamKind, delta: visible });
             };
-            const sentRaw = estimateRequestTokens(messages, tools.definitions, model);
+            const sentRaw = estimateRequestTokens(messages, offered, model);
             tookRaw = sentRaw;
             const maxTokens = outputTokensFor(window, calibration.apply(sentRaw));
             if (maxTokens !== undefined && maxTokens < minOutputTokens(window)) {
@@ -821,7 +849,8 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             }
             sentTotal = calibration.provider(sentRaw) + (maxTokens ?? 0);
             try {
-              completion = await adapter.complete({ messages, model, stream: true, signal: abort.signal, tools: tools.definitions, ...(maxTokens ? { maxTokens } : {}), onDelta: (text, streamKind) => {
+              requests++;
+              completion = await adapter.complete({ messages, model, stream: true, signal: abort.signal, tools: offered, ...(maxTokens ? { maxTokens } : {}), onDelta: (text, streamKind) => {
                 streamed = true;
                 produced = true;
                 if (streamKind === "assistant_text") answerStreamed = true;
@@ -952,6 +981,15 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             ok = true;
             break;
           }
+          if (finalRequest) turnEntry.ending = true;
+          // The last request had no tools: its reply ends the turn (a failed tool still ends it as tool_error below).
+          if (finalRequest && (completion.toolCalls.length || !toolFailed)) {
+            console.info(`${options.driverKind}: [context] request budget reached (${ctx.maxTurnRequests} requests)`);
+            stopReason = "request_budget";
+            emit({ ...base(turn.threadId, turnId), type: "runtime.notice", message: requestBudgetStopped(ctx.maxTurnRequests!) });
+            ok = true;
+            break;
+          }
           if (!completion.toolCalls.length) {
             if (!reply.trim()) throw new ChatProtocolError("provider returned an empty response");
             if (completion.finishReason && completion.finishReason !== "stop") {
@@ -992,8 +1030,11 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
               let verdict: ReturnType<typeof parseVerdict> | null = null;
               if (meter?.wouldExceed(calibration.apply(countTokens(prompt, model)) + 200)) {
                 emit({ ...base(turn.threadId, turnId), type: "verify.completed", verdict: "skipped", attempt, why: "budget" });
+              } else if (requestsLeft() <= 1) {
+                emit({ ...base(turn.threadId, turnId), type: "verify.completed", verdict: "skipped", attempt, why: "request_budget" });
               } else {
                 try {
+                  requests++;
                   const checked = await adapter.complete({ messages: [{ role: "user", content: prompt }], model: ctx.summaryModel || model, stream: false, signal: abort.signal, tools: [], maxTokens: VERIFY_MAX_TOKENS });
                   if (checked.usage) {
                     usage.input += checked.usage.input;
