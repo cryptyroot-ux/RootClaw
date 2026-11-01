@@ -260,7 +260,7 @@ const hook = async (name: string) => {
   const created = await api("POST", "/api/webhooks", { name, prompt: `${name}: read the lead.`, botId: chief.id });
   expect(created.status).toBe(201);
   const deliver = async (key: string) => {
-    const response = await fetch(created.body.credential.url, { method: "POST", headers: { "content-type": "application/json", "idempotency-key": key }, body: JSON.stringify({ lead: "Ada" }) });
+    const response = await fetch(created.body.credential.url, { method: "POST", headers: { authorization: `Bearer ${created.body.credential.secret}`, "content-type": "application/json", "idempotency-key": key }, body: JSON.stringify({ lead: "Ada" }) });
     expect(response.status).toBe(202);
     return (await response.json() as { runId: string }).runId;
   };

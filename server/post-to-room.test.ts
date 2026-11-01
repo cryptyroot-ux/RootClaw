@@ -715,7 +715,7 @@ describe("post_to_room", () => {
     expect(hook.status).toBe(201);
     const delivered = await fetch(str(field(hook.body, "credential", "url")), {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { authorization: `Bearer ${str(field(hook.body, "credential", "secret"))}`, "content-type": "application/json" },
       body: JSON.stringify({ status: "failed" }),
     });
     expect(delivered.status).toBe(202);

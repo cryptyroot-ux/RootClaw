@@ -74,11 +74,11 @@ describe("webhook-only ingress", () => {
     expect((await fetch(`${ingress.baseUrl}/api/bots`)).status).toBe(404);
   });
 
-  it("accepts capability URLs and deduplicates retries", async () => {
+  it("accepts the generated address with the secret in a header and deduplicates retries", async () => {
     const credential = webhookCredential(ingress.baseUrl, endpointId, secret);
     const send = () => fetch(credential.url, {
       method: "POST",
-      headers: { "content-type": "application/json", "idempotency-key": "delivery-1", "x-github-event": "push" },
+      headers: { "x-rootclaw-secret": credential.secret, "content-type": "application/json", "idempotency-key": "delivery-1", "x-github-event": "push" },
       body: JSON.stringify({ ref: "main", id: "event-in-body" }),
     });
     const first = await send();
@@ -163,7 +163,7 @@ describe("webhook-only ingress", () => {
     const before = queued.length;
     const send = () => fetch(credential.url, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { authorization: `Bearer ${credential.secret}`, "content-type": "application/json" },
       body: JSON.stringify({ id: "shared-record", task: "Handle this update" }),
     });
     expect((await send()).status).toBe(202);
@@ -176,7 +176,7 @@ describe("webhook-only ingress", () => {
     const before = queued.length;
     const response = await fetch(webhookCredential(ingress.baseUrl, created.webhook.endpointId, created.secret).url, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-webhook-event": "support.created" },
+      headers: { authorization: `Bearer ${created.secret}`, "content-type": "application/json", "x-webhook-event": "support.created" },
       body: JSON.stringify({ task: "Triage ticket 42" }),
     });
     expect(response.status).toBe(202);
@@ -311,5 +311,64 @@ describe("advertised base URL", () => {
       expect(() => advertisedWebhookBase(bad)).toThrow(/absolute http\(s\) URL such as https:\/\//);
     }
     expect(advertisedWebhookBase("http://10.0.0.5:8800///")).toBe("http://10.0.0.5:8800");
+  });
+});
+
+describe("the secret stays out of URLs (audit N21)", () => {
+  const fresh = () => {
+    const created = manager.create({ name: "N21", prompt: "Review", botId: "rootclaw-1" });
+    return { id: created.webhook.endpointId, secret: created.secret, url: webhookCredential(ingress.baseUrl, created.webhook.endpointId, created.secret).url };
+  };
+  const post = (url: string, headers: Record<string, string> = {}) =>
+    fetch(url, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: "{}" });
+
+  it("hands out an address without the secret in it", () => {
+    const { id, secret: minted, url } = fresh();
+    const credential = webhookCredential("https://bots.example.com", id, minted);
+    expect(url).toBe(`${ingress.baseUrl}/hooks/${id}`);
+    expect(credential.url).toBe(credential.endpointUrl);
+    expect(credential.url).not.toContain(minted);
+    expect(credential.url).not.toContain(encodeURIComponent(minted));
+  });
+
+  it("authenticates by Authorization: Bearer or x-rootclaw-secret and rejects a wrong or missing header", async () => {
+    const { secret: minted, url } = fresh();
+    expect((await post(url, { authorization: `Bearer ${minted}` })).status).toBe(202);
+    expect((await post(url, { "x-rootclaw-secret": minted })).status).toBe(202);
+    expect((await post(url, { authorization: "Bearer whsec_wrong" })).status).toBe(401);
+    expect((await post(url, { "x-rootclaw-secret": `${minted}x` })).status).toBe(401);
+    expect((await post(url, { authorization: minted })).status).toBe(401);
+    expect((await post(url)).status).toBe(401);
+  });
+
+  it("still accepts a secret in the path but warns once per endpoint, without logging the secret", async () => {
+    const { id, secret: minted, url } = fresh();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect((await post(`${url}/${encodeURIComponent(minted)}`)).status).toBe(202);
+      expect((await post(`${url}/${encodeURIComponent(minted)}`)).status).toBe(202);
+      const lines = warn.mock.calls.map((call) => call.join(" ")).filter((line) => line.includes(id));
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toMatch(/deprecated/);
+      expect(warn.mock.calls.flat().join(" ")).not.toContain(minted);
+      expect((await post(`${url}/whsec_wrong`)).status).toBe(401);
+      expect((await post(`${url}/whsec_wrong`, { authorization: "Bearer whsec_wrong" })).status).toBe(401);
+      expect((await post(`${url}/${encodeURIComponent(minted)}`, { authorization: "Bearer from-another-system" })).status).toBe(202);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("does not warn for a wrong path secret, so unknown requests cannot grow the warned set", async () => {
+    const { id, url } = fresh();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect((await post(`${url}/whsec_wrong`)).status).toBe(401);
+      expect((await post(`${ingress.baseUrl}/hooks/wh_unknown/whsec_wrong`)).status).toBe(401);
+      expect(warn.mock.calls.flat().join(" ")).not.toContain(id);
+      expect(warn.mock.calls.flat().join(" ")).not.toContain("wh_unknown");
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

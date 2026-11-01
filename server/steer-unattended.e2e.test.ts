@@ -139,7 +139,7 @@ posixOnly("a steered message does not lift the unattended mark on its own", () =
     expect(hook.status).toBe(201);
     const delivered = await fetch(hook.body.credential.url, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { authorization: `Bearer ${hook.body.credential.secret}`, "content-type": "application/json" },
       body: JSON.stringify({ status: "failed" }),
     });
     expect(delivered.status).toBe(202);

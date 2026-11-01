@@ -61,3 +61,22 @@ describe("server-sent events (audit N09, N10)", () => {
     await expect(collect(new Response(body))).rejects.toThrow(/size limit/);
   });
 });
+
+describe("tool calls without a stop reason never run (audit N06d)", () => {
+  const toolStream = (stopDelta: object) => sse([{ type: "message_start", message: { usage: {} } }, { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "t1", name: "write_file" } },
+    { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: "{\"path\":\"a.txt\",\"content\":\"COMPLETE_BUT_NO_STOP_REASON\"}" } },
+    { type: "message_delta", delta: stopDelta, usage: { output_tokens: 5 } }, { type: "message_stop" }]);
+  it("Anthropic: a stream that ends with message_stop but no stop_reason is malformed, even when the input parses", async () => {
+    serve(toolStream({}));
+    await expect(createAnthropicAdapter({ url: "http://x", apiKey: "k" }).complete(request() as never)).rejects.toBeInstanceOf(MalformedToolCallError);
+  });
+  it("Anthropic: the same stream with stop_reason tool_use still runs its call", async () => {
+    serve(toolStream({ stop_reason: "tool_use" }));
+    const completion = await createAnthropicAdapter({ url: "http://x", apiKey: "k" }).complete(request() as never);
+    expect(completion).toMatchObject({ finishReason: "tool_calls", toolCalls: [{ function: { name: "write_file", arguments: "{\"path\":\"a.txt\",\"content\":\"COMPLETE_BUT_NO_STOP_REASON\"}" } }] });
+  });
+  it("Anthropic: text alone with no stop_reason still finishes", async () => {
+    serve(sse([{ type: "message_start", message: { usage: {} } }, { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "hi" } }, { type: "message_stop" }]));
+    expect((await createAnthropicAdapter({ url: "http://x", apiKey: "k" }).complete(request(false) as never)).text).toBe("hi");
+  });
+});

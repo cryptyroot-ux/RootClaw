@@ -69,7 +69,7 @@ it("does not run a delivery twice after a process dies between the queue and ing
     }, { timeout: 20_000, interval: 150 }).toBe("completed");
 
     const response = await fetch(created.credential.url, {
-      method: "POST", headers: { "content-type": "application/json", "idempotency-key": "restart-event" },
+      method: "POST", headers: { authorization: `Bearer ${created.credential.secret}`, "content-type": "application/json", "idempotency-key": "restart-event" },
       body: JSON.stringify({ item: 1 }), signal: AbortSignal.timeout(2_000),
     });
     expect(response.status).toBe(202);

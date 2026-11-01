@@ -227,7 +227,12 @@ Open the link (`https://<DOMAIN>/pair#code=…`) in a browser and it is
 paired; see "Using it from your computer" for what a session is. Webhook
 URLs (`https://<DOMAIN>/hooks/wh_…`) work without a session, and that is the
 base the app prints on new hooks because the stack sets
-`ROOTCLAW_WEBHOOK_PUBLIC_URL`.
+`ROOTCLAW_WEBHOOK_PUBLIC_URL`. The URL carries no secret: senders put it in
+an `Authorization: Bearer <secret>` or `x-rootclaw-secret` header. Older
+addresses with the secret in the path still work but are deprecated and log
+a warning (without the secret); rotate them with **Replace address** (or
+`POST /api/webhooks/<id>/rotate`), since a secret in a path lands in proxy
+access logs.
 
 What the stack does, so you can adapt it:
 

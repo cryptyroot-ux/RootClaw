@@ -50,7 +50,7 @@ describe("a webhook's address for the person", () => {
     const { webhooks, call } = await serve();
     const created = webhooks.create({ name: "Watcher", prompt: "Summarize it", botId: "bot-a" });
     const read = await call("GET", `/api/webhooks/${created.webhook.id}/address`);
-    expect(read).toMatchObject({ status: 200, body: { credential: { url: `http://127.0.0.1:8800/hooks/${created.webhook.endpointId}/${created.secret}`, secret: created.secret } } });
+    expect(read).toMatchObject({ status: 200, body: { credential: { url: `http://127.0.0.1:8800/hooks/${created.webhook.endpointId}`, secret: created.secret } } });
     expect(read.body.webhook).not.toHaveProperty("sealedSecret");
     expect(webhooks.authorize(created.webhook.endpointId, created.secret)).toBe(true);
     // Replace address is the only way to a new one.

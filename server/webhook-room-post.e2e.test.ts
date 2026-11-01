@@ -38,8 +38,8 @@ it("posts text, a voice note and an image into a room as one bot message, with n
     return value;
   };
   const cli = (...args: string[]) => runControlOmb([...args, "--url", fixture.info.url]) as Promise<any>;
-  const deliver = async (url: string, body: unknown, deliveryId?: string) => {
-    const response = await fetch(url, { method: "POST", headers: { "content-type": "application/json", ...(deliveryId ? { "idempotency-key": deliveryId } : {}) }, body: JSON.stringify(body) });
+  const deliver = async ([url, secret]: [string, string], body: unknown, deliveryId?: string) => {
+    const response = await fetch(url, { method: "POST", headers: { authorization: `Bearer ${secret}`, "content-type": "application/json", ...(deliveryId ? { "idempotency-key": deliveryId } : {}) }, body: JSON.stringify(body) });
     return { status: response.status, body: await response.json() as any };
   };
   try {
@@ -52,7 +52,7 @@ it("posts text, a voice note and an image into a room as one bot message, with n
     }, 201);
     const created = await api("POST", "/api/webhooks", { name: "Daily brief", botId: herald.id, delivery: "post", groupId: room.id, prompt: "" }, 201);
     expect(created.webhook).toMatchObject({ delivery: "post", groupId: room.id });
-    const url = created.credential.url as string;
+    const url: [string, string] = [created.credential.url, created.credential.secret];
     const heraldTasks = (await api("GET", "/api/bots")).bots.find((bot: any) => bot.id === herald.id).tasks.length;
     const roomLines = async () => (await api("GET", `/api/threads/${room.threadId}/messages?limit=200`)).messages as any[];
 
@@ -76,7 +76,7 @@ it("posts text, a voice note and an image into a room as one bot message, with n
     expect((await api("GET", "/api/webhooks")).attempts.at(-1)).toMatchObject({ outcome: "accepted", threadId: room.threadId, reason: "Posted to the room with 2 attachments (no task run)" });
 
     expect(await deliver(url, { text }, "brief-1")).toMatchObject({ status: 202, body: { duplicate: true } });
-    const wrong = url.replace(/[^/]+$/u, "whsec_wrong");
+    const wrong: [string, string] = [url[0], "whsec_wrong"];
     expect(await deliver(wrong, { text: "Not from the owner" })).toEqual({ status: 401, body: { error: "Invalid webhook URL or secret" } });
     await api("POST", `/api/webhooks/${created.webhook.id}/test`, {}, 400);
     expect(await roomLines()).toHaveLength(1);

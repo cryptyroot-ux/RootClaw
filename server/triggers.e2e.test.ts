@@ -67,7 +67,7 @@ it("sets up schedule and webhook triggers from chat at Ask, with no confirmation
     ]);
     expect(toolText(hooked, "create_trigger")).toContain("applied at once");
     const botAddress = /"url": "([^"]+)"/u.exec(toolText(hooked, "create_trigger"))?.[1];
-    expect(botAddress).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/hooks\/wh_[\w-]+\/whsec_[\w-]+$/u);
+    expect(botAddress).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/hooks\/wh_[\w-]+$/u);
     const listed = toolText(hooked, "list_triggers");
     expect(listed).toContain('"kind": "schedule"');
     expect(listed).toContain('"kind": "webhook"');
@@ -85,7 +85,7 @@ it("sets up schedule and webhook triggers from chat at Ask, with no confirmation
     const { credential } = await api("GET", `/api/webhooks/${webhookId}/address`);
     expect(credential.url).toBe(botAddress);
     writeFileSync(planPath, JSON.stringify({ [bot.id]: { steps: [], reply: "Drafted the follow-up." } }));
-    const call = (key: string) => fetch(credential.url, { method: "POST", headers: { "content-type": "application/json", "idempotency-key": key }, body: JSON.stringify({ lead: "Ada", email: "ada@example.com" }) });
+    const call = (key: string) => fetch(credential.url, { method: "POST", headers: { authorization: `Bearer ${credential.secret}`, "content-type": "application/json", "idempotency-key": key }, body: JSON.stringify({ lead: "Ada", email: "ada@example.com" }) });
     const first = await call("lead-1");
     expect(first.status).toBe(202);
     const accepted = await first.json() as any;

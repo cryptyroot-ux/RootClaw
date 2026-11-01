@@ -46,7 +46,17 @@ Webhooks start the same queued task executor from an external HTTP request. They
 
 The receiver exposes only health and secret hook routes. It does not expose the broader RootClaw API.
 
-Bearer authentication is preferred because it keeps the secret out of URLs and most access logs. A capability URL is available for senders that cannot set headers.
+The address RootClaw gives out (`/hooks/wh_…`) does not contain the secret. Each request sends the secret in a header, either `Authorization: Bearer <secret>` or `x-rootclaw-secret: <secret>`, so it stays out of URLs, proxy logs and access logs.
+
+An older address with the secret in the path (`/hooks/wh_…/whsec_…`) still works so existing senders keep running, but it is deprecated: the server logs a warning for that automation (never the secret itself) the first time it is used.
+
+#### Rotating a webhook secret
+
+Rotate the secret whenever it may have been exposed, and for every automation whose address was ever shared with the secret in its path: such addresses end up in proxy and access logs, browser history and the other app's settings.
+
+1. Press **Replace address** on the automation's card (or call `POST /api/webhooks/<id>/rotate`). A new secret is made and the old one stops working at once.
+2. In the other app, set the address and send the new secret in the `Authorization: Bearer` or `x-rootclaw-secret` header.
+3. Requests that still carry the old secret are rejected with `401` and show as rejected attempts on the automation.
 
 ### A bot that sets up its own webhook
 

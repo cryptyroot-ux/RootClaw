@@ -56,3 +56,30 @@ describe("ModelAdapter seam", () => {
     expect(error).toMatchObject({ limit: "engine" });
   });
 });
+
+describe("tool calls with no finish reason (audit N06d)", () => {
+  const call = { id: "c1", type: "function" as const, function: { name: "write_file", arguments: "{\"path\":\"a.txt\",\"content\":\"x\"}" } };
+  const rounds = (protocol: string) => {
+    const seen: number[] = [];
+    let n = 0;
+    const adapter: ModelAdapter = { protocol, complete: async () => {
+      seen.push(++n);
+      return n === 1 ? done("", { toolCalls: [call], finishReason: null }) : done("ok");
+    } };
+    return { adapter, seen };
+  };
+  it("an Anthropic round never runs them: the engine asks for the round again", async () => {
+    const { adapter, seen } = rounds("anthropic-messages");
+    const events = await run(adapter);
+    expect(events).toContainEqual(expect.objectContaining({ type: "turn.retrying", reason: "malformed_tool_call" }));
+    expect(JSON.stringify(events)).not.toContain("write_file");
+    expect(seen.length).toBe(2);
+  });
+  it("an OpenAI-compatible round that ended on [DONE] without one still runs them", async () => {
+    const { adapter, seen } = rounds("openai-chat");
+    const events = await run(adapter);
+    expect(events).not.toContainEqual(expect.objectContaining({ type: "turn.retrying" }));
+    expect(JSON.stringify(events)).toContain("write_file");
+    expect(seen.length).toBe(2);
+  });
+});

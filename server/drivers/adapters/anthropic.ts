@@ -144,5 +144,7 @@ async function fromStream(response: Response, request: Parameters<ModelAdapter["
   request.signal?.throwIfAborted();
   if (!ended && !stop) throw new ChatProtocolError("Stream ended before completion");
   const calls = [...tools.entries()].sort(([a], [b]) => a - b).map(([, tool]) => ({ id: tool.id, type: "function" as const, function: { name: tool.name, arguments: tool.args || "{}" } }));
+  // Tool input from a stream that never said why it stopped may be cut short yet still parse: it never runs (audit N06d).
+  if (!stop && calls.length) throw new MalformedToolCallError("provider tool calls arrived without a stop reason");
   return finish(text, reasoning, usage, calls, stop);
 }
