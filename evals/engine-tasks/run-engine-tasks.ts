@@ -16,6 +16,8 @@ import { ENGINE_TASKS, type EngineTask } from "./tasks.ts";
 export interface RunRow {
   task: string; mode: "off" | "plan+verify"; pass: boolean; why: string; rounds: number; input: number; output: number;
   ms: number; stopReason: string | null; capped: boolean; costUsd?: number; compactions?: number; plan?: unknown; verify?: unknown; tools: string[];
+  /** Tool calls started in each model round, in order. */
+  callsPerRound?: number[];
   error?: string; failureLog?: string;
   /** The provider, not the task, failed (rate limit, outage, credit, routing): not counted as a task failure. */
   infra?: boolean;
@@ -39,7 +41,7 @@ const args = (name: string) => process.argv.flatMap((value, index) => process.ar
 export function installRequestBudget(max: number, modelsFile?: string, secrets: string[] = []) {
   const real = globalThis.fetch;
   /** exchanges: request/response bodies of the run in progress (redacted), kept for a failure log. */
-  const state = { sent: 0, refused: 0, log: [] as string[], exchanges: [] as Exchange[] };
+  const state = { sent: 0, refused: 0, log: [] as string[], exchanges: [] as Exchange[], byKind: { chat: 0, models: 0, other: 0 } };
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input instanceof Request ? input.url : input);
     if (modelsFile && /\/models(\?|$)/.test(url)) return new Response(readFileSync(modelsFile, "utf8"), { status: 200, headers: { "content-type": "application/json" } });
@@ -47,6 +49,7 @@ export function installRequestBudget(max: number, modelsFile?: string, secrets: 
     state.sent++;
     const n = state.sent;
     const path = url.replace(/^https?:\/\/[^/]+/, "");
+    state.byKind[/\/models(\?|$)/.test(path) ? "models" : /\/chat\/completions(\?|$)/.test(path) ? "chat" : "other"]++;
     const request = redact(typeof init?.body === "string" ? init.body : "", secrets);
     try {
       const response = await real(input, init);
@@ -114,7 +117,7 @@ async function main() {
   const out = join(dirname(fileURLToPath(import.meta.url)), "..", "reports", "runs");
   mkdirSync(out, { recursive: true });
   const file = join(out, `engine-tasks-${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
-  writeFileSync(file, JSON.stringify({ provider, model, roundCap, requests: budget.sent, refused: budget.refused, requestLog: budget.log, rows }, null, 2));
+  writeFileSync(file, JSON.stringify({ provider, model, roundCap, requests: budget.sent, refused: budget.refused, requestLog: budget.log, ...orchestrationReport(rows, budget), rows }, null, 2));
   console.log(summarize(rows));
   console.log(`requests sent: ${budget.sent}, refused by budget: ${budget.refused}; report: ${file}`);
 }
@@ -122,7 +125,7 @@ async function main() {
 type Instance = Awaited<ReturnType<typeof import("../../server/drivers/openai-compat.ts").OpenAICompatDriver.create>>;
 type Runs = ReturnType<typeof import("../../server/run-store.ts").createRunStore>;
 
-async function runOne(instance: Instance, runs: Runs, task: EngineTask, mode: RunRow["mode"], model: string, roundCap: number): Promise<RunRow> {
+export async function runOne(instance: Instance, runs: Runs, task: EngineTask, mode: RunRow["mode"], model: string, roundCap: number): Promise<RunRow> {
   const dir = mkdtempSync(join(tmpdir(), `engine-task-${task.id}-`));
   for (const [name, text] of Object.entries(task.files)) { mkdirSync(dirname(join(dir, name)), { recursive: true }); writeFileSync(join(dir, name), text); }
   const extras = await taskExtras(task);
@@ -132,12 +135,15 @@ async function runOne(instance: Instance, runs: Runs, task: EngineTask, mode: Ru
   const threadId = randomUUID();
   const started = Date.now();
   let rounds = 0;
+  const callsPerRound: number[] = [];
   let capped = false;
   let turnId = "";
   let error: string | undefined;
   const done = new Promise<{ stopReason?: string | null }>((resolve) => {
     const stop = instance.adapter.onEvent((event) => {
       if (event.threadId !== threadId) return;
+      if (event.type === "thread.token-usage.updated") callsPerRound.push(0);
+      if (event.type === "item.started" && event.itemType === "tool") callsPerRound[Math.max(0, callsPerRound.length - 1)] = (callsPerRound.at(-1) ?? 0) + 1;
       if (event.type === "thread.token-usage.updated" && ++rounds >= roundCap && !capped) {
         capped = true;
         void instance.adapter.interruptTurn(threadId, turnId);
@@ -156,7 +162,7 @@ async function runOne(instance: Instance, runs: Runs, task: EngineTask, mode: Ru
   rmSync(dir, { recursive: true, force: true });
   await extras.close();
   return { task: task.id, mode, pass: result.pass, why: result.why, rounds: run?.rounds ?? rounds, input: run?.usage?.input ?? 0, output: run?.usage?.output ?? 0,
-    ms: Date.now() - started, stopReason: completed.stopReason ?? null, capped, plan: run?.plan, verify: run?.verify, tools: run?.tools.map((tool) => tool.name) ?? [],
+    ms: Date.now() - started, stopReason: completed.stopReason ?? null, capped, plan: run?.plan, verify: run?.verify, tools: run?.tools.map((tool) => tool.name) ?? [], callsPerRound,
     ...(typeof run?.usage?.costUsd === "number" ? { costUsd: run.usage.costUsd } : {}), compactions: compactLines.length, ...(error ? { error } : {}),
     ...(!result.pass && error && isInfraError(error) ? { infra: true } : {}) };
 }
@@ -198,6 +204,14 @@ export function isInfraError(message: string): boolean {
   return /\b(429|402|502|503|504)\b|rate.?limit|too many requests|temporarily|overloaded|credit|endpoints? (are )?available|provider returned error|fetch failed|ECONNRESET|ETIMEDOUT|eval request budget/i.test(message);
 }
 
+const callTotals = (rows: RunRow[]) => ({ totalCalls: rows.reduce((total, row) => total + row.tools.length, 0), totalRounds: rows.reduce((total, row) => total + row.rounds, 0) });
+
+/** The run's request mix and how many tool calls each model round carried, over all rows. */
+export function orchestrationReport(rows: RunRow[], budget: { byKind: { chat: number; models: number; other: number } }) {
+  const { totalCalls, totalRounds } = callTotals(rows);
+  return { requestsByKind: { ...budget.byKind }, totalCalls, totalRounds, callsPerRound: totalRounds ? Number((totalCalls / totalRounds).toFixed(2)) : 0 };
+}
+
 export function summarize(rows: RunRow[]): string {
   const lines = ["| task | OFF | ON | OFF tokens (in/out) | ON tokens (in/out) | OFF rounds | ON rounds |", "|---|---|---|---|---|---|---|"];
   const tasks = [...new Set(rows.map((row) => row.task))];
@@ -211,6 +225,8 @@ export function summarize(rows: RunRow[]): string {
   const sum = (mode: RunRow["mode"]) => rows.filter((row) => row.mode === mode && paired.includes(row.task)).reduce((total, row) => total + row.input + row.output, 0);
   const rate = (mode: RunRow["mode"]) => `${rows.filter((row) => row.mode === mode && row.pass).length}/${rows.filter((row) => row.mode === mode && !row.infra).length}`;
   lines.push("", `success OFF ${rate("off")}, ON ${rate("plan+verify")}; token ratio ON/OFF over ${paired.length} paired task(s): ${sum("off") ? (sum("plan+verify") / sum("off")).toFixed(2) : "n/a"}`);
+  const { totalCalls, totalRounds } = callTotals(rows);
+  lines.push(`calls/round ${totalRounds ? (totalCalls / totalRounds).toFixed(2) : "n/a"} (${totalCalls} calls over ${totalRounds} rounds)`);
   return lines.join("\n");
 }
 

@@ -76,7 +76,7 @@ describe("Mistral provider", () => {
     expect(completed).toMatchObject({ ok: true, usage: { input: 15, output: 2 } });
     expect(JSON.parse(String(request?.body))).toEqual({ model: "mistral-large-latest", stream: true,
       messages: [{ role: "user", content: "hello" }],
-      ...(tools === false ? {} : { tools: [ASK_USER_TOOL_DEFINITION] }) });
+      ...(tools === false ? {} : { tools: [ASK_USER_TOOL_DEFINITION], parallel_tool_calls: true }) });
     recorder.stop(); await instance.dispose();
   });
 

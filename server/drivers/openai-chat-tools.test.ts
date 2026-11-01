@@ -1276,7 +1276,7 @@ describe("structured tool execution boundaries", () => {
 
   it("stops a model that keeps requesting tools after 64 steps, with one next action that does not repeat the steps that ran", async () => {
     const f = await fixture((_body, response, round) => sse(response, [
-      chunk({ tool_calls: [toolCall("audit_write", '{"name":"receipt","value":"done"}', `call_${round}`)] }, "tool_calls"),
+      chunk({ tool_calls: [toolCall("audit_write", `{"name":"receipt","value":"${round}"}`, `call_${round}`)] }, "tool_calls"),
     ]));
     const stop = f.instance.adapter.onEvent((event) => {
       if (event.type === "request.opened") void f.instance.adapter.respondToRequest(f.threadId, event.requestId!, { behavior: "allow" });

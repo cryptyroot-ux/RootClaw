@@ -37,6 +37,7 @@ import { compactTurnMessages, DEFAULT_KEEP_EXCHANGES, estimateRequestTokens, off
 import { contextWindowFor, learnContextWindow, noteAcceptedRequest, windowBelowRefusal } from "../context-budget.ts";
 import { fingerprint, replayDelivered, type DeliveredUserMessage } from "./delivered-replay.ts";
 import { deferTools, lazyToolsEnabled, LOAD_TOOLS_TOOL, loadToolsResult } from "./tool-loading.ts";
+import { chatCompletionRequest, refusedParallelToolCalls, rejectsParallelToolCalls, reuseOrRun, TOOL_LOOP_NOTE, TOOL_LOOP_NOTICE, ToolLoopGuard, UnsupportedParallelToolCallsError } from "./openai-chat-orchestration.ts";
 import { executeWorkspaceTool, skillReadRoots, validateWorkspaceArgs, WORKSPACE_TOOL_DEFINITIONS, WORKSPACE_TOOLS_PROMPT, workspaceToolReadOnly, workspaceToolView, shellCommandScope, SHELL_TOOL, stopBackgroundJobs, type WorkspaceToolsConfig } from "./workspace-tools.ts";
 import { runToolBatch } from "./tool-batch.ts";
 import { requestTooLargeMessage } from "../../shared/request-too-large.ts";
@@ -217,6 +218,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     return timer;
   };
 
+  let parallelToolCalls = true;
   const complete = async (
     messages: OpenAIChatMessage[],
     model: string,
@@ -245,12 +247,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         ? AbortSignal.any([signal, timeoutController.signal])
         : timeoutController.signal;
 
-      const payload = JSON.stringify({
-        ...options.requestBody(model, messages, stream),
-        ...(tools.length ? { tools, ...(toolChoice ? { tool_choice: toolChoice } : {}) } : {}),
-        // OpenAI's reasoning families only take max_completion_tokens; everything else the classic field.
-        ...(maxTokens ? (/^(o\d|gpt-5|gpt-6)/i.test(model.split("/").pop() ?? "") ? { max_completion_tokens: maxTokens } : { max_tokens: maxTokens }) : {}),
-      });
+      const { payload, parallel } = chatCompletionRequest(options.requestBody(model, messages, stream), { tools, toolChoice, maxTokens, model, allowParallel: parallelToolCalls });
       const pastLimit = options.timeoutMs > FETCH_LIMIT_MS;
       const send = (url: string, init: RequestInit) => fetchFresh(url, init, pastLimit ? fetchPastLimit : fetch, {
         ...(pastLimit ? { headersTimeout: 0, bodyTimeout: 0 } : {}),
@@ -267,6 +264,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         const body = await response.text().catch(() => "");
         if (rejectsKey(response.status, body)) noteKeyRejected(options.apiUrl, options.apiKey);
         const message = `${options.httpErrorLabel} HTTP ${response.status}${body ? `: ${httpErrorDetail(body)}` : ""}`;
+        if (parallel && rejectsParallelToolCalls(response.status, body)) refusedParallelToolCalls(options.driverKind, model, message, () => { parallelToolCalls = false; });
         if (refusesRequestSize(response.status, body) || refusesContextLength(response.status, body)) throw new RequestTooLargeError(message, Buffer.byteLength(payload));
         if (rejectsToolsParameter(response.status, body)) throw new UnsupportedChatToolsError(message);
         const refusal = refusedToolCall(response.status, body);
@@ -544,6 +542,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
       const denials: string[] = [];
       const seenCalls = new Set<string>();
       const callSignatures = new Map<string, string>();
+      const loopGuard = new ToolLoopGuard();
       /** The provider-reported charge, summed over this turn's model rounds that reported one. */
       let costUsd: number | undefined;
       // The planner's state lives outside the try so a failover can hand the plan to the next model in the chain.
@@ -722,7 +721,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             // Between rounds, never inside a tool batch.
           unread = turnEntry.asides.splice(0);
           if (unread.length) messages.push({ role: "user", content: unread.join("\n\n") });
-          turnEntry.ending = round === MAX_CHAT_ROUNDS - 1;
+          turnEntry.ending = round === MAX_CHAT_ROUNDS - 1 || loopGuard.closing;
           // Re-plan triggers: a long turn, or a corrective round after a failed tool.
           if (planVerifyOn && !replanned && round > 0 && (round === REPLAN_AFTER_ROUNDS || correctiveRounds > 0)) {
             replanned = true;
@@ -813,7 +812,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             sentTotal = calibration.provider(sentRaw) + (maxTokens ?? 0);
             try {
               requests++;
-              completion = await adapter.complete({ messages, model, stream: true, signal: abort.signal, tools: tools.definitions, ...(finalRequest ? { toolChoice: "none" as const } : {}), ...(maxTokens ? { maxTokens } : {}), onDelta: (text, streamKind) => {
+              completion = await adapter.complete({ messages, model, stream: true, signal: abort.signal, tools: tools.definitions, ...(finalRequest || loopGuard.closing ? { toolChoice: "none" as const } : {}), ...(maxTokens ? { maxTokens } : {}), onDelta: (text, streamKind) => {
                 streamed = true;
                 produced = true;
                 if (streamKind === "assistant_text") answerStreamed = true;
@@ -835,6 +834,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
                 for (const message of messages) delete message.reasoning_content;
                 continue;
               }
+              if (error instanceof UnsupportedParallelToolCallsError && !streamed && !abort.signal.aborted) continue;
               // A provider refuses an oversized request before running anything, so one smaller copy may go again.
               if (error instanceof RequestTooLargeError && !abort.signal.aborted) {
                 if (!streamed && overflows < 3) {
@@ -936,6 +936,11 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           const reply = completion.text.trim() ? completion.text : completion.toolCalls.length ? "" : completion.reasoning;
           if (reply.trim()) emit({ ...base(turn.threadId, turnId), type: "item.completed", itemType: "assistant_text", text: safeText(reply) });
           abort.signal.throwIfAborted();
+          if (loopGuard.closing) {
+            stopReason = "tool_loop";
+            ok = true;
+            break;
+          }
           // At the cap a final answer still lands; a round that wants more tools ends here, before spending more.
           if (spend === "stop" && completion.toolCalls.length) {
             // The person's own cap did its job: say so plainly, not as a failure the chain should fail over from.
@@ -1120,6 +1125,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
                 started = true;
                 if (allowed) result = await executeWorkspaceTool(call.function.name, args as Record<string, unknown>, workspace, abort.signal);
                 else {
+                  loopGuard.deny(call.id);
                   denials.push(shown.title);
                   result = { ok: false, text: refusal(floored, (message) => emit({ ...base(turn.threadId, turnId), type: "runtime.notice", message })) };
                 }
@@ -1175,6 +1181,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
                     }
                   }
                 } else {
+                  loopGuard.deny(call.id);
                   denials.push(shown.title);
                   result = { ok: false, text: refusal(floored, (message) => emit({ ...base(turn.threadId, turnId), type: "runtime.notice", message })) };
                 }
@@ -1202,19 +1209,24 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           // Read-only calls run concurrently (bounded); mutating ones one at a time, in order. Results reach the model in call order.
           await runToolBatch(completion.toolCalls, {
             readOnly: (call) => readOnlyTool(call.function.name),
-            run: runCall,
+            run: (call) => reuseOrRun(loopGuard, call, readOnlyTool(call.function.name), runCall, (parsed) => {
+              emit({ ...base(turn.threadId, turnId), type: "item.started", itemType: "tool", itemId: call.id, title: call.function.name });
+              emit({ ...base(turn.threadId, turnId), type: "item.completed", itemType: "tool", itemId: call.id, ok: true, output: preview(parsed) });
+            }),
             signal: abort.signal,
             commit: ({ call, result, content, fatal }) => {
               // A failed read changed nothing, so it cannot make the answer a false receipt (a probe such as git_status
               // outside a repo, or read_file on a missing file, is often the point); the model sees the error either way.
               if (!result.ok && call.function.name !== UPDATE_PLAN_TOOL && !readOnlyTool(call.function.name)) toolFailed = true;
               messages.push({ role: "tool", tool_call_id: call.id, content });
+              if (loopGuard.commit(call, readOnlyTool(call.function.name), content, round + 1)) emit({ ...base(turn.threadId, turnId), type: "runtime.notice", message: TOOL_LOOP_NOTICE });
               screenshotParts.push(...chatToolImages(call.id, result.images));
               abort.signal.throwIfAborted();
               if (fatal) throw fatal;
             },
           });
           if (screenshotParts.length) messages.push({ role: "user", content: screenshotParts });
+          if (loopGuard.closing) messages.push({ role: "user", content: TOOL_LOOP_NOTE });
           // After the batch ran (so this round's calls saw the tool as offered):
           if (planOnly) {
             planOnlyRounds++;
