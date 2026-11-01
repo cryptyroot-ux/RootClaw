@@ -35,7 +35,7 @@ describe("rootclaw service", () => {
     out.length = 0;
     const refused = runServiceCommand({ action: "install", dataDir: join(dir, "x"), port: 8799, script: "/home/rootclaw/.npm/_npx/deadbeef/node_modules/rootclaw/cli.js", node: "/usr/bin/node", platform: "linux" }, io);
     expect(refused).toBe(1);
-    expect(err.join("\n")).toMatch(/npm install -g rootclaw/);
+    expect(err.join("\n")).toMatch(/node dist-server\/rootclaw\.js service install/);
     expect(existsSync(join(dir, "x", "rootclaw.service"))).toBe(false);
   });
 

@@ -958,7 +958,7 @@ export async function runOnboardingCommand(
   try {
     if (options.command === "setup" || !(await isSetupComplete(options.dataDir))) {
       if (!interactive) {
-        io.error("No completed setup was found. Run `npx rootclaw setup` in an interactive terminal first, or use `npx rootclaw serve` with an existing configuration.");
+        io.error("No completed setup was found. Run `rootclaw setup` in an interactive terminal first, or use `rootclaw serve` with an existing configuration.");
         return 1;
       }
       if (!(await runSetup({ dataDir: options.dataDir, port: options.port }))) {
@@ -982,7 +982,7 @@ export async function runOnboardingCommand(
       saveCliStartup(options.dataDir, startupPreferences(launch));
     }
     if (options.command === "setup") {
-      io.log("\nAll set. Start with: rootclaw (or npx rootclaw without a global install).");
+      io.log("\nAll set. Start with: rootclaw (node dist-server/rootclaw.js in your RootClaw clone).");
       if (options.dataDir !== join(homedir(), ".rootclaw") || options.port !== 8799) {
         io.log(`Use the same --data-dir (${options.dataDir}) and --port (${options.port}) options when starting.`);
       }

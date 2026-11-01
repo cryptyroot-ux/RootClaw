@@ -57,8 +57,8 @@ access  who may sign in with an emailed code at /pair: an address or
         Takes effect at once, no restart.
 service keep the server running across reboots: writes a systemd unit
         (Linux) or a launchd agent (macOS) for the same serve options and
-        prints the commands that install it. Install the package
-        permanently first (npm install -g rootclaw).
+        prints the commands that install it. Run it from your built
+        clone; the unit points at that clone's dist-server/rootclaw.js.
 browser install: the bots' browser engine (agent-browser, pinned) into the
         data dir, and Chrome for Testing into the user's browser cache.
         --with-deps also installs
@@ -90,6 +90,7 @@ fleet   many client workspaces on one Linux server, each its own account,
 
 ${HEADLESS_USAGE}
 
-Install once with \`npm install -g rootclaw\`, then type \`rootclaw\`.
-Or run without a global install: \`npx rootclaw\`. Node 24+ is required.
+The rootclaw npm package is not published. Clone the repository, then run
+\`pnpm install && pnpm build && pnpm build:server\` (docs/install.md) and
+\`alias rootclaw="node $HOME/RootClaw/dist-server/rootclaw.js"\`. Node 24+ is required.
 `;

@@ -48,7 +48,7 @@ describe("service units", () => {
   });
 
   it("refuses to point a service at an npx cache, and knows where each platform's file goes", () => {
-    expect(unstableInstallWarning("/home/rootclaw/.npm/_npx/abc123/node_modules/rootclaw/cli.js")).toMatch(/npm install -g rootclaw/);
+    expect(unstableInstallWarning("/home/rootclaw/.npm/_npx/abc123/node_modules/rootclaw/cli.js")).toMatch(/node dist-server\/rootclaw\.js service install/);
     expect(unstableInstallWarning("/usr/lib/node_modules/rootclaw/cli.js")).toBeNull();
     const linux = servicePlan("linux", "/home/rootclaw/.rootclaw");
     expect(linux?.installed).toBe("/etc/systemd/system/rootclaw.service");
