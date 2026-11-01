@@ -779,7 +779,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         const readOnlyTool = (name: string) => name === LOAD_TOOLS_TOOL ? lazy !== null : name === UPDATE_PLAN_TOOL ? planning : name === READ_TOOL_OUTPUT_TOOL ? offloadOn : workspaceNames.has(name) && workspaceToolReadOnly(name);
         let window = contextWindowFor(model, options.models(), undefined, input.instanceId);
         let budget = turnInputBudget(window, ctx.compactAt);
-        const calibration = new TokenCalibration(model);
+        const calibration = new TokenCalibration(model, input.instanceId);
         // Exact counts for known encodings; loads lazily (once per process) and falls back to the estimate.
         await prepareTokenizer(model);
         let compactions = 0;

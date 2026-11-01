@@ -97,29 +97,34 @@ export function outputTokensFor(window: number, inputTokens: number): number | u
   return room < DEFAULT_OUTPUT_TOKENS ? room : undefined;
 }
 
-/** What each model's last provider count said about the estimate, kept across turns (and threads) so a turn's first
+/** What each instance's model has said about the estimate, kept across turns (and threads) so a turn's first
  * request is already calibrated: for Claude, Gemini and other models without a local tokenizer the character estimate
- * can be off by 2-3x on code or non-Latin text, and only the provider's prompt_tokens knows by how much. */
+ * can be off by 2-3x on code or non-Latin text, and only the provider's prompt_tokens knows by how much. Keyed by
+ * instance and model: two providers serving the same model id count differently. */
 const learnedRatios = new Map<string, number>();
 const MAX_LEARNED_MODELS = 64;
+/** Weight of the newest observation; one odd usage figure (a cached or prefixed prompt) moves the ratio only this far. */
+const CALIBRATION_ALPHA = 0.3;
+const clampRatio = (ratio: number) => Math.min(3, Math.max(1, ratio));
 
 /** Learns how far the cheap estimate is from the provider's own prompt_tokens, never scaling it below 1 (an
  * over-count only compacts early; an under-count overflows the window). Costs nothing: no extra request. */
 export class TokenCalibration {
   private ratio: number;
-  private readonly model: string | undefined;
-  constructor(model?: string) {
-    this.model = model;
-    this.ratio = (model && learnedRatios.get(model)) || 1;
+  private readonly key: string | undefined;
+  constructor(model?: string, instanceId?: string) {
+    this.key = model ? (instanceId ? `${instanceId}:${model}` : model) : undefined;
+    this.ratio = (this.key && learnedRatios.get(this.key)) || 1;
   }
   private observed: number | undefined;
   observe(estimated: number, reported: number | undefined) {
     if (!reported || reported <= 0 || estimated <= 0) return;
+    const first = this.observed === undefined && !(this.key && learnedRatios.has(this.key));
     this.observed = reported / estimated;
-    this.ratio = Math.min(3, Math.max(1, this.observed));
-    if (!this.model) return;
-    learnedRatios.delete(this.model);
-    learnedRatios.set(this.model, this.ratio);
+    this.ratio = first ? clampRatio(this.observed) : clampRatio(CALIBRATION_ALPHA * clampRatio(this.observed) + (1 - CALIBRATION_ALPHA) * this.ratio);
+    if (!this.key) return;
+    learnedRatios.delete(this.key);
+    learnedRatios.set(this.key, this.ratio);
     if (learnedRatios.size > MAX_LEARNED_MODELS) learnedRatios.delete(learnedRatios.keys().next().value!);
   }
   apply(estimated: number) { return Math.ceil(estimated * this.ratio); }

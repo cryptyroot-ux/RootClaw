@@ -87,6 +87,6 @@ describe("lock 3: calibration uses the estimate of the request actually sent", (
       return path ? stream(readCall(calls, path), "tool_calls", usage) : stream({ content: "Done." }, "stop", usage);
     });
     expect(refusedOnce).toBe(true);
-    expect(new TokenCalibration(model).apply(1_000)).toBeGreaterThanOrEqual(1_900);
+    expect(new TokenCalibration(model, "lock-cal").apply(1_000)).toBeGreaterThanOrEqual(1_900);
   });
 });

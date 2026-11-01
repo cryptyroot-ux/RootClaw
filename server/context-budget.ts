@@ -76,9 +76,10 @@ export function compactBudget(window: number, compactAt?: number, nativeCompactA
   return Math.max(1, Math.floor(Math.min(configured, window * 0.9, positive(nativeCompactAt) ? nativeCompactAt * 0.9 : Infinity)));
 }
 
-/** A thread's history in tokens: the model's tokenizer (or the char-class estimate), times its learned calibration. */
-export function threadTokens(texts: readonly string[], model: string | undefined): number {
-  return new TokenCalibration(model).apply(estimateRequestTokens(texts.map((content) => ({ role: "user" as const, content })), [], model));
+/** A thread's history in tokens: the model's tokenizer (or the char-class estimate), times the calibration its
+ * instance learned in native turns. */
+export function threadTokens(texts: readonly string[], model: string | undefined, instanceId?: string): number {
+  return new TokenCalibration(model, instanceId).apply(estimateRequestTokens(texts.map((content) => ({ role: "user" as const, content })), [], model));
 }
 
 export function shouldCompact(input: { contextTokens?: number; estimatedTokens?: number; estimatedBytes?: number; budget: number; floor?: number; window: number; nativeCompactAt?: number }): boolean {

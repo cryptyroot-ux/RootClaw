@@ -7074,7 +7074,7 @@ async function compactConversation(input: {
   const measurement = compactionReading(instance.adapter.capabilities, task.lastContextModel === `${instance.instanceId}:${model}` && !task.rewound ? task.usage?.context : undefined);
   const window = contextWindowFor(model, instance.models, measurement?.window, instance.instanceId);
   await prepareTokenizer(model);
-  const tokens = threadTokens(history.map(entry => entry.text), model);
+  const tokens = threadTokens(history.map(entry => entry.text), model, instance.instanceId);
   let floor = task.contextFloor;
   if (record && record.id === task.appliedCompactionId && floor === undefined && measurement?.tokens) {
     floor = measurement.tokens;
