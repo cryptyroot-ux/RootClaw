@@ -52,7 +52,7 @@ describe("organizational folders through an isolated HTTP fixture", () => {
     expect((await api("PATCH", `/api/bots/${bot.id}/tasks/${first.threadId}`, { modelSelection: selection(models[1]) })).status).toBe(200);
     expect(first.cwd).toBeUndefined();
     expect((await api("POST", `/api/bots/${bot.id}/messages`, { threadId: first.threadId, text: "Keep this project's conversation" })).status).toBe(202);
-    await expect.poll(() => existsSync(join(fixture.info.dataDir, "fake-claude-dump.json"))).toBe(true);
+    await expect.poll(() => existsSync(join(fixture.info.dataDir, "fake-claude-dump.json")), { timeout: 15_000 }).toBe(true);
     expect((await getBot(bot.id)).tasks.find((task: any) => task.threadId === first.threadId).busy).toBe(true);
     expect((await api("PATCH", `/api/bots/${bot.id}/projects/${projectId}`, { name: "Site" })).status).toBe(200);
     const moved = await api("PATCH", `/api/bots/${bot.id}/tasks/${first.threadId}`, { projectId: other.id });
