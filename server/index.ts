@@ -445,7 +445,7 @@ import { screenFrameHash, screenSurfaceForTool, screenTouchingTool, settledFrame
 import { asSchedule, RoutineRequestService } from "./routine-requests.ts"; import { ownerSpokeOnly } from "./cloud-routine-level.ts"; import { routineRunCard, routineRunFallbackText } from "./routine-run-card.ts";
 import { activeRoutinesContext } from "./active-routines-context.ts";
 import { automationContextText, createAutomationReports, newestAutomationLines } from "./automation-reports.ts"; import { createAutomationDestinations } from "./automation-destinations.ts"; import { createProactive } from "./host/proactive.ts"; import { createFirstHourHooks, startFirstHour, welcomeDonePatch } from "./host/first-hour-host.ts"; import { greetingMessage } from "./host/first-hour.ts"; import { READ_AND_DRAFT_PARTS, READ_AND_DRAFT_REFUSAL, READ_AND_DRAFT_TOOLS, recordsAnswer } from "./read-and-draft.ts"; import { createPresenceRoutes } from "./routes/presence.ts"; import { needsYouNow } from "./today.ts";
-import { engineLabel, LimitResetClock, nearLimitNote } from "./limit-resets.ts"; import { planAccountsFromInstances } from "./plan-usage.ts"; import { LimitFailovers, limitBackupAllowed } from "./limit-failover.ts"; import { createLimitResetRoutes } from "./routes/limit-resets.ts"; import { createOAuthRoutes } from "./routes/oauth.ts";
+import { engineLabel, LimitResetClock, nearLimitNote } from "./limit-resets.ts"; import { planAccountsFromInstances } from "./plan-usage.ts"; import { LimitFailovers, limitBackupAllowed } from "./limit-failover.ts"; import { createLimitResetRoutes } from "./routes/limit-resets.ts"; import { createOAuthRoutes } from "./routes/oauth.ts"; import { createGrokLoginRoutes } from "./routes/grok-login.ts"; import { GrokLogin } from "./grok-login.ts"; import { grokSubscriptionStatus } from "./grok-subscription.ts";
 import { parseTriggerRequest, triggerTarget } from "./trigger-tools.ts"; import { WebhookRequestError, WebhookRequestService } from "./webhook-requests.ts"; import { createAppTriggerHost } from "./app-trigger-host.ts";
 import { appliesNow, directApply, UNDO_STALE, type DirectApply } from "./direct-apply.ts";
 import { createTeamMemoryRequests } from "./team-memory-requests.ts";
@@ -9536,6 +9536,7 @@ ROUTES.push(createOAuthRoutes({
     broadcast({ kind: "config", ...configStatus() });
   },
 }));
+ROUTES.push(createGrokLoginRoutes(new GrokLogin({ onChange: () => { registry.forgetSnapshots(); broadcast({ kind: "config", ...configStatus() }); } })));
 ROUTES.push(createLimitResetRoutes({ clock: limitClock, routines: routines!, requests: routineRequests, engineName, threadEngine: (botId, threadId) => turnSelection(botId, threadId)?.instanceId,
   threadTitle: (botId, threadId) => store.bot(botId) && !store.bot(botId)!.hidden ? store.taskByThread(botId, threadId)?.title ?? null : null,
   created: (id, auth) => cloudRoutineAuthors?.wrote(id, auth.kind === "session" ? actorKey(auth) : CLOUD_NOBODY_KEY) }));
@@ -11785,7 +11786,7 @@ function configStatus() {
   const eventLogMaxBytes = threadEventLogMaxBytes(cfg);
   const eventLogRetentionDays = threadEventLogRetentionDays(cfg);
   return {
-    xai: keyStatus(cfg.xai?.key),
+    xai: { ...keyStatus(cfg.xai?.key), subscription: grokSubscriptionStatus() },
     mistral: keyStatus(cfg.mistral?.key),
     cerebras: keyStatus(cfg.cerebras?.key),
     groq: keyStatus(cfg.groq?.key), greenference: keyStatus(cfg.greenference?.key),
