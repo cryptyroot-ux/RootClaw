@@ -1,17 +1,16 @@
 # Terminal setup
 
-Install [Node.js](https://nodejs.org/) 24 or newer, then choose either way to run RootClaw:
+Install [Node.js](https://nodejs.org/) 24 or newer and git. The `rootclaw` npm package is not
+published for this repository, so `npx rootclaw` and `npm install -g rootclaw` do not work; build it
+from a clone instead ([install](install.md#1-clone-install-build) has the details):
 
 ```sh
-# Install once, then use the short command:
-npm install -g rootclaw
+git clone https://github.com/cryptyroot-ux/RootClaw.git && cd RootClaw
+corepack enable --install-directory ~/.local/bin && export PATH=~/.local/bin:$PATH
+pnpm install --frozen-lockfile
+NODE_OPTIONS=--max-old-space-size=6144 pnpm build && pnpm build:server
+alias rootclaw="node $PWD/dist-server/rootclaw.js"
 rootclaw
-```
-
-Or, without a global install:
-
-```sh
-npx rootclaw
 ```
 
 Use the same command next time. The first launch guides you through setup; later launches reuse your saved AI connection and phone-access choice. `rootclaw start` is the same as the bare command. If that workspace is already running, RootClaw opens it instead of starting a second server.
@@ -52,7 +51,7 @@ If the workspace starts but its HTTPS check fails, the local workspace remains u
 
 ## Commands
 
-The examples below assume a global install; prefix them with `npx` otherwise.
+The examples below use the `rootclaw` alias from above (`node /path/to/RootClaw/dist-server/rootclaw.js`).
 
 | Command | Use |
 | --- | --- |

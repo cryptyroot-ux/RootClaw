@@ -40,10 +40,11 @@ Needs the desktop app instead: dictation and controlling the server's own deskto
 ## Before you start
 
 1. **A server.** Any Linux VPS: Ubuntu 22.04 or 24.04, 2 CPUs and 4 GB of RAM is plenty. You need `sudo` or root. Hetzner, DigitalOcean, Lightsail, a Mac mini in a cupboard: all fine.
-2. **Node 24 or newer** for paths A and C (`node --version`). On Ubuntu:
+2. **Node 24 or newer, git and bubblewrap** for paths A and C (`node --version`). On Ubuntu:
 
    ```sh
    curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash - && sudo apt-get install -y nodejs
+   sudo apt-get install -y git bubblewrap   # bubblewrap: the bots' shell tool refuses to run without it
    ```
 
    Path B uses Docker instead and needs no Node on the host.
@@ -65,18 +66,41 @@ sudo -iu rootclaw
 ```
 
 The login shell also changes into `/home/rootclaw`; run setup there, not from `/root`.
-Run the `npx` commands below, including the provider setup, in this account. Keep a separate
+Run the `rootclaw` commands below, including the provider setup, in this account. Keep a separate
 administrator shell for system packages and systemd. If you already signed in as
 root, sign in again as `rootclaw`; those accounts have different homes and credentials.
+
+## Get RootClaw (paths A and C)
+
+The `rootclaw` npm package is not published for this repository, so
+`npx rootclaw` and `npm install -g rootclaw` do not work. Build it from a
+clone instead, in the `rootclaw` shell (the same steps as
+[install](install.md#1-clone-install-build)):
+
+```sh
+cd ~
+git clone https://github.com/cryptyroot-ux/RootClaw.git
+cd RootClaw
+corepack enable --install-directory ~/.local/bin   # plain `corepack enable` needs root
+export PATH=~/.local/bin:$PATH
+pnpm install --frozen-lockfile
+NODE_OPTIONS=--max-old-space-size=6144 pnpm build  # web UI -> dist/ (~6 GB heap)
+pnpm build:server                                  # CLI and server -> dist-server/
+echo 'alias rootclaw="node $HOME/RootClaw/dist-server/rootclaw.js"' >> ~/.bashrc
+alias rootclaw="node $HOME/RootClaw/dist-server/rootclaw.js"
+```
+
+Every `rootclaw …` command below is that alias. `pnpm start` in the clone is
+the same as `rootclaw serve`.
 
 ## Path A: a public address with one command
 
 No domain, no proxy, no open port. The server gets an address like `https://c-7f3a9c.rootclaw.example` through a Cloudflare tunnel; only traffic through the tunnel reaches it, and that traffic still has to pair.
 
 ```sh
-npx rootclaw setup          # once: choose AI access, connect, and choose a model
-npx rootclaw login          # once: an emailed code signs this machine in and reserves its address
-npx rootclaw serve --tunnel # runs the server there and prints the pairing link with a QR code
+rootclaw setup          # once: choose AI access, connect, and choose a model
+rootclaw login          # once: an emailed code signs this machine in and reserves its address
+rootclaw serve --tunnel # runs the server there and prints the pairing link with a QR code
 ```
 
 `setup` connects an AI provider; it is separate from the RootClaw account.
@@ -85,7 +109,7 @@ providers can be added later. See [CLI setup](cli-onboarding.md).
 
 `login` asks for your email, sends an 8-digit code, and prints the address it reserved for this machine. `serve --tunnel` downloads `cloudflared` on the first run (a pinned version with a verified digest, into `~/.rootclaw`), starts the server, connects the tunnel, and after a few seconds prints `tunnel: live at https://…`. Leave it running; see "Keep it running" for a service.
 
-The account credentials live in `~/.rootclaw/tunnel-account.json`, readable only by your user. `npx rootclaw logout` releases the address.
+The account credentials live in `~/.rootclaw/tunnel-account.json`, readable only by your user. `rootclaw logout` releases the address.
 
 Skip to "Connect a model provider".
 
@@ -111,16 +135,17 @@ One container for the server plus Caddy for HTTPS at `https://rootclaw.example.c
 
    Leave `ENGINES` empty. It installs agent CLIs into the image at build time, and RootClaw no longer runs them; the example file still lists one.
 
-4. **Start it:**
+4. **Build and start it** from the clone (no prebuilt image is published: the
+   Docker workflow builds with `push: false`). The first build takes several minutes:
 
    ```sh
-   docker compose pull rootclaw && docker compose up -d
+   docker compose up -d --build
    docker compose ps        # rootclaw "healthy", caddy "running"
    ```
 
    Caddy requests the certificate on its own; give it a minute. Then `https://rootclaw.example.com` shows a page asking for a pairing code. That is correct: nothing works until you pair.
 
-In this path, every `npx rootclaw …` command below is run inside the container instead:
+In this path, every `rootclaw …` command below is run inside the container instead:
 
 ```sh
 docker compose exec rootclaw node dist-server/rootclaw.js pair --label "My MacBook"
@@ -131,7 +156,7 @@ docker compose exec rootclaw node dist-server/rootclaw.js pair --label "My MacBo
 From the administrator shell, install Tailscale on the server and sign in (`curl -fsSL https://tailscale.com/install.sh | sh && sudo tailscale up`). Enable HTTPS certificates for your tailnet once in the admin console (DNS → HTTPS Certificates), then run this from the `rootclaw` shell:
 
 ```sh
-npx rootclaw serve --tailscale
+rootclaw serve --tailscale
 ```
 
 Tailscale terminates HTTPS with its own certificate and the pairing link uses the server's MagicDNS name (`https://rootclaw.tail1234.ts.net`). Only devices on your tailnet can reach it, which is a very good property for a server that can run tools.
@@ -143,13 +168,13 @@ the image. For paths A and C, install Linux system libraries once from the
 administrator shell:
 
 ```sh
-sudo -H npx --yes rootclaw browser install --with-deps
+sudo -H node /home/rootclaw/RootClaw/dist-server/rootclaw.js browser install --with-deps
 ```
 
 Then install the browser in the service account's home, from the `rootclaw` shell:
 
 ```sh
-npx --yes rootclaw browser install
+rootclaw browser install
 ```
 
 The administrator's browser download is in a different home; it does not install
@@ -168,7 +193,7 @@ account's shell while the server runs:
 
 ```sh
 export ROOTCLAW_OLLAMA_API_KEY=...        # or use --key-file FILE
-npx rootclaw engine set ollama --key-env ROOTCLAW_OLLAMA_API_KEY
+rootclaw engine set ollama --key-env ROOTCLAW_OLLAMA_API_KEY
 ```
 
 `--key-env` is read by the CLI only; the key is saved in `~/.rootclaw/config.json`
@@ -185,7 +210,7 @@ the service's environment, which wins over a saved key. For path B, use
 `serve` already printed a pairing link and QR code when it started. For another device later:
 
 ```sh
-npx rootclaw pair --label "Kitchen iPad"
+rootclaw pair --label "Kitchen iPad"
 ```
 
 ```
@@ -205,69 +230,57 @@ Worth knowing: a code works **once** and expires after **five minutes**; the lin
 Every paired device is a session:
 
 ```sh
-npx rootclaw sessions              # id, device, scope, last seen, expires
-npx rootclaw sessions revoke ID    # signs that device out and closes its stream at once
-npx rootclaw status                # what the server says about itself
+rootclaw sessions              # id, device, scope, last seen, expires
+rootclaw sessions revoke ID    # signs that device out and closes its stream at once
+rootclaw status                # what the server says about itself
 ```
 
 ## Keep it running
 
-`npx rootclaw serve` is a plain foreground process. For systemd (paths A and C),
-install a chosen release first, from the `rootclaw` shell. Replace `X.Y.Z` with the
-published version you want to run:
+`rootclaw serve` is a plain foreground process. For systemd (paths A and C),
+stop the foreground server with Ctrl-C, then let RootClaw write the unit from
+the `rootclaw` shell:
 
 ```sh
-npm install --global --prefix "$HOME/.local" rootclaw@X.Y.Z
+rootclaw service install --tunnel    # or --tailscale for path C
 ```
 
-Stop the foreground server with Ctrl-C before enabling the service. From the
-administrator shell, save this as `/etc/systemd/system/rootclaw.service`:
-
-```ini
-# /etc/systemd/system/rootclaw.service
-[Unit]
-Description=RootClaw server
-After=network-online.target
-
-[Service]
-User=rootclaw
-WorkingDirectory=/home/rootclaw
-Environment=HOME=/home/rootclaw
-Environment=PATH=/home/rootclaw/.local/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=/home/rootclaw/.local/bin/rootclaw serve --tunnel --no-pair
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
+It writes `/home/rootclaw/.rootclaw/rootclaw.service` and prints the commands
+that install it. Run them from the administrator shell:
 
 ```sh
+sudo install -m 644 /home/rootclaw/.rootclaw/rootclaw.service /etc/systemd/system/rootclaw.service
 sudo systemctl daemon-reload && sudo systemctl enable --now rootclaw
 journalctl -u rootclaw -f            # the server's log, including "tunnel: live at …"
 ```
 
-Use `--tailscale` instead of `--tunnel` for path C. `--no-pair` skips printing a code at every restart; mint one with `npx rootclaw pair` when you need it. Docker (path B) restarts on its own (`restart: unless-stopped`).
+The unit runs as the `rootclaw` user with `Restart=always` and starts
+`node /home/rootclaw/RootClaw/dist-server/rootclaw.js serve --port 8799 --data-dir /home/rootclaw/.rootclaw --no-pair --tunnel`,
+using the same Node binary you ran `service install` with. `--no-pair` skips printing a code at every restart; mint one with `rootclaw pair` when you need it. To change the options, run `service install` again, then `sudo systemctl daemon-reload && sudo systemctl restart rootclaw`. Docker (path B) restarts on its own (`restart: unless-stopped`).
 
-Adjust the account, home, and PATH if yours differ; Node 24 must be available on
-that PATH. The service runs the installed CLI directly, so a restart uses the
-same release without an npm install prompt or an implicit upgrade.
+The service runs your built clone directly, so a restart keeps the same build;
+nothing is downloaded or upgraded implicitly.
 
 ## Update
 
-- **Paths A and C with the service above:** choose the new published version,
-  then run these commands from the administrator shell, replacing `X.Y.Z`:
+- **Paths A and C:** pull and rebuild the clone from the `rootclaw` shell, then
+  restart the service from the administrator shell:
 
   ```sh
-  sudo systemctl stop rootclaw
-  sudo -iu rootclaw npm install --global --prefix /home/rootclaw/.local rootclaw@X.Y.Z
-  sudo systemctl start rootclaw
+  cd ~/RootClaw
+  git pull
+  pnpm install --frozen-lockfile
+  NODE_OPTIONS=--max-old-space-size=6144 pnpm build && pnpm build:server
   ```
 
-  Check that installation succeeded before starting. A service restart by itself
-  does not update the installed package. For foreground `npx` usage, specify the
-  desired release as `npx --yes rootclaw@X.Y.Z serve --tunnel`.
-- **Path B:** `cd RootClaw/deploy && docker compose pull rootclaw && docker compose up -d`.
+  ```sh
+  sudo systemctl restart rootclaw
+  ```
+
+  Check that both builds succeeded before restarting. A service restart by itself
+  does not update anything. To pin a particular version, `git checkout` that
+  commit before building.
+- **Path B:** `cd RootClaw && git pull && cd deploy && docker compose up -d --build`.
 
 Routines and queued work survive a restart. A teammate turn running at that moment runs again once at the next start, told to check what it already did, and the bot that asked for it is told. A person's own turn and a running routine are not run again: the conversation says it was interrupted. Update between runs where you can.
 
@@ -321,9 +334,9 @@ Read this before putting anything else in front of the server.
 
 ## Troubleshooting
 
-**`serve --tunnel` says "no account on this machine yet".** Run `npx rootclaw login` on this machine first; the credentials are per machine.
+**`serve --tunnel` says "no account on this machine yet".** Run `rootclaw login` on this machine first; the credentials are per machine.
 
-**The tunnel stays on "retrying".** The server is running and usable locally; the public hop is not verified yet. Wait a minute (Cloudflare needs a moment on a fresh address), then check `journalctl`/the terminal for the reason. If it never comes up, `npx rootclaw logout && npx rootclaw login` issues a fresh address.
+**The tunnel stays on "retrying".** The server is running and usable locally; the public hop is not verified yet. Wait a minute (Cloudflare needs a moment on a fresh address), then check `journalctl`/the terminal for the reason. If it never comes up, `rootclaw logout && rootclaw login` issues a fresh address.
 
 **Path B: the page never loads or shows a certificate error.** Caddy could not get a certificate. Check that the name resolves to the server and that ports 80 and 443 are open; `docker compose logs caddy` shows the reason.
 
@@ -333,7 +346,7 @@ Read this before putting anything else in front of the server.
 
 **A bot says its provider has no API key.** Save the key under Settings → API keys, or run `engine set` again with `--rotate`.
 
-**What does the server think it is?** `https://<address>/.well-known/rootclaw/environment` is public and shows its id, label, version and capabilities; `npx rootclaw status` prints the same on the server.
+**What does the server think it is?** `https://<address>/.well-known/rootclaw/environment` is public and shows its id, label, version and capabilities; `rootclaw status` prints the same on the server.
 
 **Something else.** `journalctl -u rootclaw --since -10m` (or `docker compose logs rootclaw --tail 100`) shows the server's startup lines. Paste them with your question in the community channel.
 

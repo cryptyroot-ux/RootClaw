@@ -8,7 +8,7 @@ agents: every command can print one JSON document, and the exit code says how
 things went.
 
 ```sh
-npm install -g rootclaw            # or use npx rootclaw …
+alias rootclaw="node $HOME/RootClaw/dist-server/rootclaw.js"   # a built clone: see install.md (no npm package is published)
 rootclaw serve --no-pair &         # a workspace with no screen (or use your desktop app)
 rootclaw engine set claude --key-env ANTHROPIC_API_KEY
 rootclaw team apply launch-room.yaml
@@ -398,12 +398,12 @@ an engine that can limit built-in tools.
 
 ```yaml
 # .github/workflows/rehearse.yml (a sketch)
-- run: npm install -g rootclaw
-- run: rootclaw serve --no-pair --data-dir "$RUNNER_TEMP/rootclaw" &
+- run: corepack enable && pnpm install --frozen-lockfile && pnpm build:server   # in a checkout of RootClaw; no npm package is published
+- run: node dist-server/rootclaw.js serve --no-pair --data-dir "$RUNNER_TEMP/rootclaw" &
   env: { ROOTCLAW_ANTHROPIC_API_KEY: "${{ secrets.ANTHROPIC_API_KEY }}" }   # the workspace's Claude key from the start
-- run: rootclaw doctor --wait 2m          # the server answers and an engine is ready
-- run: rootclaw team apply team.yaml
-- run: rootclaw run "Release checker" "Check the deploy at ${{ env.URL }}" --timeout 20m --strict --export ./out
+- run: node dist-server/rootclaw.js doctor --wait 2m          # the server answers and an engine is ready
+- run: node dist-server/rootclaw.js team apply team.yaml
+- run: node dist-server/rootclaw.js run "Release checker" "Check the deploy at ${{ env.URL }}" --timeout 20m --strict --export ./out
 - uses: actions/upload-artifact@v4
   with: { name: release-check, path: ./out }
 ```
