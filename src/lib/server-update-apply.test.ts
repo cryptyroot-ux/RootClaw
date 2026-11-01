@@ -22,7 +22,7 @@ describe("one-click update progress", () => {
     expect(applyRow(status({ phase: "done", restart: "auto", current: "0.1.135" }))).toEqual({ label: "Updated to v0.1.135", subtitle: "Reloading this page…" });
     expect(applyRow(status({ phase: "done", restart: "manual" }))).toEqual({
       label: "v0.1.135 installed. Restart RootClaw to finish",
-      subtitle: "Nothing restarts this server by itself: stop it and start it again (for example pnpm start).",
+      subtitle: "Nothing restarts RootClaw by itself: stop it and start it again (for example pnpm start).",
     });
   });
 

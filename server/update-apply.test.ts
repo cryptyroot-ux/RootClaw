@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { BACKUP_DIR, commandEnv, createUpdateApplier, diskShortage, MIN_FREE_BYTES, MIN_FREE_INODES, redactor, resolvePnpm, restartMode, type RunResult, type Runner } from "./update-apply.ts";
@@ -218,7 +218,7 @@ describe("update commands", () => {
     const env = { PATH: "/usr/bin", HOME: "/root", OPENROUTER_API_KEY: "sk-or-abcdef123", VPS_ROOT_PASSWORD: "hunter22hunter", NPM_TOKEN: "npm_abcdef", NODE_OPTIONS: "--max-old-space-size=4096" };
     const child = commandEnv(env, "/opt/node/bin");
     expect(child).toEqual({
-      PATH: "/opt/node/bin:/usr/bin", HOME: "/root", NODE_OPTIONS: "--max-old-space-size=4096", GIT_TERMINAL_PROMPT: "0", COREPACK_ENABLE_DOWNLOAD_PROMPT: "0",
+      PATH: ["/opt/node/bin", "/usr/bin"].join(delimiter), HOME: "/root", NODE_OPTIONS: "--max-old-space-size=4096", GIT_TERMINAL_PROMPT: "0", COREPACK_ENABLE_DOWNLOAD_PROMPT: "0",
     });
     expect(commandEnv({}, "/n").NODE_OPTIONS).toBe("--max-old-space-size=6144");
     const redact = redactor(env);
@@ -227,9 +227,12 @@ describe("update commands", () => {
   });
 
   it("finds pnpm beside node, on PATH, or through corepack", () => {
-    expect(resolvePnpm({ PATH: "/usr/bin" }, "/opt/node/bin", (path) => path === "/opt/node/bin/pnpm")).toEqual({ command: "/opt/node/bin/pnpm", prefix: [] });
-    expect(resolvePnpm({ PATH: "/usr/bin" }, "/opt/node/bin", (path) => path === "/usr/bin/pnpm")).toEqual({ command: "/usr/bin/pnpm", prefix: [] });
-    expect(resolvePnpm({ PATH: "" }, "/opt/node/bin", (path) => path === "/opt/node/bin/corepack")).toEqual({ command: "/opt/node/bin/corepack", prefix: ["pnpm"] });
+    const beside = join("/opt/node/bin", "pnpm");
+    const onPath = join("/usr/bin", "pnpm");
+    const corepack = join("/opt/node/bin", "corepack");
+    expect(resolvePnpm({ PATH: "/usr/bin" }, "/opt/node/bin", (path) => path === beside)).toEqual({ command: beside, prefix: [] });
+    expect(resolvePnpm({ PATH: "/usr/bin" }, "/opt/node/bin", (path) => path === onPath)).toEqual({ command: onPath, prefix: [] });
+    expect(resolvePnpm({ PATH: "" }, "/opt/node/bin", (path) => path === corepack)).toEqual({ command: corepack, prefix: ["pnpm"] });
     expect(resolvePnpm({ PATH: "" }, "/opt/node/bin", () => false)).toBeNull();
   });
 
