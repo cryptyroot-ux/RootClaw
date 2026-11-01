@@ -32,8 +32,8 @@ import { classifyError, HttpStatusError, interruptibleDelay, nextRetryDelay, par
 import { plainFailureMessage } from "./engine-errors.ts";
 import { refusesRequestSize, RequestTooLargeError, sizeChange, smallerResend } from "./chat-size-limit.ts";
 import { compactTurnMessages, DEFAULT_KEEP_EXCHANGES, estimateRequestTokens, offloadToolOutput, READ_TOOL_OUTPUT_DEFINITION,
-  READ_TOOL_OUTPUT_TOOL, readToolOutput, refusesContextLength, TokenCalibration, turnCompactBudget, type TurnContextSettings } from "./turn-context.ts";
-import { contextWindowFor } from "../context-budget.ts";
+  READ_TOOL_OUTPUT_TOOL, DEFAULT_OUTPUT_TOKENS, estimateMessageTokens, minOutputTokens, offloadRequest, offloadTail, outputReserve, overflowLimit, readToolOutput, refusesContextLength, outputTokensFor, TokenCalibration, turnInputBudget, windowMargin, type TurnContextSettings } from "./turn-context.ts";
+import { contextWindowFor, learnContextWindow, noteAcceptedRequest, windowBelowRefusal } from "../context-budget.ts";
 import { deferTools, lazyToolsEnabled, LOAD_TOOLS_TOOL, loadToolsResult } from "./tool-loading.ts";
 import { executeWorkspaceTool, skillReadRoots, validateWorkspaceArgs, WORKSPACE_TOOL_DEFINITIONS, WORKSPACE_TOOLS_PROMPT, workspaceToolReadOnly, workspaceToolView, shellCommandScope, SHELL_TOOL, stopBackgroundJobs, type WorkspaceToolsConfig } from "./workspace-tools.ts";
 import { runToolBatch } from "./tool-batch.ts";
@@ -162,6 +162,7 @@ const asError = (value: unknown): Error =>
 class UnsupportedChatToolsError extends Error {}
 
 const MAX_CHAT_ROUNDS = 64;
+const MAX_OVERFLOW_COMPACTIONS = 2;
 const MAX_TURN_TOOL_CALLS = 200;
 const MAX_ANNOUNCEMENT_NUDGES = 3;
 const stoppedAfter = (count: string) =>
@@ -776,29 +777,84 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           else if (shouldPlan(turn.text ?? "", { toolsEnabled: true, workspaceTools: workspaceNames.size > 0 })) startPlanning(PLAN_HINT);
         }
         const readOnlyTool = (name: string) => name === LOAD_TOOLS_TOOL ? lazy !== null : name === UPDATE_PLAN_TOOL ? planning : name === READ_TOOL_OUTPUT_TOOL ? offloadOn : workspaceNames.has(name) && workspaceToolReadOnly(name);
-        const window = contextWindowFor(model, options.models());
-        const budget = turnCompactBudget(window, ctx.compactAt);
+        let window = contextWindowFor(model, options.models(), undefined, input.instanceId);
+        let budget = turnInputBudget(window, ctx.compactAt);
         const calibration = new TokenCalibration(model);
         // Exact counts for known encodings; loads lazily (once per process) and falls back to the estimate.
         await prepareTokenizer(model);
         let compactions = 0;
-        const compact = async (reason: "budget" | "overflow", keepExchanges: number, targetTokens?: number) => {
+        let overflowCompactions = 0;
+        let compactedAfter: number | undefined;
+        const ratioNow = () => Math.max(1, calibration.apply(1_000_000) / 1_000_000);
+        const sizeNow = () => calibration.apply(estimateRequestTokens(messages, tools!.definitions, model));
+        const modelLabel = () => options.models().options.find((option) => option.id === model)?.label ?? model;
+        const compact = async (reason: "budget" | "overflow", keepExchanges: number, targetTokens?: number, minSavedTokens?: number, fitWithinTokens?: number, tailWithinTokens?: number) => {
+          // Overflow recovery pays for at most two summaries a turn (one, then one retry); after that it only offloads or fails.
+          if (reason === "overflow" && overflowCompactions >= MAX_OVERFLOW_COMPACTIONS) return false;
           const summaryModel = ctx.summaryModel || model;
-          const result = await compactTurnMessages(messages, request, {
-            tools: tools!.definitions, model, keepExchanges, ...(targetTokens ? { targetTokens } : {}),
-            summaryBudgetBytes: Math.max(4_000, Math.floor(window * 0.4 * 3.5)),
-            summarize: async (prompt) => {
-              const { text, reasoning } = await adapter.complete({ messages: [{ role: "user", content: prompt }], model: summaryModel, stream: false, signal: abort.signal, tools: [] });
-              return text.trim() ? text : reasoning;
-            },
-          });
+          // The pinned plan is measured in every fit check but never folded: out for the fold, back at the end after it.
+          // The fit limits are raw tokens, so they shrink by the plan's raw size while it is out.
+          const rawNow = () => estimateRequestTokens(messages, tools!.definitions, model);
+          const withPlan = planning ? rawNow() : 0;
+          if (planning) unpinPlan(messages);
+          const planTokens = planning ? withPlan - rawNow() : 0;
+          const less = (limit?: number) => (limit ? Math.max(1, limit - planTokens) : undefined);
+          [targetTokens, fitWithinTokens, tailWithinTokens] = [less(targetTokens), less(fitWithinTokens), less(tailWithinTokens)];
+          let result: Awaited<ReturnType<typeof compactTurnMessages>>;
+          try {
+            result = await compactTurnMessages(messages, request, {
+              tools: tools!.definitions, model, keepExchanges, ...(targetTokens ? { targetTokens } : {}), ...(minSavedTokens ? { minSavedTokens } : {}), ...(fitWithinTokens ? { fitWithinTokens } : {}), ...(tailWithinTokens ? { tailWithinTokens } : {}),
+              summaryBudgetBytes: Math.max(4_000, Math.floor(window * 0.4 * 3.5)),
+              summarize: async (prompt) => {
+                const room = outputTokensFor(window, calibration.apply(estimateRequestTokens([{ role: "user", content: prompt }], [], summaryModel)));
+                const maxTokens = Math.min(outputReserve(window), room ?? DEFAULT_OUTPUT_TOKENS);
+                if (maxTokens < minOutputTokens(window)) throw new Error("no room left for a summary");
+                const { text, reasoning } = await adapter.complete({ messages: [{ role: "user", content: prompt }], model: summaryModel, stream: false, signal: abort.signal, tools: [], maxTokens });
+                return text.trim() ? text : reasoning;
+              },
+              signal: abort.signal,
+            });
+            if (result) messages.splice(0, messages.length, ...result.messages);
+          } finally { if (planning) pinPlan(messages, plan, planHint); }
           if (!result) return false;
-          messages.splice(0, messages.length, ...result.messages);
           compactions++;
+          if (reason === "overflow") overflowCompactions++;
+          compactedAfter = sizeNow();
           const line = { compacted: reason, n: compactions, folded: result.folded, beforeTokens: result.beforeTokens, afterTokens: result.afterTokens, window, budget, summarizer: result.summarizer };
           native("out", line);
           console.info(`${options.driverKind}: [context] compaction #${compactions} (${reason}) folded ${result.folded} messages, ~${result.beforeTokens} → ~${result.afterTokens} tokens (window ${window}, budget ${budget}, ${result.summarizer})`);
           return true;
+        };
+        // The smallest request the window can still answer, in raw (uncalibrated) tokens.
+        const sendable = () => Math.floor((window - windowMargin(window) - minOutputTokens(window)) / ratioNow());
+        // When even one kept exchange cannot be sent, its tool results are saved to disk (preview + handle) with no summary call.
+        const offloadKeptTail = () => {
+          if (!offloadOn) return false;
+          const made = offloadTail(messages, request, { dir: ctx.offloadDir, threadId: turn.threadId, tools: tools!.definitions, model,
+            fitWithinTokens: sendable(), targetTokens: Math.floor((budget * 0.6) / ratioNow()) });
+          for (const saved of made) {
+            native("out", { offloaded: "tail", handle: saved.handle, bytes: saved.bytes });
+            console.info(`${options.driverKind}: [context] offloaded ${saved.bytes}-byte kept tool result as ${saved.handle}`);
+          }
+          return made.length > 0;
+        };
+        let pinnedOriginal: OpenAIChatMessage["content"] | undefined;
+        const offloadPinned = (limit: number) => {
+          if (!offloadOn) return false;
+          const ratio = ratioNow();
+          const rest = sizeNow() - calibration.apply(estimateMessageTokens(request, model));
+          // A second cut starts again from the original text, so the saved copy and its handle stay the full message.
+          const shortened = request.content;
+          if (pinnedOriginal !== undefined) request.content = pinnedOriginal;
+          const original = request.content;
+          const offloaded = offloadRequest(request, { dir: ctx.offloadDir, threadId: turn.threadId, turnId, maxTokens: Math.max(0, Math.floor((limit - rest) / ratio)), model });
+          if (!offloaded.length) { request.content = shortened; return false; }
+          pinnedOriginal = original;
+          for (const saved of offloaded) {
+            native("out", { offloaded: "request", handle: saved.handle, bytes: saved.bytes });
+            console.info(`${options.driverKind}: [context] offloaded ${saved.bytes}-byte request message as ${saved.handle}`);
+          }
+          return offloaded.length > 0;
         };
         for (let round = 0; round < MAX_CHAT_ROUNDS; round++) {
           abort.signal.throwIfAborted();
@@ -813,15 +869,31 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           }
           // Request-size accounting before every model call; fold older steps when the turn nears its budget.
           // Once over budget, fold down to ~60% of it so the next rounds do not compact again at once.
-          // The plan rides in one trailing message: taken out before compaction, put back at the end after it.
-          if (planning) unpinPlan(messages);
-          // One pass folds as much as it takes to land at ~60% of the budget (the estimate is calibrated, so the
-          // target is divided back by the learned ratio), keeping as many recent exchanges as fit.
-          if (calibration.apply(estimateRequestTokens(messages, tools.definitions, model)) >= budget) {
-            const ratio = Math.max(1, calibration.apply(1_000_000) / 1_000_000);
-            await compact("budget", ctx.keepExchanges ?? DEFAULT_KEEP_EXCHANGES, Math.floor((budget * 0.6) / ratio));
-          }
+          // The plan rides in one trailing message, pinned before the size checks so they measure it.
           if (planning) pinPlan(messages, plan, planHint);
+          // One pass folds as much as it takes to land at ~60% of the budget (the estimate is calibrated, so the
+          // target is divided back by the learned ratio), keeping as many recent exchanges as fit. A fold that would
+          // free under a tenth of the budget is skipped, and so is a second fold before the turn grew by a quarter of
+          // it, unless the window itself is at stake. Below the hard limit, a fold that cannot land under the budget
+          // (the newest exchange alone is over it) is skipped too: it would cost a summary call every round.
+          const hardLimit = window - outputReserve(window) - windowMargin(window);
+          offloadKeptTail();
+          const before = sizeNow();
+          if (before >= budget && (compactedAfter === undefined || before - compactedAfter >= budget * 0.25 || before > hardLimit)) {
+            const ratio = ratioNow();
+            await compact("budget", ctx.keepExchanges ?? DEFAULT_KEEP_EXCHANGES, Math.floor((budget * 0.6) / ratio), Math.max(256, Math.floor((budget * 0.1) / ratio)),
+              before > hardLimit ? sendable() : undefined, before > hardLimit ? undefined : Math.floor(budget / ratio));
+          }
+          // A pasted message is shortened only when the rest of the turn cannot make room for it.
+          if (sizeNow() > budget) offloadPinned(budget);
+          if (window - sizeNow() - windowMargin(window) < minOutputTokens(window)) {
+            await compact("overflow", 1, Math.floor((budget * 0.6) / ratioNow()), undefined, sendable());
+            offloadPinned(budget);
+            if (window - sizeNow() - windowMargin(window) < minOutputTokens(window)) {
+              tooLarge = true;
+              throw new ChatProtocolError(requestTooLargeMessage(modelLabel()));
+            }
+          }
           const sentEstimate = estimateRequestTokens(messages, tools.definitions, model);
           // Budget pre-check: after the first round, a call whose prompt alone would overrun the cap is not made.
           if (round > 0 && meter?.wouldExceed(calibration.apply(sentEstimate))) {
@@ -833,11 +905,15 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           native("out", options.nativeLog.outgoing(turn, messages, model, tools.definitions));
           let attempt = 0;
           let forced = false;
+          let forcedAt = window;
+          let overflows = 0;
           let retryWaitedMs = 0;
           let resized = false;
           let malformedRetried = false;
           let completion: Completion;
+          let tookRaw = sentEstimate;
           for (;;) {
+            let sentTotal = 0;
             let streamed = false;
             let answerStreamed = false;
             const pending = { assistant_text: "", reasoning_text: "" };
@@ -856,8 +932,16 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
               const visible = safeText(hold ? combined.slice(0, -hold) : combined);
               if (visible) emit({ ...base(turn.threadId, turnId), type: "content.delta", streamKind, delta: visible });
             };
+            const sentRaw = estimateRequestTokens(messages, tools.definitions, model);
+            tookRaw = sentRaw;
+            const maxTokens = outputTokensFor(window, calibration.apply(sentRaw));
+            if (maxTokens !== undefined && maxTokens < minOutputTokens(window)) {
+              tooLarge = true;
+              throw new ChatProtocolError(requestTooLargeMessage(modelLabel()));
+            }
+            sentTotal = calibration.provider(sentRaw) + (maxTokens ?? 0);
             try {
-              completion = await adapter.complete({ messages, model, stream: true, signal: abort.signal, tools: tools.definitions, onDelta: (text, streamKind) => {
+              completion = await adapter.complete({ messages, model, stream: true, signal: abort.signal, tools: tools.definitions, ...(maxTokens ? { maxTokens } : {}), onDelta: (text, streamKind) => {
                 streamed = true;
                 produced = true;
                 if (streamKind === "assistant_text") answerStreamed = true;
@@ -868,6 +952,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
               // Tool calls from a reply cut at the token limit may hold cut-short arguments that still parse: they
               // never run; the round is asked for again like any malformed call (audit N06).
               if (completion.toolCalls.length && completion.finishReason === "length") throw new MalformedToolCallError("provider tool calls were truncated (finish_reason length)");
+              noteAcceptedRequest(input.instanceId, model, completion.usage?.input ? completion.usage.input + (maxTokens ?? 0) : sentTotal);
               break;
             } catch (value) {
               const error = asError(value);
@@ -880,10 +965,29 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
               }
               // A provider refuses an oversized request before running anything, so one smaller copy may go again.
               if (error instanceof RequestTooLargeError && !abort.signal.aborted) {
-                // First answer to an overflow: force one compaction and resend once.
-                if (!forced && !streamed) {
+                if (!streamed && overflows < 3) {
+                  const refused = sentTotal || sizeNow();
+                  const limit = overflowLimit(error.message) ?? (refusesContextLength(400, error.message) ? windowBelowRefusal(input.instanceId, model, refused) : undefined);
+                  if (limit && limit >= 256 && limit < window) {
+                    learnContextWindow(input.instanceId, model, limit);
+                    window = limit;
+                    budget = turnInputBudget(window, ctx.compactAt);
+                    native("out", { learnedWindow: limit });
+                    // Refused only for the reply ceiling: the same messages go again under the learned window.
+                    if (sizeNow() <= budget) {
+                      overflows++;
+                      emit({ ...base(turn.threadId, turnId), type: "turn.retrying", attempt: 1, delayMs: 0, reason: "request_too_large" });
+                      continue;
+                    }
+                  }
+                }
+                if (!streamed && overflows < 3 && (!forced || window < forcedAt)) {
                   forced = true;
-                  if (await compact("overflow", 1)) {
+                  forcedAt = window;
+                  overflows++;
+                  const offloadedTail = offloadKeptTail();
+                  const compacted = await compact("overflow", 1, Math.floor((budget * 0.6) / ratioNow()), undefined, sendable());
+                  if (offloadPinned(budget) || compacted || offloadedTail) {
                     emit({ ...base(turn.threadId, turnId), type: "turn.retrying", attempt: 1, delayMs: 0, reason: "request_too_large" });
                     continue;
                   }
@@ -892,7 +996,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
                 native("out", { refused: "request_too_large", bytes: error.bytes, ...(resend ? { before: resend.before, after: resend.after } : {}) });
                 console.warn(`${options.driverKind}: ${model} refused a ${error.bytes}-byte request as too large; ${resend ? `resending smaller (${sizeChange(resend.before, resend.after)})` : "not resending"}`);
                 if (!resend) tooLarge = true;
-                if (!resend) throw new ChatProtocolError(requestTooLargeMessage(options.models().options.find((option) => option.id === model)?.label ?? model));
+                if (!resend) throw new ChatProtocolError(requestTooLargeMessage(modelLabel()));
                 messages.splice(0, messages.length, ...resend.messages);
                 resized = true;
                 emit({ ...base(turn.threadId, turnId), type: "turn.retrying", attempt: 1, delayMs: 0, reason: "request_too_large" });
@@ -948,7 +1052,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             usage.output += completion.usage.output;
             if (completion.usage.costUsd !== undefined) costUsd = (costUsd ?? 0) + completion.usage.costUsd;
             hasUsage = true;
-            calibration.observe(sentEstimate, completion.usage.input);
+            calibration.observe(tookRaw, completion.usage.input);
             const contextWindow = options.models().options.find((entry) => entry.id === model)?.contextWindow;
             // Accounting sums the turn; context occupancy is the latest round only.
             emit({ ...base(turn.threadId, turnId), type: "thread.token-usage.updated", ...usage,
