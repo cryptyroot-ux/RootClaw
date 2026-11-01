@@ -19,7 +19,7 @@ describe("self-hosted update row", () => {
   it("names the new version and how this install is updated", () => {
     const docker = check({ available: true, latest: "0.1.93", command: "git pull && docker compose up -d --build", restart: false });
     expect(serverUpdateRow("available", docker)).toEqual({
-      label: "Version 0.1.93 available (release notes)",
+      label: "Version 0.1.93 available (click to copy the command)",
       subtitle: "Update with: git pull && docker compose up -d --build",
     });
     const npm = check({ install: "npm", available: true, latest: "0.1.93", command: "npm install -g rootclaw@latest", restart: true });
@@ -35,6 +35,18 @@ describe("self-hosted update row", () => {
       label: "Version 0.1.93 available (release notes)",
       subtitle: note,
     });
+  });
+
+  it("offers Update now only where this server installs the update itself", () => {
+    const clone = check({ install: "git", available: true, latest: "0.1.93", command: "git pull && pnpm install && pnpm build", canApply: true });
+    expect(serverUpdateRow("available", clone)).toEqual({
+      label: "Update now to v0.1.93",
+      subtitle: "Downloads v0.1.93, rebuilds RootClaw and restarts it. Takes a few minutes.",
+    });
+    // A session that may not install it (not the owner or an admin) sees the command instead.
+    expect(serverUpdateRow("available", { ...clone, canApply: false }).label).toBe("Version 0.1.93 available (click to copy the command)");
+    // Another server's update is never installed from this window.
+    expect(serverUpdateRow("available", clone, "0.1.93", "Office Mac").label).toBe("Office Mac can update to 0.1.93");
   });
 
   it("says when it is up to date, and with which version", () => {
@@ -94,7 +106,7 @@ describe("the update row for another server the app shows", () => {
       "Updates come from the RootClaw app on the computer these bots run on",
     );
     expect(serverUpdateRow("up-to-date", check({ install: "managed" }), "0.1.116", "Office Mac").label).toBe("Kept up to date for you");
-    expect(serverUpdateRow("available", npm, "0.1.116", null).label).toBe("Version 0.1.127 available (release notes)");
+    expect(serverUpdateRow("available", npm, "0.1.116", null).label).toBe("Version 0.1.127 available (click to copy the command)");
   });
 
   it("says it in German too", () => {

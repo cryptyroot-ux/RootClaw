@@ -459,7 +459,10 @@ describe("Simple mode's account menu", () => {
     expect(simpleUpdateTop({ source: "desktop", phase: "downloaded" })).toEqual({ label: "Update ready", action: "Restart" });
     expect(simpleUpdateTop({ source: "desktop", phase: "downloaded", installMode: "handoff" })).toEqual({ label: "Update ready", action: "Install" });
     expect(simpleUpdateTop({ source: "desktop", phase: "error" })).toEqual({ label: "Update failed", action: "Retry" });
-    expect(simpleUpdateTop({ source: "server", phase: "available" })).toEqual({ label: "Update ready", action: "Install" });
+    // The server row says Update now only where it installs; elsewhere it names what the click does.
+    expect(simpleUpdateTop({ source: "server", phase: "available", canApply: true })).toEqual({ label: "Update ready", action: "Update now" });
+    expect(simpleUpdateTop({ source: "server", phase: "available", command: "git pull && docker compose up -d --build" })).toEqual({ label: "Update ready", action: "Copy command" });
+    expect(simpleUpdateTop({ source: "server", phase: "available" })).toEqual({ label: "Update ready", action: "Release notes" });
     expect(simpleUpdateTop({ source: "server", phase: "reload" })).toEqual({ label: "Update ready", action: "Restart" });
     for (const phase of ["idle", "checking", "downloading", "up-to-date"] as const) expect(simpleUpdateTop({ source: "desktop", phase })).toBeNull();
     expect(simpleUpdateTop({ source: "server", phase: "error" })).toBeNull();

@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import type { AppSettingsSection } from "@/state/store";
 import { t } from "@/lib/i18n";
-import { appVersion } from "@/lib/app-links";
+import { appVersion, openExternalLink } from "@/lib/app-links";
 import type { LocaleKey } from "@/locales";
 import { productName } from "../lib/brand";
 import { AnalyticsRow } from "./AnalyticsRow";
@@ -27,7 +27,7 @@ import { WindowFrameRow } from "./WindowFrameRow";
 import { ProfileSummaryRow } from "./ProfileSettings";
 import { ImportSettings } from "./ImportSettings";
 import { NotificationRows } from "./NotificationSettingsRows";
-import { useServerUpdateItem } from "./SidebarProfileMenu";
+import { useServerUpdateItem, type UpdateEntry } from "./SidebarProfileMenu";
 import { AdvancedModeRow, BrowserProfilesRow, ColorUserBubblesRow, LanguageRow, ReplayTourRow, SendKeyRow, UpdatesRow } from "./AppSettingsRows";
 import { ThemeRow } from "./ThemeRow";
 import { AdminOnly } from "./AdminOnly";
@@ -176,16 +176,29 @@ export function SimpleBillingPage({ has, disclose, cloudAccount }: { has: Has; d
 
 const versionTitle = () => `${productName()} ${appVersion()}`;
 
+/** The Simple Updates button names what a click does: install here, copy the command, open the release, or check. Null while an update runs. */
+export function serverUpdateAction(entry: Pick<UpdateEntry, "phase" | "canApply" | "command" | "item" | "applyState">): string | null {
+  if (entry.applyState === "busy") return null;
+  if (entry.applyState === "done") return t("settings.simple.updates.reload");
+  if (entry.applyState) return t("settings.updates.check");
+  if (entry.phase === "available") return entry.canApply ? t("sidebar.update.updateNowAction") : entry.command ? t("sidebar.update.copyAction") : t("settings.simple.updates.seeRelease");
+  if (entry.phase === "reload") return t("settings.simple.updates.reload");
+  if (entry.phase === "checking") return t("common.checking");
+  if (entry.phase === "error") return t("settings.updates.check");
+  return entry.item.disabled ? null : t("settings.updates.check");
+}
+
 function ServerUpdatesRow() {
   const entry = useServerUpdateItem(true);
   if (!entry) return null;
   const status = entry.phase === "idle" ? undefined : [entry.label, entry.item.subtitle].filter(Boolean).join(" ");
-  const action = entry.phase === "available" ? t("settings.simple.updates.seeRelease")
-    : entry.phase === "reload" ? t("settings.simple.updates.reload")
-      : entry.phase === "checking" ? t("common.checking") : t("settings.updates.check");
+  const action = serverUpdateAction(entry);
+  // A row that installs or copies keeps the release notes one click away.
+  const notes = entry.phase === "available" && (entry.canApply || entry.command) && entry.releaseUrl ? entry.releaseUrl : null;
   return (
     <SettingRow title={versionTitle()} subtitle={status}>
-      <button type="button" className="ui-button" disabled={entry.item.disabled} onClick={entry.item.onSelect}>{action}</button>
+      {notes && <button type="button" className="ui-button" onClick={() => openExternalLink(notes)}>{t("settings.simple.updates.seeRelease")}</button>}
+      {action && <button type="button" className="ui-button" disabled={entry.item.disabled} onClick={entry.item.onSelect}>{action}</button>}
     </SettingRow>
   );
 }

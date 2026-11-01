@@ -40,6 +40,9 @@ import { ShortcutHint } from "./ShortcutHint";
 import { useSidebarPhoneStatus } from "./SidebarPhoneButton";
 import { api, useStore, type Action } from "@/state/store";
 import { serverCheckPhase, serverUpdateRow, type ServerUpdateCheck, type ServerUpdatePhase } from "@/lib/server-update";
+import { applyActive, applyRow } from "@/lib/server-update-apply";
+import { copyText } from "@/lib/copy-text";
+import { useServerUpdateApply } from "./useServerUpdateApply";
 import type { CloudAccountBridge, CloudAccountState } from "../../electron/cloud-account.mjs";
 import { useUpdaterState, type UpdaterState } from "@/lib/updater";
 import { productName } from "../lib/brand";
@@ -148,24 +151,32 @@ export function updateNoteworthy(phase: UpdatePhase, pending = false): boolean {
   return pending || (phase !== "idle" && phase !== "up-to-date" && phase !== "checking");
 }
 
-interface UpdateEntry {
+export interface UpdateEntry {
   item: SidebarMenuItem;
   phase: UpdatePhase;
   pending: boolean;
   label: string;
   source?: "desktop" | "server";
   installMode?: string;
+  /** Server only: the row installs the update itself (POST /api/updates/apply). */
+  canApply?: boolean;
+  /** Server only: the update command the row copies when it cannot install. */
+  command?: string;
+  releaseUrl?: string;
+  /** Server only: an update this page started (or picked back up) is running or has ended. */
+  applyState?: "busy" | "failed" | "manual" | "done";
 }
 
 /** The update a Simple account menu raises to its top row: one waiting to be installed, or one that failed. */
-export function simpleUpdateTop(entry: Pick<UpdateEntry, "phase" | "source" | "installMode"> | null): { label: string; action: string } | null {
+export function simpleUpdateTop(entry: Pick<UpdateEntry, "phase" | "source" | "installMode" | "canApply" | "command" | "applyState"> | null): { label: string; action: string } | null {
   const ready = () => t("sidebar.update.readyShort");
   if (entry?.source === "desktop") {
     if (entry.phase === "downloaded") return { label: ready(), action: t(entry.installMode === "handoff" ? "sidebar.update.installAction" : "sidebar.update.restartAction") };
     if (entry.phase === "error") return { label: t("sidebar.update.failedShort"), action: t("sidebar.update.retryAction") };
   }
-  if (entry?.source === "server") {
-    if (entry.phase === "available") return { label: ready(), action: t("sidebar.update.installAction") };
+  if (entry?.source === "server" && !entry.applyState) {
+    // Only a clone that installs it says Update now; elsewhere the action shows how (release notes or the copied command).
+    if (entry.phase === "available") return { label: ready(), action: t(entry.canApply ? "sidebar.update.updateNowAction" : entry.command ? "sidebar.update.copyAction" : "sidebar.update.releaseNotesAction") };
     if (entry.phase === "reload") return { label: ready(), action: t("sidebar.update.restartAction") };
   }
   return null;
@@ -217,11 +228,14 @@ export function useUpdateItem(): UpdateEntry | null {
   };
 }
 
-/** Without the packaged app's updater the server cannot replace itself, so the row says whether a newer release exists and how to install it. */
+/** Without the packaged app's updater, the server's own update: a git clone installs it here (Update now); any other install
+ * says whether a newer release exists and how to install it. */
 export function useServerUpdateItem(enabled: boolean): UpdateEntry | null {
   const [phase, setPhase] = useState<ServerUpdatePhase>("idle");
   const [check, setCheck] = useState<ServerUpdateCheck | null>(null);
+  const [copied, setCopied] = useState(false);
   const otherServer = useOtherServerName(enabled);
+  const apply = useServerUpdateApply(enabled);
 
   useEffect(() => {
     if (phase !== "up-to-date") return;
@@ -230,31 +244,73 @@ export function useServerUpdateItem(enabled: boolean): UpdateEntry | null {
   }, [phase]);
 
   if (!enabled) return null;
+  const runCheck = () => {
+    apply.clear();
+    setCopied(false);
+    setPhase("checking");
+    void api<ServerUpdateCheck>("/api/updates/check", { timeoutMs: 20_000 })
+      .then((next) => {
+        setCheck(next);
+        setPhase(serverCheckPhase(next));
+      })
+      .catch(() => setPhase("error"));
+  };
+
+  if (apply.status || apply.error) {
+    const row = apply.status ? applyRow(apply.status, apply.lostSince) : { label: t("sidebar.update.applyFailed"), subtitle: apply.error ?? undefined, failed: true };
+    const busy = applyActive(apply.status) && !row.failed;
+    const done = apply.status?.phase === "done";
+    const shown: UpdatePhase = busy ? "installing" : row.failed ? "error" : done && apply.status?.restart === "manual" ? "available" : done ? "up-to-date" : "idle";
+    return {
+      phase: shown,
+      pending: false,
+      label: row.label,
+      source: "server",
+      applyState: busy ? "busy" : row.failed ? "failed" : done && apply.status?.restart === "manual" ? "manual" : "done",
+      item: {
+        key: "update",
+        label: row.label,
+        subtitle: row.subtitle,
+        icon: <UpdateIcon phase={shown} pending={false} />,
+        disabled: busy,
+        keepOpen: true,
+        attention: shown === "error" || shown === "available",
+        attentionTone: shown === "error" ? "danger" : "accent",
+        onSelect: () => {
+          if (done && apply.status?.restart === "auto") return window.location.reload();
+          runCheck();
+        },
+      },
+    };
+  }
+
   const row = serverUpdateRow(phase, check, appVersion(), otherServer);
+  const installs = phase === "available" && Boolean(check?.canApply) && !otherServer;
+  const copies = phase === "available" && !installs && !otherServer && Boolean(check?.command);
+  const subtitle = copied ? t("sidebar.update.copied") : row.subtitle;
   return {
     phase,
     pending: false,
     label: row.label,
     source: "server",
+    canApply: installs,
+    command: copies ? check?.command : undefined,
+    releaseUrl: check?.releaseUrl,
     item: {
       key: "update",
       label: row.label,
-      subtitle: row.subtitle,
+      subtitle,
       icon: <UpdateIcon phase={phase} pending={false} />,
       disabled: phase === "checking",
       keepOpen: true,
       attention: phase === "available" || phase === "reload" || phase === "error",
       attentionTone: phase === "error" ? "danger" : "accent",
       onSelect: () => {
+        if (installs) return apply.start();
+        if (copies && check?.command) return void copyText(check.command).then((result) => setCopied(result === "copied"));
         if (phase === "available" && check?.releaseUrl) return void openExternalLink(check.releaseUrl);
         if (phase === "reload") return window.location.reload();
-        setPhase("checking");
-        void api<ServerUpdateCheck>("/api/updates/check", { timeoutMs: 20_000 })
-          .then((next) => {
-            setCheck(next);
-            setPhase(serverCheckPhase(next));
-          })
-          .catch(() => setPhase("error"));
+        runCheck();
       },
     },
   };

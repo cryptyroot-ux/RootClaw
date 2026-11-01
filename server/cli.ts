@@ -727,6 +727,7 @@ export async function runServe(options: CliOptions, log: (line: string) => void 
     ROOTCLAW_DATA_DIR: options.dataDir,
     ROOTCLAW_PORT: String(options.port),
     ROOTCLAW_WEBHOOK_PORT: process.env.ROOTCLAW_WEBHOOK_PORT || String(options.port + 1),
+    ROOTCLAW_LAUNCHER: "cli", // server/update-apply.ts: exit code 75 starts this child again (serveUntilStopped)
   };
   if (options.local) delete env.ROOTCLAW_PUBLIC_URL;
   // The per-launch secret goes over stdin, not the environment that every engine the server starts inherits.
@@ -909,7 +910,7 @@ export async function serveUntilStopped(options: CliOptions, run: (options: CliO
   for (;;) {
     const code = await run(launch);
     if (!policy.again(code)) return code;
-    console.log("\nRootClaw is starting again to finish installing a copy from the desktop app…");
+    console.log("\nRootClaw is starting again (an update or a restored copy asked for a fresh start)…");
     launch = { ...options, pair: false, open: false };
   }
 }
