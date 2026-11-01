@@ -192,7 +192,7 @@ claim real-provider performance.
 ### Independent tasks
 
 ```sh
-# (removed with the CLI engines; native-engine coverage pending)
+pnpm exec vitest run server/independent-threads-api.test.ts
 ```
 
 This test launches a fresh `control-rootclaw` fixture for each case, wraps only its

@@ -22,7 +22,7 @@ it("turns schedules and webhooks back on, removes a deleted bot's automations, a
   };
   const newBot = async (name: string) => ((await runControlOmb(["new-bot", "--name", name, "--url", server.url])) as { bot: { id: string } }).bot.id;
   const state = async () => ({ ...(await api("GET", "/api/routines")), ...(await api("GET", "/api/webhooks")) }) as { routines: any[]; runs: any[]; webhooks: any[] };
-  const send = (address: string, body: unknown) => fetch(address, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const send = (address: { url: string; secret: string }, body: unknown) => fetch(address.url, { method: "POST", headers: { authorization: `Bearer ${address.secret}`, "content-type": "application/json" }, body: JSON.stringify(body) });
   try {
     const scout = await newBot("Scout");
     const gone = await newBot("Gone");
@@ -43,7 +43,7 @@ it("turns schedules and webhooks back on, removes a deleted bot's automations, a
     expect((await api("PATCH", `/api/routines/${routine.id}`, { enabled: true })).routine).toMatchObject({ enabled: true, nextRunAt: dueAt });
 
     // 2. A webhook: off turns calls away, on takes them again and runs.
-    const address = scoutHook.credential.url as string;
+    const address = scoutHook.credential as { url: string; secret: string };
     expect((await api("PATCH", `/api/webhooks/${scoutHook.webhook.id}`, { enabled: false, verificationPending: false })).webhook).toMatchObject({ enabled: false });
     expect((await send(address, { lead: "Mallory" })).status).toBe(409);
     expect((await api("PATCH", `/api/webhooks/${scoutHook.webhook.id}`, { enabled: true, verificationPending: false })).webhook).toMatchObject({ enabled: true });
@@ -60,7 +60,7 @@ it("turns schedules and webhooks back on, removes a deleted bot's automations, a
     expect((await state()).routines.find((candidate) => candidate.id === once.id)?.enabled).toBe(false);
 
     // 4. Deleting a bot from the app removes its schedules, its webhooks, their runs, and its address stops working.
-    const before = await send(goneHook.credential.url, { lead: "Before" });
+    const before = await send(goneHook.credential, { lead: "Before" });
     expect(before.status).toBe(202);
     const beforeRun = (await before.json() as { runId: string }).runId;
     await expect.poll(async () => (await state()).runs.find((run) => run.id === beforeRun)?.status, { timeout: 30_000 }).toBe("completed");
@@ -69,7 +69,7 @@ it("turns schedules and webhooks back on, removes a deleted bot's automations, a
     expect(now.routines.map((candidate) => candidate.id)).not.toContain(goneRoutine.id);
     expect(now.webhooks.map((candidate) => candidate.id)).not.toContain(goneHook.webhook.id);
     expect(now.runs.filter((run) => run.botId === gone)).toEqual([]);
-    expect((await send(goneHook.credential.url, { lead: "After" })).status).toBe(401);
+    expect((await send(goneHook.credential, { lead: "After" })).status).toBe(401);
 
     // 5. Automations on disk whose bot is gone are removed at the next start.
     await server.stop();

@@ -32,10 +32,12 @@ describe("who gets a webhook automation's address", () => {
 });
 
 describe("the address", () => {
-  it("is the full address, the endpoint and the bearer secret, with where to paste it and where never to", () => {
+  it("is the address without the secret, the endpoint and the bearer secret, with where to paste it and where never to", () => {
     const address = webhookAddress(kept, "hook-1", "https://acme.example.com/");
-    expect(address).toMatchObject({ url: `https://acme.example.com/hooks/wh_abc/${SECRET}`, endpoint: "https://acme.example.com/hooks/wh_abc", bearer: SECRET });
+    expect(address).toMatchObject({ url: "https://acme.example.com/hooks/wh_abc", endpoint: "https://acme.example.com/hooks/wh_abc", bearer: SECRET });
     expect(address).toMatchObject({ note: expect.stringContaining("never repeat it in chat, notes, files or messages to other bots") });
+    expect(address).toMatchObject({ note: expect.stringContaining('"Authorization: Bearer <bearer>"') });
+    expect((address as { url: string }).url).not.toContain(SECRET);
     expect(JSON.stringify(address)).not.toContain("only apps running on it");
     expect(JSON.stringify(webhookAddress(kept, "hook-1", "http://127.0.0.1:8800"))).toContain("This address is on this computer, so only apps running on it can reach it.");
     expect(webhookAddress(kept, "missing", "http://127.0.0.1:8800")).toBeNull();

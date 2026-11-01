@@ -108,7 +108,7 @@ describe("native engine features (fake provider)", () => {
     const summaryFile = join(f.cwd, "..", "summary.txt");
     writeFileSync(summaryFile, "## Goal\n- read the three files\n## Facts\n- one.txt and two.txt were read");
     f.fake.set({ textFile: summaryFile });
-    await f.start({ approvalMode: "full", turnContext: { compactAt: 4_000 } } as Partial<SendTurnInput>);
+    await f.start({ approvalMode: "full", turnContext: { compactAt: 4_500 } } as Partial<SendTurnInput>);
     const done = await f.completed();
     expect(done).toMatchObject({ type: "turn.completed" });
     expect(f.fake.requests.some((body) => body.stream === false && JSON.stringify(body.messages).includes("You compact"))).toBe(true);

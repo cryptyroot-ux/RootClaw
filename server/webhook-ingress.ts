@@ -88,6 +88,15 @@ function eventName(req: IncomingMessage): string | undefined {
   )?.trim() || undefined;
 }
 
+const pathSecretWarned = new Set<string>();
+
+/** A secret in the path lands in proxy and access logs (audit N21); it still works for senders set up before headers. */
+function warnPathSecret(endpointId: string): void {
+  if (pathSecretWarned.has(endpointId)) return;
+  pathSecretWarned.add(endpointId);
+  console.warn(`webhooks: ${endpointId} received its secret in the URL path, which is deprecated; send it as "Authorization: Bearer <secret>" or "x-rootclaw-secret" and replace the address`);
+}
+
 export function createWebhookIngressHandler(manager: WebhookManager, claimRequest?: () => () => void) {
   return async (req: IncomingMessage, res: ServerResponse) => {
     let url: URL;
@@ -106,12 +115,15 @@ export function createWebhookIngressHandler(manager: WebhookManager, claimReques
     let release: (() => void) | undefined;
     try {
       release = claimRequest?.();
-      let secret = "";
-      try {
-        secret = (match[2] ? decodeURIComponent(match[2]) : "") || bearerSecret(req);
-      } catch {
+      let secret = bearerSecret(req);
+      if (match[2] && !manager.authorize(match[1], secret)) {
+        try {
+          secret = decodeURIComponent(match[2]);
+        } catch {
+        }
+        if (manager.authorize(match[1], secret)) warnPathSecret(match[1]);
       }
-      // Reject bad capability URLs before buffering or parsing attacker input.
+      // Reject bad secrets before buffering or parsing attacker input.
       if (!manager.authorize(match[1], secret)) {
         manager.recordUnauthorized(match[1], {
           contentType: header(req, "content-type"),
@@ -204,6 +216,6 @@ export function webhookCredential(baseUrl: string, endpointId: string, secret: s
   return {
     endpointUrl,
     secret,
-    url: `${endpointUrl}/${encodeURIComponent(secret)}`,
+    url: endpointUrl,
   };
 }

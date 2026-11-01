@@ -38,7 +38,7 @@ export function webhookAddress(webhooks: Pick<WebhookManager, "currentSecret">, 
     url: credential.url,
     endpoint: credential.endpointUrl,
     bearer: credential.secret,
-    note: `Paste url into the setup of the app that sends to this automation, and nowhere else: never repeat it in chat, notes, files or messages to other bots. An app that can't take the full address sends to endpoint with the header "Authorization: Bearer <bearer>".${local}`,
+    note: `In the setup of the app that sends to this automation, and nowhere else, set url as the address and send bearer in the header "Authorization: Bearer <bearer>" (or "x-rootclaw-secret: <bearer>"). bearer is the secret: never repeat it in chat, notes, files or messages to other bots.${local}`,
   };
 }
 

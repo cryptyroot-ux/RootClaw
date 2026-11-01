@@ -296,7 +296,7 @@ it("reports an outside event's run into the main chat too, from a conversation o
   const s = await server();
   s.script([{ key: "lead", match: ["Draft a follow-up"], reply: "Drafted a follow-up for Ada.", repeat: true }]);
   const { webhook, credential } = await s.api("POST", "/api/webhooks", { name: "Sales form leads", prompt: "Draft a follow-up for the lead.", botId: s.bot.id }, 201);
-  const response = await fetch(credential.url, { method: "POST", headers: { "content-type": "application/json", "idempotency-key": "lead-1" }, body: JSON.stringify({ lead: "Ada" }) });
+  const response = await fetch(credential.url, { method: "POST", headers: { authorization: `Bearer ${credential.secret}`, "content-type": "application/json", "idempotency-key": "lead-1" }, body: JSON.stringify({ lead: "Ada" }) });
   expect(response.status).toBe(202);
   const { runId } = await response.json() as any;
   await s.settled(runId);

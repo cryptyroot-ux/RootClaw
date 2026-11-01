@@ -397,7 +397,7 @@ describe("built-in Data provider parity", () => {
     expect(f.effects()).toEqual([{ name: "receipt", value: "done" }]);
     expect(f.requests[1].messages).toContainEqual(expect.objectContaining({ role: "tool", tool_call_id: "call_write", content: expect.stringContaining("Stored receipt=done") }));
     // Tool output reaches the model fenced as untrusted data (audit N16).
-    expect(f.requests[1].messages).toContainEqual(expect.objectContaining({ role: "tool", tool_call_id: "call_write", content: expect.stringMatching(/<<<UNTRUSTED TOOL OUTPUT[^]*Stored receipt=done[^]*<<<END UNTRUSTED TOOL OUTPUT>>>/) }));
+    expect(f.requests[1].messages).toContainEqual(expect.objectContaining({ role: "tool", tool_call_id: "call_write", content: expect.stringMatching(/<<<UNTRUSTED TOOL OUTPUT nonce=([0-9a-f]{24})[^]*Stored receipt=done[^]*<<<END UNTRUSTED TOOL OUTPUT nonce=\1>>>/) }));
   });
 });
 
