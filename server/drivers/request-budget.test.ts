@@ -19,7 +19,7 @@ type Event = { type: string; ok?: boolean; stopReason?: string | null; message?:
 
 const stream = (delta: object, finish: string, usage: object) =>
   new Response(`data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: finish }], usage })}\n\ndata: [DONE]\n\n`);
-const readCall = (n: number, path: string) => ({ tool_calls: [{ index: 0, id: `c${n}`, type: "function", function: { name: "read_file", arguments: JSON.stringify({ path }) } }] });
+const readCall = (n: number, path: string) => ({ tool_calls: [{ index: 0, id: `c${n}`, type: "function", function: { name: "read_file", arguments: JSON.stringify({ path, limit: 1000 + n }) } }] });
 
 /** A model that calls read_file every round it is offered tools, and answers only when it has none. */
 async function runTurn(id: string, files: Record<string, string>, turnContext: object, fail?: (n: number) => Response | undefined) {
