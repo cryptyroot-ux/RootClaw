@@ -74,7 +74,7 @@ describe("Cerebras provider", () => {
     expect(completed).toMatchObject({ ok: true, usage: { input: 12, output: 3 } });
     expect(JSON.parse(String(request?.body))).toEqual({ model: "gpt-oss-120b", stream: true,
       stream_options: { include_usage: true },
-      messages: [{ role: "user", content: "hello" }], tools: [ASK_USER_TOOL_DEFINITION] });
+      messages: [{ role: "user", content: "hello" }], tools: [ASK_USER_TOOL_DEFINITION], parallel_tool_calls: true });
     recorder.stop(); await instance.dispose();
   });
 
