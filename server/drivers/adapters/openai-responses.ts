@@ -48,7 +48,7 @@ export function createOpenAIResponsesAdapter(options: { url: string; apiKey: str
       const response = await postJson(label, `${options.url}/responses`, { authorization: `Bearer ${options.apiKey}` }, {
         model: request.model, ...responsesInput(request.messages), stream: request.stream, store: false,
         ...(request.maxTokens ? { max_output_tokens: Math.max(16, request.maxTokens) } : {}),
-        ...(tools.length ? { tools } : {}), ...(options.reasoningSummary ? { reasoning: { summary: "auto" } } : {}),
+        ...(tools.length ? { tools, ...(request.toolChoice ? { tool_choice: "none" } : {}) } : {}), ...(options.reasoningSummary ? { reasoning: { summary: "auto" } } : {}),
       }, request.signal);
       let text = "", reasoning = "", usage: Usage | null = null, status: string | null = null;
       const calls = new Map<string, ChatToolCall>();

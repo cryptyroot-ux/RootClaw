@@ -139,6 +139,6 @@ describe("calibration after an overflow retry", () => {
       const done = await recorder.until((event) => event.type === "turn.completed") as { ok?: boolean };
       expect(done.ok).toBe(true);
     } finally { recorder.stop(); await inst.dispose(); }
-    expect(new TokenCalibration(model).apply(1_000)).toBeGreaterThanOrEqual(1_900);
+    expect(new TokenCalibration(model, "calib").apply(1_000)).toBeGreaterThanOrEqual(1_900);
   });
 });

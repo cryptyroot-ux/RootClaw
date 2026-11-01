@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import type { RunStore } from "../run-store.ts";
 import type {
   DriverCreateInput,
@@ -36,6 +35,7 @@ import { completionError, completionUsage, httpErrorDetail, REFUSED_TOOL_CALL_AT
 import { compactTurnMessages, DEFAULT_KEEP_EXCHANGES, estimateRequestTokens, offloadToolOutput, READ_TOOL_OUTPUT_DEFINITION,
   READ_TOOL_OUTPUT_TOOL, DEFAULT_OUTPUT_TOKENS, estimateMessageTokens, minOutputTokens, offloadRequest, offloadTail, outputReserve, overflowLimit, readToolOutput, refusesContextLength, outputTokensFor, TokenCalibration, turnInputBudget, windowMargin, type TurnContextSettings } from "./turn-context.ts";
 import { contextWindowFor, learnContextWindow, noteAcceptedRequest, windowBelowRefusal } from "../context-budget.ts";
+import { fingerprint, replayDelivered, type DeliveredUserMessage } from "./delivered-replay.ts";
 import { deferTools, lazyToolsEnabled, LOAD_TOOLS_TOOL, loadToolsResult } from "./tool-loading.ts";
 import { executeWorkspaceTool, skillReadRoots, validateWorkspaceArgs, WORKSPACE_TOOL_DEFINITIONS, WORKSPACE_TOOLS_PROMPT, workspaceToolReadOnly, workspaceToolView, shellCommandScope, SHELL_TOOL, stopBackgroundJobs, type WorkspaceToolsConfig } from "./workspace-tools.ts";
 import { runToolBatch } from "./tool-batch.ts";
@@ -120,50 +120,13 @@ const MAX_TURN_TOOL_CALLS = 200;
 const MAX_ANNOUNCEMENT_NUDGES = 3;
 const stoppedAfter = (count: string) =>
   `Stopped after ${count} without a final answer. The steps so far already ran, so ask only for what's left.`;
+const requestBudgetNote = (left: number) => left > 1
+  ? `[RootClaw] ${left} model requests are left in this turn; the last one cannot call tools. Finish the essential steps now.`
+  : "[RootClaw] This is the last model request of this turn and tools are off. Answer now from what you have and say plainly what is still undone.";
+const requestBudgetStopped = (cap: number) =>
+  `Stopped at this turn's limit of ${cap} model requests. The steps so far already ran, so ask only for what's left.`;
 
-interface DeliveredUserMessage {
-  text: string;
-  sent: string;
-  volatile?: string;
-  after: string;
-}
-
-const MAX_REPLAY_EXTRA_BYTES = 24_000;
 const MAX_DELIVERED_THREADS = 256;
-
-const fingerprint = (text: string) => createHash("sha256").update(text).digest("base64url");
-
-function replayDelivered(
-  transcript: ReadonlyArray<{ role: "user" | "assistant"; text: string }>,
-  records: readonly DeliveredUserMessage[],
-): { content: Map<number, string>; matched: DeliveredUserMessage[]; volatile: string | undefined } {
-  const found: Array<{ index: number; record: DeliveredUserMessage }> = [];
-  let next = records.length - 1;
-  for (let index = transcript.length - 1; index >= 0 && next >= 0; index--) {
-    const message = transcript[index]!;
-    if (message.role !== "user" || !message.text) continue;
-    const after = index > 0 ? fingerprint(transcript[index - 1]!.text) : undefined;
-    for (let at = next; at >= 0; at--) {
-      const record = records[at]!;
-      if (record.text !== message.text && !record.text.endsWith("\n\n" + message.text)) continue;
-      if (after !== undefined && record.after !== after) continue;
-      found.unshift({ index, record });
-      next = at - 1;
-      break;
-    }
-  }
-  const content = new Map<number, string>();
-  let volatile: string | undefined;
-  let budget = MAX_REPLAY_EXTRA_BYTES;
-  for (const { index, record } of found) {
-    const extra = Buffer.byteLength(record.sent) - Buffer.byteLength(transcript[index]!.text);
-    if (extra > budget) break;
-    budget -= extra;
-    content.set(index, record.sent);
-    if (record.volatile !== undefined) volatile = record.volatile;
-  }
-  return { content, matched: found.map(({ record }) => record), volatile };
-}
 
 const CORRECTIVE_ROUND = "[RootClaw: a tool call in this turn failed (its result is marked ok:false). Re-run the failed operations with corrected inputs where possible, check the results, then give your final answer. Do not report results you did not get.]";
 const NUDGE_ANNOUNCED_ACTION = "You said what you would do next but called no tool. Use your tools for only the remaining work, or reply with verified results if nothing is left to do. Never repeat an operation that succeeded, was denied, or may already have taken effect; inspect its state instead. Do not retry a destructive operation.";
@@ -188,13 +151,19 @@ const envNumber = (name: string) => {
   return Number.isFinite(value) && value > 0 ? value : undefined;
 };
 
-/** Settings first, then ROOTCLAW_TURN_COMPACT_AT / ROOTCLAW_TOOL_OFFLOAD_BYTES / ROOTCLAW_TOOL_OFFLOAD_DIR. */
+const requestCapFromEnv = () => {
+  const value = Number(process.env.ROOTCLAW_MAX_TURN_REQUESTS);
+  return Number.isInteger(value) && value >= 2 && value <= 64 ? value : undefined;
+};
+
+/** Settings first, then ROOTCLAW_TURN_COMPACT_AT / ROOTCLAW_TOOL_OFFLOAD_BYTES / ROOTCLAW_TOOL_OFFLOAD_DIR / ROOTCLAW_MAX_TURN_REQUESTS. */
 export function turnContextSettings(fromTurn: TurnContextSettings | undefined): TurnContextSettings {
   return {
     ...fromTurn,
     compactAt: fromTurn?.compactAt ?? envNumber("ROOTCLAW_TURN_COMPACT_AT"),
     offloadBytes: fromTurn?.offloadBytes ?? envNumber("ROOTCLAW_TOOL_OFFLOAD_BYTES"),
     offloadDir: fromTurn?.offloadDir ?? (process.env.ROOTCLAW_TOOL_OFFLOAD_DIR || undefined),
+    maxTurnRequests: fromTurn?.maxTurnRequests ?? requestCapFromEnv(),
   };
 }
 
@@ -257,6 +226,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     tools: ChatToolDefinition[] = [],
     onUsage?: TextGenerationOptions["onUsage"],
     maxTokens?: number,
+    toolChoice?: "none",
   ): Promise<Completion> => {
     const timeoutController = new AbortController();
     let idleTimer: NodeJS.Timeout | null = null;
@@ -277,7 +247,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
 
       const payload = JSON.stringify({
         ...options.requestBody(model, messages, stream),
-        ...(tools.length ? { tools } : {}),
+        ...(tools.length ? { tools, ...(toolChoice ? { tool_choice: toolChoice } : {}) } : {}),
         // OpenAI's reasoning families only take max_completion_tokens; everything else the classic field.
         ...(maxTokens ? (/^(o\d|gpt-5|gpt-6)/i.test(model.split("/").pop() ?? "") ? { max_completion_tokens: maxTokens } : { max_tokens: maxTokens }) : {}),
       });
@@ -445,7 +415,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
 
   const adapter: ModelAdapter = options.adapter ?? {
     protocol: "openai-chat",
-    complete: (request) => complete(request.messages, request.model, request.stream, request.signal, request.onDelta, request.tools, request.onUsage, request.maxTokens),
+    complete: (request) => complete(request.messages, request.model, request.stream, request.signal, request.onDelta, request.tools, request.onUsage, request.maxTokens, request.toolChoice),
   };
 
   const seesImages = (turn: SendTurnInput) =>
@@ -659,9 +629,18 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         const readOnlyTool = (name: string) => name === LOAD_TOOLS_TOOL ? lazy !== null : name === UPDATE_PLAN_TOOL ? planning : name === READ_TOOL_OUTPUT_TOOL ? offloadOn : workspaceNames.has(name) && workspaceToolReadOnly(name);
         let window = contextWindowFor(model, options.models(), undefined, input.instanceId);
         let budget = turnInputBudget(window, ctx.compactAt);
-        const calibration = new TokenCalibration(model);
+        const calibration = new TokenCalibration(model, input.instanceId);
         // Exact counts for known encodings; loads lazily (once per process) and falls back to the estimate.
         await prepareTokenizer(model);
+        // Every provider call of the turn counts: rounds, retries, resends, compaction summaries and the verifier.
+        let requests = 0;
+        let budgetNoted = Infinity;
+        const requestsLeft = () => (ctx.maxTurnRequests ?? Infinity) - requests;
+        const noteRequestBudget = () => {
+          if (requestsLeft() > 2 || requestsLeft() >= budgetNoted) return;
+          budgetNoted = requestsLeft();
+          messages.push({ role: "user", content: requestBudgetNote(budgetNoted) });
+        };
         let compactions = 0;
         let overflowCompactions = 0;
         let compactedAfter: number | undefined;
@@ -689,6 +668,8 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
                 const room = outputTokensFor(window, calibration.apply(estimateRequestTokens([{ role: "user", content: prompt }], [], summaryModel)));
                 const maxTokens = Math.min(outputReserve(window), room ?? DEFAULT_OUTPUT_TOKENS);
                 if (maxTokens < minOutputTokens(window)) throw new Error("no room left for a summary");
+                if (requestsLeft() <= 1) throw new Error("no request left for a summary");
+                requests++;
                 const { text, reasoning } = await adapter.complete({ messages: [{ role: "user", content: prompt }], model: summaryModel, stream: false, signal: abort.signal, tools: [], maxTokens });
                 return text.trim() ? text : reasoning;
               },
@@ -774,6 +755,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
               throw new ChatProtocolError(requestTooLargeMessage(modelLabel()));
             }
           }
+          noteRequestBudget();
           const sentEstimate = estimateRequestTokens(messages, tools.definitions, model);
           // Budget pre-check: after the first round, a call whose prompt alone would overrun the cap is not made.
           if (round > 0 && meter?.wouldExceed(calibration.apply(sentEstimate))) {
@@ -792,7 +774,16 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           let malformedRetried = false;
           let completion: Completion;
           let tookRaw = sentEstimate;
+          let finalRequest = false;
           for (;;) {
+            if (requestsLeft() < 1) throw new ChatProtocolError(requestBudgetStopped(ctx.maxTurnRequests!));
+            noteRequestBudget();
+            finalRequest = requestsLeft() === 1;
+            if (finalRequest && !turnEntry.ending) {
+              turnEntry.ending = true;
+              const late = turnEntry.asides.splice(0);
+              if (late.length) { unread.push(...late); messages.push({ role: "user", content: late.join("\n\n") }); }
+            }
             let sentTotal = 0;
             let streamed = false;
             let answerStreamed = false;
@@ -821,7 +812,8 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             }
             sentTotal = calibration.provider(sentRaw) + (maxTokens ?? 0);
             try {
-              completion = await adapter.complete({ messages, model, stream: true, signal: abort.signal, tools: tools.definitions, ...(maxTokens ? { maxTokens } : {}), onDelta: (text, streamKind) => {
+              requests++;
+              completion = await adapter.complete({ messages, model, stream: true, signal: abort.signal, tools: tools.definitions, ...(finalRequest ? { toolChoice: "none" as const } : {}), ...(maxTokens ? { maxTokens } : {}), onDelta: (text, streamKind) => {
                 streamed = true;
                 produced = true;
                 if (streamKind === "assistant_text") answerStreamed = true;
@@ -952,6 +944,14 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             ok = true;
             break;
           }
+          // The last request could not call tools: its reply ends the turn (a failed tool still ends it as tool_error below).
+          if (finalRequest && (completion.toolCalls.length || !toolFailed)) {
+            console.info(`${options.driverKind}: [context] request budget reached (${ctx.maxTurnRequests} requests)`);
+            stopReason = "request_budget";
+            emit({ ...base(turn.threadId, turnId), type: "runtime.notice", message: requestBudgetStopped(ctx.maxTurnRequests!) });
+            ok = true;
+            break;
+          }
           if (!completion.toolCalls.length) {
             if (!reply.trim()) throw new ChatProtocolError("provider returned an empty response");
             if (completion.finishReason && completion.finishReason !== "stop") {
@@ -992,8 +992,11 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
               let verdict: ReturnType<typeof parseVerdict> | null = null;
               if (meter?.wouldExceed(calibration.apply(countTokens(prompt, model)) + 200)) {
                 emit({ ...base(turn.threadId, turnId), type: "verify.completed", verdict: "skipped", attempt, why: "budget" });
+              } else if (requestsLeft() <= 1) {
+                emit({ ...base(turn.threadId, turnId), type: "verify.completed", verdict: "skipped", attempt, why: "request_budget" });
               } else {
                 try {
+                  requests++;
                   const checked = await adapter.complete({ messages: [{ role: "user", content: prompt }], model: ctx.summaryModel || model, stream: false, signal: abort.signal, tools: [], maxTokens: VERIFY_MAX_TOKENS });
                   if (checked.usage) {
                     usage.input += checked.usage.input;
