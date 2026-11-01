@@ -7,6 +7,7 @@ import { recordEvents } from "../testing/events.ts";
 import { parseConfigPatch, parseStoredConfig, type AppConfig } from "../config.ts";
 import { settingsTurnFields } from "../turn-settings.ts";
 import { turnContextSettings, type OpenAIChatMessage } from "./openai-chat.ts";
+import { pruneScreenshots } from "./chat-images.ts";
 
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks(); during = undefined; });
 /** Runs while the fake provider holds request `n`, with the turn's steer at hand. */
@@ -127,5 +128,26 @@ describe("maxTurnRequests settings", () => {
       vi.stubEnv("ROOTCLAW_MAX_TURN_REQUESTS", bad);
       expect(turnContextSettings(undefined).maxTurnRequests).toBeUndefined();
     }
+  });
+});
+
+describe("screenshots kept in a turn", () => {
+  const image = (name: string) => ({ type: "image_url" as const, image_url: { url: `data:image/png;base64,${name}` } });
+  const shot = (id: string) => [{ type: "text" as const, text: `Screenshot result from tool call ${id}:` }, image(id)];
+
+  it("keeps the images of the newest three screenshots and never prunes the user's attachment", () => {
+    const request: OpenAIChatMessage = { role: "user", content: [{ type: "text", text: "Check the page" }, image("attachment")] };
+    const messages: OpenAIChatMessage[] = [{ role: "system", content: "sys" }, request];
+    for (const batch of [["s1", "s2"], ["s3"], ["s4"]]) {
+      for (const id of batch) messages.push({ role: "tool", tool_call_id: id, content: "Screenshot captured" });
+      messages.push({ role: "user", content: batch.flatMap(shot) });
+      pruneScreenshots(messages);
+    }
+    expect(messages[1]).toEqual({ role: "user", content: [{ type: "text", text: "Check the page" }, image("attachment")] });
+    expect(messages[4]).toEqual({ role: "user", content: [
+      { type: "text", text: "[Screenshot from tool call s1 removed to save context; take a new one if needed.]" }, ...shot("s2"),
+    ] });
+    expect(messages.slice(-3)).toEqual([{ role: "user", content: shot("s3") }, { role: "tool", tool_call_id: "s4", content: "Screenshot captured" }, { role: "user", content: shot("s4") }]);
+    expect(JSON.stringify(messages).match(/"type":"image_url"/g)).toHaveLength(4);
   });
 });

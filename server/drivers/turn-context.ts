@@ -6,6 +6,7 @@ import { join, resolve, sep } from "node:path";
 import { prefixBytes } from "../context-rebuild.ts";
 import type { ChatToolDefinition } from "./chat-mcp-tools.ts";
 import type { OpenAIChatMessage } from "./openai-chat.ts";
+import { chatImageSize, type ImageSize } from "./chat-images.ts";
 import { countTokens } from "./tokenizer.ts";
 
 export interface TurnContextSettings {
@@ -47,10 +48,31 @@ function textOf(content: OpenAIChatMessage["content"]): { text: string; images: 
 
 const tokensOfText = (text: string, model?: string) => countTokens(text, model);
 
+/** What one image costs on a wire protocol, from its pixel size; IMAGE_TOKENS without either. */
+export function imageTokens(size: ImageSize | undefined, protocol?: string): number {
+  if (!size) return IMAGE_TOKENS;
+  const { width, height } = size;
+  switch (protocol) {
+    case "anthropic-messages": return Math.min(1_600, Math.ceil((width * height) / 750));
+    case "openai-chat":
+    case "openai-responses": {
+      // Fit in 2048 x 2048, shortest side down to 768, then 512 px tiles.
+      const fit = Math.min(1, 2048 / Math.max(width, height));
+      const scale = fit * Math.min(1, 768 / (Math.min(width, height) * fit));
+      return 85 + 170 * Math.ceil((width * scale) / 512) * Math.ceil((height * scale) / 512);
+    }
+    case "gemini": return width <= 384 && height <= 384 ? 258 : 258 * Math.ceil(width / 768) * Math.ceil(height / 768);
+    default: return IMAGE_TOKENS;
+  }
+}
+
 /** Exact for models with a known (and loaded) encoding, see tokenizer.ts; a chars/3.5 over-count otherwise. */
-export function estimateMessageTokens(message: OpenAIChatMessage, model?: string): number {
-  const { text, images } = textOf(message.content);
-  let tokens = MESSAGE_OVERHEAD_TOKENS + tokensOfText(text, model) + images * IMAGE_TOKENS;
+export function estimateMessageTokens(message: OpenAIChatMessage, model?: string, protocol?: string): number {
+  const { text } = textOf(message.content);
+  let tokens = MESSAGE_OVERHEAD_TOKENS + tokensOfText(text, model);
+  if (Array.isArray(message.content)) {
+    for (const part of message.content) if (part.type === "image_url") tokens += imageTokens(chatImageSize(part), protocol);
+  }
   if (message.tool_calls?.length) tokens += tokensOfText(JSON.stringify(message.tool_calls), model);
   for (const key of ["reasoning_content", "reasoning"] as const) if (message[key]) tokens += tokensOfText(message[key]!, model);
   if (message.reasoning_details?.length) tokens += tokensOfText(JSON.stringify(message.reasoning_details), model);
@@ -58,9 +80,9 @@ export function estimateMessageTokens(message: OpenAIChatMessage, model?: string
 }
 
 /** Tokens a request will take: system + history + tool schemas + images, before calibration. */
-export function estimateRequestTokens(messages: readonly OpenAIChatMessage[], tools: readonly ChatToolDefinition[] = [], model?: string): number {
+export function estimateRequestTokens(messages: readonly OpenAIChatMessage[], tools: readonly ChatToolDefinition[] = [], model?: string, protocol?: string): number {
   let total = 3;
-  for (const message of messages) total += estimateMessageTokens(message, model);
+  for (const message of messages) total += estimateMessageTokens(message, model, protocol);
   if (tools.length) total += tokensOfText(JSON.stringify(tools), model);
   return total;
 }
@@ -183,8 +205,8 @@ const OFFLOAD_NOTE_TOKENS = 120;
 
 /** Saves the middle of a pinned message over `maxTokens` the same way, in place, keeping as much head and tail as
  * `maxTokens` allows; the handles made. */
-export function offloadRequest(message: OpenAIChatMessage, input: { dir?: string; threadId: string; turnId: string; maxTokens: number; model?: string }): Offloaded[] {
-  const tokens = estimateMessageTokens(message, input.model);
+export function offloadRequest(message: OpenAIChatMessage, input: { dir?: string; threadId: string; turnId: string; maxTokens: number; model?: string; protocol?: string }): Offloaded[] {
+  const tokens = estimateMessageTokens(message, input.model, input.protocol);
   if (!input.dir || tokens <= input.maxTokens) return [];
   const { text: all } = textOf(message.content);
   const parts = Array.isArray(message.content) ? Math.max(1, message.content.filter((part) => part.type === "text").length) : 1;
@@ -360,19 +382,19 @@ export interface CompactResult { messages: OpenAIChatMessage[]; folded: number; 
 export async function compactTurnMessages(
   messages: readonly OpenAIChatMessage[],
   request: OpenAIChatMessage,
-  input: { tools?: readonly ChatToolDefinition[]; model?: string; keepExchanges?: number; summarize: (prompt: string) => Promise<string>; summaryBudgetBytes: number;
+  input: { tools?: readonly ChatToolDefinition[]; model?: string; protocol?: string; keepExchanges?: number; summarize: (prompt: string) => Promise<string>; summaryBudgetBytes: number;
     targetTokens?: number; minSavedTokens?: number; fitWithinTokens?: number; tailWithinTokens?: number; signal?: AbortSignal },
 ): Promise<CompactResult | null> {
   const target = input.targetTokens;
   const summaryCapBytes = target ? Math.max(1_200, Math.floor(target * 0.25 * 3.5)) : undefined;
   const plan = target ? planToFit(messages, request, input, target, summaryCapBytes!) : planCompaction(messages, request, input.keepExchanges);
   if (!plan) return null;
-  const beforeTokens = estimateRequestTokens(messages, input.tools, input.model);
-  if (input.fitWithinTokens && estimateRequestTokens(plan.build("x".repeat(summaryCapBytes ?? input.summaryBudgetBytes)), input.tools, input.model) > input.fitWithinTokens) return null;
-  if (input.tailWithinTokens && estimateRequestTokens(plan.build(""), input.tools, input.model) > input.tailWithinTokens) return null;
+  const beforeTokens = estimateRequestTokens(messages, input.tools, input.model, input.protocol);
+  if (input.fitWithinTokens && estimateRequestTokens(plan.build("x".repeat(summaryCapBytes ?? input.summaryBudgetBytes)), input.tools, input.model, input.protocol) > input.fitWithinTokens) return null;
+  if (input.tailWithinTokens && estimateRequestTokens(plan.build(""), input.tools, input.model, input.protocol) > input.tailWithinTokens) return null;
   if (input.minSavedTokens) {
     const foldedBytes = Buffer.byteLength(renderForSummary(plan.folded, input.summaryBudgetBytes)) + Buffer.byteLength(plan.previousSummary ?? "");
-    const projected = estimateRequestTokens(plan.build("x".repeat(Math.min(summaryCapBytes ?? input.summaryBudgetBytes, foldedBytes))), input.tools, input.model);
+    const projected = estimateRequestTokens(plan.build("x".repeat(Math.min(summaryCapBytes ?? input.summaryBudgetBytes, foldedBytes))), input.tools, input.model, input.protocol);
     if (beforeTokens - projected < input.minSavedTokens) return null;
   }
   let summary: string;
@@ -397,20 +419,20 @@ export async function compactTurnMessages(
     summary = elide(summary, Math.floor(Buffer.byteLength(summary) * capTokens / tokens * 0.95));
   }
   const next = plan.build(summary);
-  return { messages: next, folded: plan.folded.length, beforeTokens, afterTokens: estimateRequestTokens(next, input.tools, input.model), summarizer };
+  return { messages: next, folded: plan.folded.length, beforeTokens, afterTokens: estimateRequestTokens(next, input.tools, input.model, input.protocol), summarizer };
 }
 
 /** The plan that keeps the most recent exchanges while the projected request (summary at its cap) fits the target;
  * when none fits, the smallest tail (one exchange). */
 function planToFit(messages: readonly OpenAIChatMessage[], request: OpenAIChatMessage,
-  input: { tools?: readonly ChatToolDefinition[]; model?: string; keepExchanges?: number }, target: number, summaryCapBytes: number): CompactionPlan | null {
+  input: { tools?: readonly ChatToolDefinition[]; model?: string; protocol?: string; keepExchanges?: number }, target: number, summaryCapBytes: number): CompactionPlan | null {
   const placeholder = "x".repeat(summaryCapBytes);
   let fallback: CompactionPlan | null = null;
   for (let keep = Math.max(1, input.keepExchanges ?? DEFAULT_KEEP_EXCHANGES); keep >= 1; keep--) {
     const plan = planCompaction(messages, request, keep);
     if (!plan) continue;
     fallback = plan;
-    if (estimateRequestTokens(plan.build(placeholder), input.tools, input.model) <= target) return plan;
+    if (estimateRequestTokens(plan.build(placeholder), input.tools, input.model, input.protocol) <= target) return plan;
   }
   return fallback;
 }
@@ -419,18 +441,18 @@ function planToFit(messages: readonly OpenAIChatMessage[], request: OpenAIChatMe
  * over `fitWithinTokens`, the tool results in that kept tail are saved to disk like a large tool output, the biggest
  * first, each cut to an equal share so the projected request lands at `targetTokens`. The handles made. */
 export function offloadTail(messages: OpenAIChatMessage[], request: OpenAIChatMessage, input: { dir?: string; threadId: string; tools?: readonly ChatToolDefinition[];
-  model?: string; fitWithinTokens: number; targetTokens: number }): Offloaded[] {
+  model?: string; protocol?: string; fitWithinTokens: number; targetTokens: number }): Offloaded[] {
   if (!input.dir) return [];
   const capBytes = Math.max(1_200, Math.floor(input.targetTokens * 0.25 * 3.5));
   const plan = planCompaction(messages, request, 1);
-  const projected = () => estimateRequestTokens(plan ? plan.build("x".repeat(capBytes)) : messages, input.tools, input.model);
+  const projected = () => estimateRequestTokens(plan ? plan.build("x".repeat(capBytes)) : messages, input.tools, input.model, input.protocol);
   const before = projected();
   if (before <= input.fitWithinTokens) return [];
   let start = messages.length - 1;
   while (start >= 0 && messages[start]!.role !== "assistant") start--;
   start = Math.max(start, messages.indexOf(request));
   const results = messages.slice(start + 1).filter((message) => message.role === "tool" && typeof message.content === "string");
-  const sizes = results.map((message) => estimateMessageTokens(message, input.model));
+  const sizes = results.map((message) => estimateMessageTokens(message, input.model, input.protocol));
   let room = input.targetTokens - (before - sizes.reduce((sum, size) => sum + size, 0));
   // The equal share: results under it stay whole and leave their unused share to the larger ones.
   const order = sizes.map((size, index) => ({ size, index })).sort((a, b) => a.size - b.size);

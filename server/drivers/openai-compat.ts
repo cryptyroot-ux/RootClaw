@@ -3,6 +3,7 @@
 import type { ModelCatalog, ProviderDriver } from "../contracts.ts";
 import { isLoopback } from "../provider-key-check.ts";
 import { lmStudioV1Catalog } from "./local-inject.ts";
+import { visionInput } from "./model-vision.ts";
 import { createOpenAIChatRuntime } from "./openai-chat.ts";
 import {
   freeDefault, freeFallbackCatalog, freeLabel, freeToolModels, freeToolsFirst, isOpenRouterOrigin, openRouterFreeTier,
@@ -282,6 +283,7 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
       apiUrl: config.url,
       tools: config.tools,
       computerUse: true,
+      imageInput: (model) => visionInput(isOpenRouterUrl(config.url) ? "openrouter" : config.catalog === "openai" ? "openai" : undefined, model),
       nudgeAnnouncedAction: true,
       models: () => catalog,
       refreshModels: fetchModels,

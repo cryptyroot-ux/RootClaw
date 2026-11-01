@@ -653,6 +653,36 @@ describe("OpenAI-compatible computer images", () => {
     ]);
   });
 
+  it("sends only the newest three screenshots of a turn and keeps the attachment", async () => {
+    const f = await fixture((_body, response, round) => {
+      if (round <= 4) sse(response, [chunk({ tool_calls: [toolCall("computer_write", `{"name":"step${round}","value":"done"}`, `shot${round}`)] }, "tool_calls")]);
+      else answer(response);
+    });
+    writeFileSync(join(f.directory, "mcp.mjs"), MCP_SCRIPT.replace(
+      'text: "Stored " + args.name + "=" + args.value',
+      `text: "Screenshot captured" }, { type: "image", mimeType: "image/png", data: ${JSON.stringify(png)}`,
+    ));
+    const imagePath = join(f.directory, "input.png");
+    writeFileSync(imagePath, Buffer.from(png, "base64"));
+    const stop = f.instance.adapter.onEvent(event => {
+      if (event.type === "request.opened") void f.instance.adapter.respondToRequest(f.threadId, event.requestId!, { behavior: "allow" });
+    });
+    await f.start({
+      integrations: { localComputer: f.integrations!.custom!.audit as NonNullable<SendTurnInput["integrations"]>["localComputer"] },
+      images: [{ path: imagePath, mime: "image/png", bytes: Buffer.from(png, "base64").length }],
+    });
+    expect(await f.completed()).toMatchObject({ ok: true });
+    stop();
+    expect(f.requests).toHaveLength(5);
+    const last = f.requests[4].messages;
+    expect(JSON.stringify(last).match(/"type":"image_url"/g)).toHaveLength(4);
+    expect(last.find((message) => message.role === "user")?.content).toContainEqual({ type: "image_url", image_url: { url: `data:image/png;base64,${png}` } });
+    expect(JSON.stringify(last)).toContain("[Screenshot from tool call shot1 removed to save context; take a new one if needed.]");
+    expect(last.at(-1)).toEqual({ role: "user", content: [
+      { type: "text", text: "Screenshot result from tool call shot4:" }, { type: "image_url", image_url: { url: `data:image/png;base64,${png}` } },
+    ] });
+  });
+
   it("does not execute a denied computer action", async () => {
     const f = await fixture((_body, response, round) => {
       if (round === 1) sse(response, [chunk({ tool_calls: [{ ...toolCall(), function: { ...toolCall().function, name: "computer_write" } }] }, "tool_calls")]);

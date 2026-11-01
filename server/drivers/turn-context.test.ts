@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
 import type { OpenAIChatMessage } from "./openai-chat.ts";
 import {
-  compactTurnMessages, estimateRequestTokens, offloadToolOutput, planCompaction, readToolOutput, refusesContextLength,
+  compactTurnMessages, estimateMessageTokens, estimateRequestTokens, offloadToolOutput, planCompaction, readToolOutput, refusesContextLength,
   SUMMARY_TAG, TokenCalibration, turnCompactBudget,
 } from "./turn-context.ts";
 
@@ -133,4 +133,30 @@ test("context overflow refusals are recognized across providers", () => {
   expect(refusesContextLength(400, "Please reduce the length of the messages or completion.")).toBe(true);
   expect(refusesContextLength(401, "maximum context length")).toBe(false);
   expect(refusesContextLength(400, "invalid model")).toBe(false);
+});
+
+function pngSized(width: number, height: number): string {
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jBv0AAAAASUVORK5CYII=", "base64");
+  png.writeUInt32BE(width, 16);
+  png.writeUInt32BE(height, 20);
+  return `data:image/png;base64,${png.toString("base64")}`;
+}
+
+test.each([
+  [320, 160, "anthropic-messages", 69], [1024, 768, "anthropic-messages", 1049], [1920, 1080, "anthropic-messages", 1600],
+  [320, 160, "openai-chat", 255], [1024, 768, "openai-chat", 765], [1920, 1080, "openai-chat", 1105],
+  [320, 160, "openai-responses", 255], [1024, 768, "openai-responses", 765], [1920, 1080, "openai-responses", 1105],
+  [320, 160, "gemini", 258], [1024, 768, "gemini", 516], [1920, 1080, "gemini", 1548],
+])("a %ix%i image costs about what %s bills for it", (width, height, protocol, billed) => {
+  const text: OpenAIChatMessage = { role: "user", content: [{ type: "text", text: "Look" }] };
+  const withImage: OpenAIChatMessage = { role: "user", content: [{ type: "text", text: "Look" }, { type: "image_url", image_url: { url: pngSized(width, height) } }] };
+  const tokens = estimateMessageTokens(withImage, undefined, protocol) - estimateMessageTokens(text, undefined, protocol);
+  expect(Math.abs(tokens - billed)).toBeLessThanOrEqual(billed * 0.05);
+});
+
+test("an image of unknown size or on an unknown protocol keeps the flat estimate", () => {
+  const message = (url: string): OpenAIChatMessage => ({ role: "user", content: [{ type: "image_url", image_url: { url } }] });
+  const flat = estimateMessageTokens(message("data:,"));
+  expect(estimateMessageTokens(message("data:,"), undefined, "anthropic-messages")).toBe(flat);
+  expect(estimateMessageTokens(message(pngSized(1920, 1080)))).toBe(flat);
 });

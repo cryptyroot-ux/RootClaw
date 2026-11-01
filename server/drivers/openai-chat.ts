@@ -14,12 +14,13 @@ import { allowsTool, parseToolScope } from "../../shared/tool-scope.ts";
 import { redactSecretsInText } from "../redact.ts";
 import { toolDetailPreview } from "../tool-summary.ts";
 import { ChatToolSessionError, mountChatTools, trimmedToolsNotice, type ChatToolDefinition, type ChatToolSession, type ChatToolResult } from "./chat-mcp-tools.ts";
-import { assertImageTransport, chatImageBudget, chatToolImages, chatUserContent, type ChatContentPart } from "./chat-images.ts";
+import { assertImageTransport, chatImageBudget, chatToolImages, chatUserContent, pruneScreenshots, type ChatContentPart } from "./chat-images.ts";
 import { promptHalves, volatileContextNote, withContextNote } from "./prompt-split.ts";
 import { createChatToolApproval, refusal } from "./chat-tool-approval.ts";
 import { ChatProtocolError, ChatReasoningDetails, ChatToolCalls, INVALID_TOOL_NAME, MalformedToolCallError, object, syntheticToolCallId, type ChatToolCall } from "./openai-chat-protocol.ts";
 import { appendNative } from "./native.ts";
 import type { Completion, ModelAdapter, OpenAIChatMessage, Usage } from "./model-adapter.ts";
+import { createImageFallback, TEXT_ONLY_ATTACHMENT_NOTE, TEXT_ONLY_SCREENSHOT_NOTE, type VisionInput } from "./image-fallback.ts";
 import { BudgetMeter } from "../budget-guard.ts";
 import { countTokens, prepareTokenizer } from "./tokenizer.ts";
 import { fetchFresh } from "./http-client.ts";
@@ -103,8 +104,8 @@ interface RuntimeOptions<Config> {
   retryScale?: number;
   tools?: boolean;
   computerUse?: boolean;
-  /** A text-only model keeps the computer and browser tools but never receives a screenshot or attachment. */
-  imageInput?: (model: string) => boolean;
+  /** Whether a model sees screenshots and attachments (image-fallback.ts). */
+  imageInput?: (model: string) => VisionInput;
   /** Smaller models announce a step and end the turn without calling a tool; such a reply gets a nudge, at most three
    * per turn and each only after tool progress since the last. */
   nudgeAnnouncedAction?: boolean;
@@ -143,9 +144,6 @@ export function announcesAction(text: string): boolean {
     /^(?:checking|let me(?! know\b)|i'll|i will|i'm going to|i am going to|opening|pulling|looking|searching|navigating|reading|fetching|loading|now (?:i'll|let me|opening|checking|pulling|reading))\b/i.test(reply) ||
     /^i(?:['\u2019]m| am)\b[^.!?\n]*\band (?:i )?will\s+(?:launch|open|check|pull|look|search|navigate|read|fetch|load|run|inspect)\b/i.test(reply);
 }
-
-const TEXT_ONLY_ATTACHMENT_NOTE = "[The person attached image(s), but this model cannot see images. Say so if the request depends on them.]";
-const TEXT_ONLY_SCREENSHOT_NOTE = "[Screenshot not shown: this model cannot see images. Read the page with a snapshot or a text tool instead.]";
 
 const envNumber = (name: string) => {
   const value = Number(process.env[name]);
@@ -416,8 +414,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     complete: (request) => complete(request.messages, request.model, request.stream, request.signal, request.onDelta, request.tools, request.onUsage, request.maxTokens, request.toolChoice),
   };
 
-  const seesImages = (turn: SendTurnInput) =>
-    options.imageInput?.(turn.model || options.models().default) ?? true;
+  const images = createImageFallback(options.imageInput, options.driverKind, () => options.models().default);
   const messagesFor = (turn: SendTurnInput): OpenAIChatMessage[] => {
     const halves = promptHalves(turn);
     const transcript = turn.transcript ?? [];
@@ -425,10 +422,10 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     const volatile = halves.volatile.trim();
     const note = halves.stable === null || (!turn.mentionTurn && replay.volatile === volatile) ? ""
       : volatileContextNote(volatile, Boolean(replay.volatile));
-    const textOnly = (text: string) => !options.computerUse || seesImages(turn) || !turn.images?.length ? text
+    const textOnly = (text: string) => !options.computerUse || images.sees(turn.model) || !turn.images?.length ? text
       : `${text}\n\n${TEXT_ONLY_ATTACHMENT_NOTE}`;
     const userTurn = note ? { ...turn, text: withContextNote(note, turn.text) } : turn;
-    const content = options.computerUse && seesImages(turn) ? chatUserContent(userTurn) : textOnly(userTurn.text);
+    const content = options.computerUse && images.sees(turn.model) ? chatUserContent(userTurn) : textOnly(userTurn.text);
     const kept = turn.recalled ? turn.text.replace(`${turn.recalled}\n\n`, "") : turn.text;
     const record = {
       text: kept,
@@ -644,7 +641,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         let overflowCompactions = 0;
         let compactedAfter: number | undefined;
         const ratioNow = () => Math.max(1, calibration.apply(1_000_000) / 1_000_000);
-        const sizeNow = () => calibration.apply(estimateRequestTokens(messages, tools!.definitions, model));
+        const sizeNow = () => calibration.apply(estimateRequestTokens(messages, tools!.definitions, model, adapter.protocol));
         const modelLabel = () => options.models().options.find((option) => option.id === model)?.label ?? model;
         const compact = async (reason: "budget" | "overflow", keepExchanges: number, targetTokens?: number, minSavedTokens?: number, fitWithinTokens?: number, tailWithinTokens?: number) => {
           // Overflow recovery pays for at most two summaries a turn (one, then one retry); after that it only offloads or fails.
@@ -652,7 +649,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           const summaryModel = ctx.summaryModel || model;
           // The pinned plan is measured in every fit check but never folded: out for the fold, back at the end after it.
           // The fit limits are raw tokens, so they shrink by the plan's raw size while it is out.
-          const rawNow = () => estimateRequestTokens(messages, tools!.definitions, model);
+          const rawNow = () => estimateRequestTokens(messages, tools!.definitions, model, adapter.protocol);
           const withPlan = planning ? rawNow() : 0;
           if (planning) unpinPlan(messages);
           const planTokens = planning ? withPlan - rawNow() : 0;
@@ -661,7 +658,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           let result: Awaited<ReturnType<typeof compactTurnMessages>>;
           try {
             result = await compactTurnMessages(messages, request, {
-              tools: tools!.definitions, model, keepExchanges, ...(targetTokens ? { targetTokens } : {}), ...(minSavedTokens ? { minSavedTokens } : {}), ...(fitWithinTokens ? { fitWithinTokens } : {}), ...(tailWithinTokens ? { tailWithinTokens } : {}),
+              tools: tools!.definitions, model, protocol: adapter.protocol, keepExchanges, ...(targetTokens ? { targetTokens } : {}), ...(minSavedTokens ? { minSavedTokens } : {}), ...(fitWithinTokens ? { fitWithinTokens } : {}), ...(tailWithinTokens ? { tailWithinTokens } : {}),
               summaryBudgetBytes: Math.max(4_000, Math.floor(window * 0.4 * 3.5)),
               summarize: async (prompt) => {
                 const room = outputTokensFor(window, calibration.apply(estimateRequestTokens([{ role: "user", content: prompt }], [], summaryModel)));
@@ -690,7 +687,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         // When even one kept exchange cannot be sent, its tool results are saved to disk (preview + handle) with no summary call.
         const offloadKeptTail = () => {
           if (!offloadOn) return false;
-          const made = offloadTail(messages, request, { dir: ctx.offloadDir, threadId: turn.threadId, tools: tools!.definitions, model,
+          const made = offloadTail(messages, request, { dir: ctx.offloadDir, threadId: turn.threadId, tools: tools!.definitions, model, protocol: adapter.protocol,
             fitWithinTokens: sendable(), targetTokens: Math.floor((budget * 0.6) / ratioNow()) });
           for (const saved of made) {
             native("out", { offloaded: "tail", handle: saved.handle, bytes: saved.bytes });
@@ -702,12 +699,12 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         const offloadPinned = (limit: number) => {
           if (!offloadOn) return false;
           const ratio = ratioNow();
-          const rest = sizeNow() - calibration.apply(estimateMessageTokens(request, model));
+          const rest = sizeNow() - calibration.apply(estimateMessageTokens(request, model, adapter.protocol));
           // A second cut starts again from the original text, so the saved copy and its handle stay the full message.
           const shortened = request.content;
           if (pinnedOriginal !== undefined) request.content = pinnedOriginal;
           const original = request.content;
-          const offloaded = offloadRequest(request, { dir: ctx.offloadDir, threadId: turn.threadId, turnId, maxTokens: Math.max(0, Math.floor((limit - rest) / ratio)), model });
+          const offloaded = offloadRequest(request, { dir: ctx.offloadDir, threadId: turn.threadId, turnId, maxTokens: Math.max(0, Math.floor((limit - rest) / ratio)), model, protocol: adapter.protocol });
           if (!offloaded.length) { request.content = shortened; return false; }
           pinnedOriginal = original;
           for (const saved of offloaded) {
@@ -755,7 +752,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             }
           }
           noteRequestBudget();
-          const sentEstimate = estimateRequestTokens(messages, tools.definitions, model);
+          const sentEstimate = estimateRequestTokens(messages, tools.definitions, model, adapter.protocol);
           // Budget pre-check: after the first round, a call whose prompt alone would overrun the cap is not made.
           if (round > 0 && meter?.wouldExceed(calibration.apply(sentEstimate))) {
             stopReason = "budget";
@@ -802,7 +799,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
               const visible = safeText(hold ? combined.slice(0, -hold) : combined);
               if (visible) emit({ ...base(turn.threadId, turnId), type: "content.delta", streamKind, delta: visible });
             };
-            const sentRaw = estimateRequestTokens(messages, tools.definitions, model);
+            const sentRaw = estimateRequestTokens(messages, tools.definitions, model, adapter.protocol);
             tookRaw = sentRaw;
             const maxTokens = outputTokensFor(window, calibration.apply(sentRaw));
             if (maxTokens !== undefined && maxTokens < minOutputTokens(window)) {
@@ -835,6 +832,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
                 continue;
               }
               if (error instanceof UnsupportedParallelToolCallsError && !streamed && !abort.signal.aborted) continue;
+              if (!streamed && !abort.signal.aborted && images.resend(error, model, messages, request, native)) continue;
               // A provider refuses an oversized request before running anything, so one smaller copy may go again.
               if (error instanceof RequestTooLargeError && !abort.signal.aborted) {
                 if (!streamed && overflows < 3) {
@@ -1168,7 +1166,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
                 started = true;
                 if (allowed) {
                   result = await session.execute(call.function.name, args as Record<string, unknown>, abort.signal);
-                  if (result.images?.length && !seesImages(turn)) {
+                  if (result.images?.length && !images.sees(turn.model)) {
                     const { images: _dropped, ...rest } = result;
                     result = { ...rest, text: `${rest.text}\n${TEXT_ONLY_SCREENSHOT_NOTE}` };
                   }
@@ -1225,7 +1223,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
               if (fatal) throw fatal;
             },
           });
-          if (screenshotParts.length) messages.push({ role: "user", content: screenshotParts });
+          if (screenshotParts.length) { messages.push({ role: "user", content: screenshotParts }); pruneScreenshots(messages); }
           if (loopGuard.closing) messages.push({ role: "user", content: TOOL_LOOP_NOTE });
           // After the batch ran (so this round's calls saw the tool as offered):
           if (planOnly) {

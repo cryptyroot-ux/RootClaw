@@ -8,7 +8,7 @@ import { augmentedPath } from "../env-path.ts";
 import { killCliTree, spawnCli } from "../procs.ts";
 import { AGENTS_TOOL_ALIASES } from "../../shared/agents-tool-names.ts";
 import { bridgedCallTarget, unbridgedServer } from "./agents-bridge.ts";
-import { chatImage, type ChatImagePart } from "./chat-images.ts";
+import { chatImage, oversizedImageNote, type ChatImagePart } from "./chat-images.ts";
 import { CALL_TOOL, directoryCallTarget, isDirectoryTool } from "../mcp-directory.ts";
 import { AppObserver, modelVisible, withUiExtension } from "../mcp-app-observer.ts";
 import { appMountFor, mcpStdioServer } from "../mcp-gate-config.ts";
@@ -466,7 +466,12 @@ export async function mountChatTools(integrations: SendTurnInput["integrations"]
         for (const item of result.content) {
           if (!object(item) || typeof item.type !== "string" || (item.type === "text" && typeof item.text !== "string")) throw new Error("MCP tool returned invalid content; execution outcome may be uncertain");
           if (item.type === "text") parts.push(item.text as string);
-          else if (computerUse && item.type === "image") images.push(chatImage(item));
+          else if (computerUse && item.type === "image") {
+            const image = chatImage(item);
+            const note = oversizedImageNote(image);
+            if (note) parts.push(note);
+            else images.push(image);
+          }
           else unsupported += 1;
         }
         if (result.structuredContent !== undefined) parts.push(JSON.stringify(result.structuredContent));
