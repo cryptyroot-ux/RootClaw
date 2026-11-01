@@ -196,7 +196,14 @@ describe("plans", () => {
       expect(() => deletePlan({ registry: incomplete, slug: "acme", keepData: false, layout })).toThrow("operator recovery");
     }
     const two = createPlan({ registry: created.registry, slug: "globex", seed: { admins: ["g@x.test"], members: [] }, now, layout }).registry;
-    expect(argvOf(upgradePlan({ registry: suspendPlan({ registry: two, slug: "globex", layout }).registry }))).toEqual(["npm install -g rootclaw@latest", "systemctl restart rootclaw@acme.service"]);
+    const globexSuspended = suspendPlan({ registry: two, slug: "globex", layout }).registry;
+    expect(argvOf(upgradePlan({ registry: globexSuspended, cloneRoot: "/srv/RootClaw" }))).toEqual([
+      "git -C /srv/RootClaw pull --ff-only", "pnpm --dir /srv/RootClaw install", "pnpm --dir /srv/RootClaw build", "pnpm --dir /srv/RootClaw build:server",
+      "systemctl restart rootclaw@acme.service",
+    ]);
+    // Not a clone: nothing runs, and the npm package (unpublished) is never offered.
+    expect(() => upgradePlan({ registry: globexSuspended, cloneRoot: null })).toThrow(/not a git clone/);
+    expect(() => upgradePlan({ registry: globexSuspended, cloneRoot: null })).not.toThrow(/npm (install|i) -g/);
   });
 
   it("seeds only the trusted portal gateway and reserves the portal hostname", () => {

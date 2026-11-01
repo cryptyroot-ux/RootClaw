@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { markProvisioningFailed, runFleetCommand, type FleetDeps, type FleetInput } from "./fleet-cli.ts";
 import { emptyRegistry, fenceRules, type FleetWorkspace } from "./fleet.ts";
+import { USAGE } from "./cli-usage.ts";
 
 // A machine that records what the CLI would do to it. Nothing here touches
 // the real filesystem, systemd, nftables or Caddy.
@@ -214,5 +215,52 @@ describe("rootclaw fleet", () => {
     expect(await runFleetCommand({ ...base, action: "create", slug: "acme", admins: ["a@example.test"] }, duplicate.io, ready.deps)).toBe(2);
     expect(duplicate.err.join("\n")).toContain('workspace "acme" already exists');
     expect(ready.calls).toEqual([]);
+  });
+
+  it("upgrades from the git clone the fleet runs from, and refuses an install that is not one", async () => {
+    const workspaces = { acme: { slug: "acme", host: "acme.agentada.cc", port: 8810, webhookPort: 8811, status: "running", createdAt: "" } };
+    const clone = machine({ files: { ...withRegistry(workspaces), "/srv/RootClaw/.git": "" } });
+    const shown = io();
+    expect(await runFleetCommand({ ...base, action: "upgrade", dryRun: true, script: "/srv/RootClaw/dist-server/rootclaw.js" }, shown.io, clone.deps)).toBe(0);
+    const plan = shown.out.join("\n");
+    expect(plan).toContain("git -C /srv/RootClaw pull --ff-only");
+    expect(plan).toContain("pnpm --dir /srv/RootClaw build:server");
+    expect(plan).not.toMatch(/npm (install|i) -g|diverged/);
+    const packaged = machine({ root: true, files: withRegistry(workspaces) });
+    const refused = io();
+    expect(await runFleetCommand({ ...base, action: "upgrade" }, refused.io, packaged.deps)).toBe(2);
+    expect(refused.err.join("\n")).toMatch(/not a git clone/);
+    expect(refused.err.join("\n")).not.toMatch(/npm (install|i) -g/);
+    expect(packaged.calls.filter((call) => call.startsWith("run "))).toEqual([]);
+
+    const diverged = machine({ root: true, files: { ...withRegistry(workspaces), "/srv/RootClaw/.git": "" }, failing: ["git -C /srv/RootClaw pull"] });
+    const pulled = io();
+    expect(await runFleetCommand({ ...base, action: "upgrade", script: "/srv/RootClaw/dist-server/rootclaw.js" }, pulled.io, diverged.deps)).toBe(1);
+    expect(pulled.err.join("\n")).toMatch(/diverged.*resolve it by hand.*Nothing was changed/);
+    expect(diverged.calls.filter((call) => call.startsWith("run ") || call.startsWith("health "))).toEqual(["run git -C /srv/RootClaw pull --ff-only"]);
+  });
+
+  it("upgrades only as the clone's owner, never switching user or trusting a foreign clone", async () => {
+    const workspaces = { acme: { slug: "acme", host: "acme.agentada.cc", port: 8810, webhookPort: 8811, status: "running", createdAt: "" } };
+    const m = machine({ root: true, files: { ...withRegistry(workspaces), "/srv/RootClaw/.git": "" } });
+    const owners: Record<string, { uid: number; name: string | null }> = { "/srv/RootClaw": { uid: 1000, name: "operator" } };
+    const deps: FleetDeps = { ...m.deps, processUid: () => 0, pathOwner: (path) => owners[path]! };
+    const input: FleetInput = { ...base, action: "upgrade", script: "/srv/RootClaw/dist-server/rootclaw.js" };
+    const refused = io();
+    expect(await runFleetCommand(input, refused.io, deps)).toBe(2);
+    expect(refused.err.join("\n")).toContain("must run as the clone's owner (user operator)");
+    owners["/srv/RootClaw"] = { uid: 1000, name: null };
+    const unnamed = io();
+    expect(await runFleetCommand(input, unnamed.io, deps)).toBe(2);
+    expect(unnamed.err.join("\n")).toContain("(user 1000)");
+    expect(m.calls.filter((call) => call.startsWith("run "))).toEqual([]);
+    expect(await runFleetCommand(input, io().io, { ...deps, processUid: () => null })).toBe(0);
+    expect(m.calls.filter((call) => call.startsWith("run "))[0]).toBe("run git -C /srv/RootClaw pull --ff-only");
+  });
+
+  it("fleet help points at a built clone, not a global npm install", () => {
+    const fleet = USAGE.slice(USAGE.indexOf("\nfleet   "), USAGE.indexOf("\n--tailscale  "));
+    expect(fleet).toMatch(/git pull/);
+    expect(fleet).not.toMatch(/Install the package permanently|npm (install|i) -g/);
   });
 });

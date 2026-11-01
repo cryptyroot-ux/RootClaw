@@ -1,7 +1,7 @@
-import { join, sep } from "node:path";
+import { join, posix, sep, win32 } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
-import { createUpdateChecker, installKind, isNewerVersion, LATEST_RELEASE_URL } from "./update-check.ts";
+import { cloneRoot, createUpdateChecker, installKind, isNewerVersion, LATEST_RELEASE_URL, NOT_A_CLONE, UPDATE_COMMANDS } from "./update-check.ts";
 
 const release = (tag: string) =>
   ({ ok: true, status: 200, json: async () => ({ tag_name: tag, html_url: `https://github.com/cryptyroot-ux/RootClaw/releases/tag/${tag}` }) }) as Response;
@@ -20,6 +20,24 @@ describe("server update check", () => {
     })).toBe("npm");
     expect(installKind({ desktopManaged: false, managed: false, serverRoot: root, exists: (path) => path === join(root, "..", ".git") })).toBe("git");
     expect(installKind({ desktopManaged: false, managed: false, serverRoot: root, exists: none })).toBe("unknown");
+  });
+
+  it("updates a clone with git pull and a rebuild, and never offers the unpublished npm package", async () => {
+    const root = ["", "srv", "RootClaw"].join(sep);
+    expect(cloneRoot(join(root, "dist-server"), (path) => path === join(root, ".git"))).toBe(root);
+    expect(cloneRoot(join(root, "dist-server"), () => false)).toBeNull();
+    expect(cloneRoot("/srv/RootClaw/dist-server", (path) => path === "/srv/RootClaw/.git", posix)).toBe("/srv/RootClaw");
+    expect(cloneRoot("C:\\RootClaw\\dist-server", (path) => path === "C:\\RootClaw\\.git", win32)).toBe("C:\\RootClaw");
+    expect(UPDATE_COMMANDS.git).toEqual({ command: "git pull && pnpm install && pnpm build && pnpm build:server", restart: true });
+    for (const install of ["npm", "git", "docker", "podman", "unknown"] as const) {
+      expect(UPDATE_COMMANDS[install]?.command ?? "").not.toMatch(/npm (install|i) -g/);
+    }
+    const check = createUpdateChecker({ current: "0.1.92", install: "npm", fetch: vi.fn(async () => release("v0.1.93")) });
+    const result = await check();
+    expect(result).toMatchObject({ available: true, latest: "0.1.93", note: NOT_A_CLONE });
+    expect(result.command).toBeUndefined();
+    expect(NOT_A_CLONE).toMatch(/not a git clone/);
+    expect(NOT_A_CLONE).toContain("git pull && pnpm install && pnpm build && pnpm build:server");
   });
 
   it("compares release versions numerically and never reports a malformed one", () => {
@@ -57,7 +75,7 @@ describe("server update check", () => {
     let now = 0;
     const fetch = vi.fn(async () => release("v0.1.92"));
     const check = createUpdateChecker({ current: "0.1.92", install: "npm", fetch, now: () => now });
-    expect(await check()).toMatchObject({ available: false, latest: "0.1.92", command: "npm install -g rootclaw@latest", restart: true });
+    expect(await check()).toMatchObject({ available: false, latest: "0.1.92", note: NOT_A_CLONE });
     now = 59 * 60_000;
     await check();
     expect(fetch).toHaveBeenCalledTimes(1);
@@ -79,6 +97,6 @@ describe("server update check", () => {
     const check = createUpdateChecker({ current: "0.1.92", install: "git", fetch });
     await expect(check()).rejects.toThrow("GitHub answered 403");
     fetch.mockImplementation(async () => release("v0.1.93"));
-    expect(await check()).toMatchObject({ available: true, command: "git pull && pnpm install", restart: true });
+    expect(await check()).toMatchObject({ available: true, command: "git pull && pnpm install && pnpm build && pnpm build:server", restart: true });
   });
 });

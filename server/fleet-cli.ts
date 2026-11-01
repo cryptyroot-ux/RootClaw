@@ -1,9 +1,10 @@
 // Runs fleet.ts plans as root with fixed argument lists, or prints them for a root shell; never a shell command from user input.
 import { execFileSync, spawn } from "node:child_process";
-import { appendFileSync, closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, rmSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, rmSync, statSync } from "node:fs";
 import { posix } from "node:path";
 import { writeFileAtomic } from "./atomic.ts";
 import { unstableInstallWarning } from "./service-unit.ts";
+import { cloneRoot } from "./update-check.ts";
 import {
   applySignIn,
   assertManagedWorkspace,
@@ -79,6 +80,10 @@ export interface FleetDeps {
   appendOnce(path: string, line: string): void;
   remove(path: string): void;
   health(url: string, timeoutMs: number): Promise<boolean>;
+  /** This process's uid; null where there is none (Windows), which skips the clone-owner check. */
+  processUid?(): number | null;
+  /** Who owns a path: uid, and the user name when it resolves. */
+  pathOwner?(path: string): { uid: number; name: string | null };
 }
 
 // Tenant-controlled ancestors can be renamed between any two filesystem calls: the boundary is dropping ALL root authority
@@ -230,6 +235,12 @@ export function defaultFleetDeps(): FleetDeps {
       if (!current.split("\n").some((existing) => existing.trim() === line)) appendFileSync(path, `${current.endsWith("\n") || !current ? "" : "\n"}\n${line}\n`);
     },
     remove: (path) => rmSync(path, { force: true }),
+    processUid: () => (typeof process.getuid === "function" ? process.getuid() : null),
+    pathOwner: (path) => {
+      const uid = statSync(path).uid;
+      const entry = existsSync("/etc/passwd") ? readFileSync("/etc/passwd", "utf8").split("\n").find((line) => line.split(":")[2] === String(uid)) : undefined;
+      return { uid, name: entry?.split(":")[0] || null };
+    },
     health: async (url, timeoutMs) => {
       const deadline = Date.now() + timeoutMs;
       while (Date.now() < deadline) {
@@ -265,7 +276,7 @@ export async function executePlan(steps: FleetStep[], deps: FleetDeps, io: Fleet
         break;
       case "run": {
         const result = await deps.run(step.argv);
-        if (result.code !== 0) return failed(io, `${step.why} (${step.argv[0]} exited ${result.code ?? "without a code"})`, result.output);
+        if (result.code !== 0) return failed(io, `${step.why} (${step.argv[0]} exited ${result.code ?? "without a code"})`, result.output, step.ifFailed);
         break;
       }
       case "health":
@@ -279,10 +290,11 @@ export async function executePlan(steps: FleetStep[], deps: FleetDeps, io: Fleet
   return 0;
 }
 
-function failed(io: FleetIo, what: string, output: string): number {
+function failed(io: FleetIo, what: string, output: string, advice?: string): number {
   io.error(`fleet: could not ${what}`);
   const tail = output.trim().split("\n").slice(-6).join("\n");
   if (tail) io.error(tail);
+  if (advice) io.error(`fleet: ${advice}`);
   return 1;
 }
 
@@ -400,8 +412,14 @@ export function planFleetAction(input: FleetInput, deps: FleetDeps): FleetStep[]
       const registry = loadRegistry(layout, deps);
       return deletePlan({ registry, slug: input.slug, keepData: input.keepData, layout }).steps;
     }
-    case "upgrade":
-      return upgradePlan({ registry: loadRegistry(layout, deps) });
+    case "upgrade": {
+      const root = cloneRoot(posix.dirname(input.script), deps.pathExists, posix);
+      const uid = root ? deps.processUid?.() ?? null : null;
+      const owner = root && uid !== null ? deps.pathOwner?.(root) : undefined;
+      // Never safe.directory, chown or a user switch: git and pnpm run only as the clone's own owner.
+      if (owner && owner.uid !== uid) throw new Error(`fleet upgrade must run as the clone's owner (user ${owner.name ?? owner.uid}): ${root} is not owned by uid ${uid}`);
+      return upgradePlan({ registry: loadRegistry(layout, deps), cloneRoot: root });
+    }
     case "list":
       return [];
   }
