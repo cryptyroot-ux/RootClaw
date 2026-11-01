@@ -165,8 +165,9 @@ describe("shell", () => {
     const result = await run("shell", { command: "echo bg-out", background: true });
     expect(result.text).toMatch(/pid \d+/);
     const log = /Output goes to (\S+)/.exec(result.text)![1]!;
-    await new Promise((r) => setTimeout(r, 300));
-    expect(readFileSync(join(root, log), "utf8")).toContain("bg-out");
+    await expect.poll(() => {
+      try { return readFileSync(join(root, log), "utf8"); } catch { return ""; }
+    }, { timeout: 5_000 }).toContain("bg-out");
   });
   it("tracks background commands per conversation and stops their whole process groups", async () => {
     const scope = `thread-${Date.now()}`;

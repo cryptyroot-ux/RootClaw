@@ -2,7 +2,7 @@
 // list_dir. Paths are confined to the turn's workspace root (plus named extra roots) unless the turn allows more.
 // Engine-level and provider-agnostic: a driver only hands over the turn's folder.
 import { spawn, spawnSync } from "node:child_process";
-import { closeSync, constants as fsConstants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, constants as fsConstants, createWriteStream, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, parse as parsePath, relative, resolve, sep } from "node:path";
 import { randomBytes } from "node:crypto";
 import { homedir, tmpdir } from "node:os";
@@ -444,11 +444,18 @@ async function runShell(args: Record<string, unknown>, paths: Paths, signal: Abo
     const dir = join(paths.root, ".rootclaw", "bg");
     mkdirSync(dir, { recursive: true });
     const log = join(dir, `${Date.now()}-${randomBytes(3).toString("hex")}.log`);
-    const out = openSync(log, "a");
-    const child = spawn(program.file, program.args, { cwd, env, detached: true, stdio: ["ignore", out, out] });
-    // Close after the child has inherited the handle. Closing first loses the log on Windows.
-    const release = () => { try { closeSync(out); } catch { /* already closed */ } };
-    child.once("spawn", release);
+    writeFileSync(log, "");
+    // A pipe, not an inherited file: Windows drops a detached child's file handles, so the log stayed empty.
+    const child = spawn(program.file, program.args, { cwd, env, detached: true, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    const stream = createWriteStream(log, { flags: "a" });
+    const ignore = () => {};
+    stream.on("error", ignore);
+    child.stdout?.on("error", ignore);
+    child.stderr?.on("error", ignore);
+    child.stdout?.pipe(stream, { end: false });
+    child.stderr?.pipe(stream, { end: false });
+    const release = () => stream.end();
+    child.once("exit", release);
     child.once("error", release);
     child.unref();
     if (child.pid) jobs.set(scope, (jobs.get(scope) ?? new Set()).add(child.pid));
