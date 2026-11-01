@@ -940,6 +940,11 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             if (requestsLeft() < 1) throw new ChatProtocolError(requestBudgetStopped(ctx.maxTurnRequests!));
             noteRequestBudget();
             finalRequest = requestsLeft() === 1;
+            if (finalRequest && !turnEntry.ending) {
+              turnEntry.ending = true;
+              const late = turnEntry.asides.splice(0);
+              if (late.length) { unread.push(...late); messages.push({ role: "user", content: late.join("\n\n") }); }
+            }
             const offered = finalRequest ? [] : tools.definitions;
             let sentTotal = 0;
             let streamed = false;
@@ -1101,7 +1106,6 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             ok = true;
             break;
           }
-          if (finalRequest) turnEntry.ending = true;
           // The last request had no tools: its reply ends the turn (a failed tool still ends it as tool_error below).
           if (finalRequest && (completion.toolCalls.length || !toolFailed)) {
             console.info(`${options.driverKind}: [context] request budget reached (${ctx.maxTurnRequests} requests)`);

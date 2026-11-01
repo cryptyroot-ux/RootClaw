@@ -8,7 +8,9 @@ import { parseConfigPatch, parseStoredConfig, type AppConfig } from "../config.t
 import { settingsTurnFields } from "../turn-settings.ts";
 import { turnContextSettings, type OpenAIChatMessage } from "./openai-chat.ts";
 
-afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
+afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks(); during = undefined; });
+/** Runs while the fake provider holds request `n`, with the turn's steer at hand. */
+let during: ((n: number, steer: (text: string) => Promise<string>) => Promise<void>) | undefined;
 
 const log = (step: number, lines: number) => Array.from({ length: lines }, (_, i) => `2026-10-31T0${step}:${String(i % 60).padStart(2, "0")}:00Z INFO worker-${i % 13} handled request req-${step}${String(i).padStart(5, "0")} in ${(i * 37) % 900}ms`).join("\n");
 
@@ -26,11 +28,13 @@ async function runTurn(id: string, files: Record<string, string>, turnContext: o
   for (const [name, text] of Object.entries(files)) writeFileSync(join(cwd, name), text);
   const names = Object.keys(files);
   const bodies: Body[] = [];
+  let steer: (text: string) => Promise<string> = async () => "unavailable";
   vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
     if (String(input).endsWith("/models")) return new Response(JSON.stringify({ data: [{ id: model, context_length: 128_000 }] }));
     const raw = String(init!.body);
     const body = JSON.parse(raw) as Body;
     bodies.push(body);
+    await during?.(bodies.length, steer);
     const failed = fail?.(bodies.length);
     if (failed) return failed;
     const usage = { prompt_tokens: Math.ceil(raw.length / 4), completion_tokens: 5 };
@@ -45,6 +49,7 @@ async function runTurn(id: string, files: Record<string, string>, turnContext: o
   const inst = await OpenAICompatDriver.create({ instanceId: id, displayName: "Fixture", enabled: true,
     config: { url: "https://endpoint.invalid/v1", apiKeyEnv: "TEST_KEY", model }, environment: { TEST_KEY: "fixture-key" } });
   await inst.refreshModels!();
+  steer = (text) => inst.adapter.steer!(id, text);
   const recorder = recordEvents(inst.adapter);
   try {
     await inst.adapter.sendTurn({ threadId: id, text: "Read each log, one per step.", model, cwd, approvalMode: "full", turnContext });
@@ -78,6 +83,16 @@ describe("per-turn request budget (engine.maxTurnRequests)", () => {
       (n) => (n === 1 ? new Response("upstream down", { status: 503 }) : undefined));
     expect(bodies).toHaveLength(3);
     expect(bodies[2]!.tools ?? []).toEqual([]);
+    expect(done(events)).toMatchObject({ ok: true, stopReason: "request_budget" });
+  });
+
+  it("refuses a steer that arrives during the final request, as at the 64th step, and reads one sent before it", async () => {
+    const outcomes: string[] = [];
+    during = async (n, steer) => { if (n >= 2) outcomes.push(await steer(`note during request ${n}`)); };
+    const { bodies, events } = await runTurn("budget-steer", { "a.log": "one line" }, { maxTurnRequests: 3 });
+    expect(bodies).toHaveLength(3);
+    expect(outcomes).toEqual(["steered", "refused"]);
+    expect(JSON.stringify(bodies[2]!.messages)).toContain("note during request 2");
     expect(done(events)).toMatchObject({ ok: true, stopReason: "request_budget" });
   });
 
