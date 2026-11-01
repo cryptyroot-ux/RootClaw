@@ -14,7 +14,7 @@ body:
       options:
         - Chat UI (src/)
         - Harness server / API (server/)
-        - Provider drivers (claude / codex / grok)
+        - Native engine / provider drivers (Anthropic, OpenAI, OpenRouter, Ollama, …)
         - Computer use (cloud box / local)
         - Connected apps (Composio)
         - Desktop shell / packaging (electron/)
@@ -35,8 +35,8 @@ body:
   - type: input
     attributes:
       label: Version and install
-      description: App version (About / release tag) and whether you run the .dmg or from source
-      placeholder: v0.1.3 dmg · macOS 15.5
+      description: RootClaw version or commit, how you run it (source build, Docker, desktop build) and your OS
+      placeholder: 0.1.134 (3f162d1) · source build · Ubuntu 24.04
     validations:
       required: true
   - type: textarea

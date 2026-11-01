@@ -1,6 +1,6 @@
 # Contributing to RootClaw
 
-Thanks for wanting to help — community PRs have already shipped in this repo, and more are welcome.
+Thanks for wanting to help. Community pull requests are welcome.
 This file tells you how to get a working dev setup, what the codebase expects from a change, and what
 makes a PR easy to merge. Read it once before opening anything; it's short on purpose.
 
@@ -22,7 +22,7 @@ one provider (Ollama Cloud, OpenAI, OpenRouter, Anthropic, Gemini, xAI, …; see
 [`docs/install.md`](docs/install.md#3-configure-a-provider)). RootClaw runs its own native engine
 in-process; no agent CLI needs to be installed. The tests need no key: they drive the native engine
 against [`server/testing/fake-openai-chat.ts`](server/testing/fake-openai-chat.ts). On Linux the
-bot shell tool needs bubblewrap (`bwrap`). macOS is the primary release platform and Ubuntu 24.04 x64 is the Linux desktop beta;
+bot shell tool needs bubblewrap (`bwrap`). The desktop shell builds on macOS and on Ubuntu 24.04 x64 (beta);
 the harness server itself is portable Node and the test suite runs on macOS, Linux, and Windows.
 
 ```sh
