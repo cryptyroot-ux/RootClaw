@@ -12,17 +12,17 @@ engine against any API provider you give it a key for.
 - Teams and channels where bots hand work to each other
 - Approval levels (Ask / Approve-for-me / Full) for anything a bot does
 - Routines, webhooks and a headless CLI (`rootclaw run BOT "..."`) for scripts and CI
-- Providers: Anthropic, OpenAI, OpenRouter, Gemini, xAI, Groq, Mistral, Cerebras,
-  Ollama Cloud, any OpenAI-compatible endpoint
+- Providers: Anthropic, OpenAI, OpenRouter, Gemini, xAI, Groq, Meta, Mistral,
+  Cerebras, Ollama Cloud, any OpenAI-compatible endpoint
 - Phone/desktop pairing; data stays in `~/.rootclaw`
 
 ## Quick start (Linux or macOS, Node 24+)
 
 ```bash
 git clone https://github.com/cryptyroot-ux/RootClaw.git && cd RootClaw
-corepack enable            # provides pnpm 10.33.0 (see packageManager)
+corepack enable            # provides pnpm 10.33.0; as non-root: corepack enable --install-directory ~/.local/bin
 pnpm install --frozen-lockfile
-pnpm build && pnpm build:server
+NODE_OPTIONS=--max-old-space-size=6144 pnpm build && pnpm build:server   # the web build needs ~6 GB heap
 pnpm start                 # = node dist-server/rootclaw.js serve, on http://127.0.0.1:8799
 ```
 
@@ -30,7 +30,7 @@ In a second terminal, give it a provider key and talk to a bot:
 
 ```bash
 node dist-server/rootclaw.js engine set ollama --key-env OLLAMA_API_KEY
-node dist-server/rootclaw.js new-bot helper --model ollamaCloud/beam   # rootclaw models lists the rest
+node dist-server/rootclaw.js new-bot helper --model ollamaCloud/gemma4:31b   # rootclaw models lists the rest
 node dist-server/rootclaw.js run helper "Hello!"
 ```
 

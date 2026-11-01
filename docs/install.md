@@ -116,12 +116,12 @@ server reads these names:
 | xAI | `xaiApi` | `XAI_API_KEY` |
 | Mistral | `mistral` | `MISTRAL_API_KEY` |
 | Cerebras | `cerebras` | `CEREBRAS_API_KEY` |
-| Any OpenAI-compatible API | `openaiCompat` | `OPENAI_COMPAT_API_KEY`, `OPENAI_COMPAT_URL`, `OPENAI_COMPAT_MODEL` |
+| Any OpenAI-compatible API | `openaiCompat` | `OPENAI_COMPAT_API_KEY`, `OPENAI_COMPAT_URL`, `OPENAI_COMPAT_MODEL`, `OPENAI_COMPAT_PROVIDER` |
 
 Use the `ROOTCLAW_` names. The unprefixed `OLLAMA_API_KEY`, `ANTHROPIC_API_KEY`,
-`GEMINI_API_KEY`, `OPENAI_API_KEY` (OpenAI Responses) and `META_API_KEY` are only
-a fallback inside the driver, used when no key is saved and the provider's
-default URL is in use. That fallback still lets the engine run, but Settings
+`GEMINI_API_KEY`, `OPENAI_API_KEY` (OpenAI Responses), `GROQ_API_KEY` and
+`META_API_KEY` are only a fallback inside the driver, used when no key is saved
+and the provider's default URL is in use. That fallback still lets the engine run, but Settings
 and `rootclaw engine list` do not count it as a configured key. More on each
 provider: [api-providers.md](api-providers.md).
 
@@ -174,6 +174,16 @@ them, add a `context` block to `~/.rootclaw/config.json` (all keys optional):
 | `turnSummaryModel` | A cheaper model id for mid-turn summaries; absent uses the turn's model. |
 | `rebuildBytes` | Bytes of history replayed into a rebuilt session (default 24000). |
 | `replayToolHistory` | `true` also tells a rebuilt session which tools already ran, one line per call (off by default; `ROOTCLAW_REPLAY_TOOL_HISTORY=1` or `0` overrides). |
+
+One related limit sits outside `context`: `engine.maxTurnRequests` (a whole
+number from 2 to 64, in the same file) caps how many model requests one turn
+may make; unset means no cap. The last request runs with tools off and the
+turn ends with "Stopped at this turn's limit of N model requests"; steps that
+already ran are kept. Details: [fallback-and-budgets.md](fallback-and-budgets.md).
+Without a saved value, the server environment can set it with
+`ROOTCLAW_MAX_TURN_REQUESTS`, and `turnCompactAt` / `toolOffloadBytes` with
+`ROOTCLAW_TURN_COMPACT_AT` / `ROOTCLAW_TOOL_OFFLOAD_BYTES` (a value in
+`config.json` wins).
 
 How compaction is measured and verified:
 [verification/context-compaction.md](verification/context-compaction.md).

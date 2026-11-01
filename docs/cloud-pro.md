@@ -1910,7 +1910,7 @@ descriptor's `capabilities.cloudHome`).
 On the person's own Cloud, open in the app's window, **Settings → RootClaw Cloud**
 shows the plan read only (`cloud-plan:*`: its name and whether it is active,
 **Manage in your browser** and **Switch to this computer**). It is listed only
-on an ROOTCLAW Cloud home (`config.cloudHome`), never on another server open in the
+on a RootClaw Cloud home (`config.cloudHome`), never on another server open in the
 window. Main answers it for the Cloud this account verified, or last verified
 while a check is failing or the sign-in has ended (`myCloudOrigin`, the rule
 the Cloud's microphone uses too), so that page says

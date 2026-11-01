@@ -9,7 +9,10 @@ Every provider runs on the in-process native loop (`server/drivers/openai-chat.t
 | `geminiApi`       | `gemini`           | Gemini API `models/{m}:streamGenerateContent?alt=sse`, function calling | `gemini.key` / `ROOTCLAW_GEMINI_API_KEY` |
 | `openaiResponses` | `openai-responses` | OpenAI Responses API `POST /v1/responses` (`store: false`, function tools) | `openai.key` / `ROOTCLAW_OPENAI_API_KEY` |
 | `ollamaCloud`     | `ollama`           | Ollama Cloud's **OpenAI-compatible** endpoint `https://ollama.com/v1/chat/completions` (Bearer key). The native `/api/chat` endpoint is not used. | `ollama.key` / `ROOTCLAW_OLLAMA_API_KEY` |
-| `openai`, `openrouter`, `openaiCompat`, … | `openai-compat` | OpenAI Chat Completions | as before |
+| `openai`          | `openai-compat`    | OpenAI Chat Completions at `https://api.openai.com/v1`     | `openai.key` / `ROOTCLAW_OPENAI_API_KEY` |
+| `openrouter`      | `openai-compat`    | OpenAI Chat Completions at `https://openrouter.ai/api/v1`  | `openrouter.key` / `ROOTCLAW_OPENROUTER_API_KEY` |
+| `openaiCompat`    | `openai-compat`    | OpenAI Chat Completions at any URL                         | `openaiCompat.key` / `OPENAI_COMPAT_API_KEY` (plus `OPENAI_COMPAT_URL`, `OPENAI_COMPAT_MODEL`, `OPENAI_COMPAT_PROVIDER`) |
+| `groq`, `meta`, `mistral`, `cerebras`, `xaiApi` | `groq`, `meta`, `mistral`, `cerebras`, `grok` | OpenAI Chat Completions | `ROOTCLAW_GROQ_API_KEY`, `ROOTCLAW_META_API_KEY`, `MISTRAL_API_KEY`, `CEREBRAS_API_KEY`, `XAI_API_KEY` |
 
 **Custom providers:** add any number of `openai-compat` instances, each with its own `url` and `key`
 (`instances.<id>.config`), or with `rootclaw setup --provider custom --base-url … --api-key …`.

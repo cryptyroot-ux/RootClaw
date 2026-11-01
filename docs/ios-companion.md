@@ -4,7 +4,7 @@ The iOS app is a thin, native client for the RootClaw instance running on
 your Mac. The Mac remains the only machine that persists agent processes,
 credentials, SQLite data, transcripts, and computers. The iPhone trusts a Mac
 by scanning the QR code shown in desktop **Settings → Remote access**; it does not need
-an RootClaw account of its own.
+a RootClaw account of its own.
 
 ## Use My Cloud on your phone
 
@@ -183,7 +183,7 @@ WireGuard inside the tailnet. Use the MagicDNS name rather than the
 `100.64.0.0/10` address: App Transport Security exceptions are domain-based,
 and `ios/project.yml` narrowly allows insecure HTTP for `ts.net` subdomains.
 
-Tailscale is optional. The direct path does not use an RootClaw-operated
+Tailscale is optional. The direct path does not use a RootClaw-operated
 relay or create a cloud copy of local transcript data.
 
 ### Optional hosted HTTPS
