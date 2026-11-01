@@ -214,3 +214,41 @@ it("grok preserves an explicit tools-off connection and rejects ambiguous flags"
   expect(GrokDriver.decodeConfig({ tools: true })).toMatchObject({ tools: true });
   expect(() => GrokDriver.decodeConfig({ tools: "false" })).toThrow("tools must be a boolean");
 });
+
+describe("GrokDriver server key", () => {
+  const previousKey = process.env.XAI_API_KEY;
+  let previousFetch: typeof globalThis.fetch;
+  let authorizations: string[] = [];
+  beforeEach(() => {
+    process.env.XAI_API_KEY = "xai-server-secret";
+    previousFetch = globalThis.fetch;
+    authorizations = [];
+    globalThis.fetch = (async (_url, init) => {
+      authorizations.push(new Headers(init?.headers).get("authorization") ?? "");
+      return sseResponse(SSE_BODY("ok"));
+    }) as typeof fetch;
+  });
+  afterEach(() => {
+    globalThis.fetch = previousFetch;
+    if (previousKey === undefined) delete process.env.XAI_API_KEY; else process.env.XAI_API_KEY = previousKey;
+  });
+  const turn = async (config: Record<string, unknown>, environment: Record<string, string> = {}) => {
+    const instance = await GrokDriver.create({ instanceId: "grok-key", displayName: "Grok Key", environment, enabled: true, config: GrokDriver.decodeConfig(config) });
+    const recorder = recordEvents(instance.adapter);
+    await instance.adapter.sendTurn({ threadId: `t-key-${Math.random()}`, text: "hi" });
+    await recorder.until((event) => event.type === "turn.completed");
+    recorder.stop();
+    await instance.dispose();
+  };
+
+  it("never sends the server's XAI_API_KEY to a custom URL", async () => {
+    await expect(turn({ url: "https://proxy.example.invalid/v1" })).rejects.toThrow(/Save an xAI API key/);
+    expect(authorizations).toEqual([]);
+  });
+
+  it("sends it to xAI, and a custom URL gets the workspace key", async () => {
+    await turn({});
+    await turn({ url: "https://proxy.example.invalid/v1" }, { XAI_API_KEY: "xai-workspace" });
+    expect(authorizations).toEqual(["Bearer xai-server-secret", "Bearer xai-workspace"]);
+  });
+});

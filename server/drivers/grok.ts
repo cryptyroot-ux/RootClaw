@@ -39,7 +39,9 @@ export const GrokDriver: ProviderDriver<GrokConfig> = {
 
   async create(input) {
     const { config } = input;
-    const apiKey = input.environment[config.apiKeyEnv] ?? process.env[config.apiKeyEnv] ?? "";
+    // The server's own XAI_API_KEY goes only to xAI itself; a custom URL gets the workspace key or a variable it names.
+    const serverKey = config.url === DEFAULT_URL || config.apiKeyEnv !== "XAI_API_KEY" ? process.env[config.apiKeyEnv] : undefined;
+    const apiKey = input.environment[config.apiKeyEnv] ?? serverKey ?? "";
     return createOpenAIChatRuntime({
       input,
       driverKind: DRIVER_KIND,
