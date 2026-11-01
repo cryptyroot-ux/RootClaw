@@ -18,6 +18,8 @@ vi.mock("@/state/store", async (importOriginal) => ({
   api: (...args: unknown[]) => fixture.api(...args),
 }));
 vi.mock("@/lib/thread-preferences", () => ({ useShowThreads: () => false }));
+const copiedTexts = vi.hoisted(() => [] as string[]);
+vi.mock("@/lib/copy-text", () => ({ copyText: async (text: string) => { copiedTexts.push(text); return "copied"; } }));
 
 const { ApprovalCard } = await import("./ApprovalCard");
 
@@ -136,6 +138,15 @@ describe("the chat card a bot-made automation leaves", () => {
     expect(html).toContain(">Hasn&#x27;t run yet<");
     expect(html).toContain("Copy address</button>");
     expect(html).not.toMatch(/whsec_|wh_abc|webhook/i);
+  });
+
+  it("after Copy address, says the app must also send the secret as an Authorization: Bearer header, without showing it", async () => {
+    const credential = { endpointUrl: "http://127.0.0.1:8800/hooks/wh_abc", url: "http://127.0.0.1:8800/hooks/wh_abc", secret: "whsec_card-fixture" };
+    fixture.api.mockImplementation(async (path: unknown) => path === "/api/webhooks/hook-1/address" ? { credential } : {});
+    click(webhookCard, "Copy address");
+    await vi.waitFor(() => expect(copiedTexts).toEqual([credential.url]));
+    await vi.waitFor(() => expect(document.body.querySelector("[role=status]")?.textContent).toBe("Address copied. The app must also send the secret as an Authorization: Bearer header: open More, then Show secret / settings, and use Copy."));
+    expect(document.body.innerHTML).not.toContain("whsec_");
   });
 
   it("pauses one another app sends to through its own API", async () => {

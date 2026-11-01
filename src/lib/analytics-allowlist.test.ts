@@ -71,7 +71,7 @@ describe("app, role and key lists", () => {
   it("names a provider for every Settings key row", () => {
     const rows = Object.fromEntries(KEY_CATALOG.flatMap((entry) => entry.target ? [[entry.id, entry.target.analytics]] : []));
     expect(rows).toEqual({
-      openai: "openai", anthropic: "anthropic", xai: "xai", openrouter: "openrouter", mistral: "mistral", cerebras: "cerebras", groq: "groq", gemini: "gemini", ollama: "ollama",
+      openai: "openai", anthropic: "anthropic", xai: "xai", openrouter: "openrouter", mistral: "mistral", cerebras: "cerebras", groq: "groq", greenference: "greenference", gemini: "gemini", ollama: "ollama",
       meta: "meta", deepseek: "deepseek", openaiCompat: "openai_compat", liveKey: "openai_live",
       elevenlabs: "elevenlabs", fishAudio: "fish_audio", box: "boat", composio: "composio", treg: "treg", jev: "jev",
       openrouterHelper: "openrouter_decider", imageOpenai: "openai_image", postiz: "postiz",
@@ -84,7 +84,7 @@ describe("app, role and key lists", () => {
       boxToken: "boat", xaiApiKey: "xai", ttsKey: "elevenlabs", fishAudioKey: "fish_audio",
       openaiImageApiKey: "openai_image",
       onePasswordToken: "onepassword", composioApiKey: "composio", openaiApiKey: "openai", anthropicApiKey: "anthropic",
-      openrouterApiKey: "openrouter", mistralApiKey: "mistral", cerebrasApiKey: "cerebras", groqApiKey: "groq", metaApiKey: "meta",
+      openrouterApiKey: "openrouter", mistralApiKey: "mistral", cerebrasApiKey: "cerebras", groqApiKey: "groq", greenferenceApiKey: "greenference", metaApiKey: "meta",
       deepseekApiKey: "deepseek",
     };
     expect(Object.keys(expected).sort()).toEqual(Object.keys(CREDENTIAL_TARGETS).sort());

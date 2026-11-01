@@ -582,9 +582,12 @@ the person's own uses this computer by itself while the desktop app runs and is
 signed in as them (`lendAutomatically` in `electron/computer-sharing.mjs`): My
 Cloud and each other Cloud the verified session lists as theirs
 (`createLendingTarget` in `electron/lending-target.mjs`), never a Team Cloud and
-never a server that only signed in with their account. Other users (desktop only,
-self-hosted, hosted team workspaces) keep computer sharing exactly as before: off
-unless a maintainer sets `features.sharedComputers` by hand.
+never a server that only signed in with their account. A server of the person's
+own that they made their bots' home (**Make <server> my home**, docs/self-hosting.md)
+is lent the same way, last, once the move is done and while that server says it
+is theirs alone. Other users (desktop only, self-hosted, hosted team workspaces)
+keep computer sharing exactly as before: off unless a maintainer sets
+`features.sharedComputers` by hand.
 
 ### What each Cloud gets
 
@@ -693,7 +696,9 @@ internet connection then, and becomes automatic like anyone else's.
 
 Anyone else gets the automatic grant at the next start. A grant kept from before
 keeps its folders, gains the home folder, the internet connection and Chrome, and
-loses a terminal it had; a **Settings → Servers → Computer access** grant kept for
+keeps a terminal it had: when every grant of one account lent the terminal and
+nobody said no to lending, **Let Clouds run commands on this Mac** starts on for
+that account and no other; a **Settings → Servers → Computer access** grant kept for
 a Cloud's own entry gives way to it. Only a kept grant that already lends what it
 should runs as it is: one that doesn't never connects, even for a moment.
 
@@ -1216,7 +1221,7 @@ For each service the Admin has configured, it also sets:
 | `ROOTCLAW_TTS_DEFAULT_VOICE` | env | An ElevenLabs voice id, used until the person picks a voice or another speech provider in Settings. |
 | `ROOTCLAW_CLOUD_DECIDER_URL` | env | `https://cloud.rootclaw.example/api/cloud/services/decider`, the Admin's Jev relay. It is a Jev base URL, used as it is: the decider adds `/v1/systemone`, the relay's only route, so every included decision goes to exactly `<ROOTCLAW_CLOUD_DECIDER_URL>/v1/systemone`. |
 | `ROOTCLAW_CLOUD_DECIDER_TOKEN` | secret | This machine's decision relay token (`rootclaw_decide_…`). It is not a Jev key and works only through the relay. |
-| `ROOTCLAW_CLOUD_X_URL` | env | `https://cloud.rootclaw.example/api/cloud/services/x`, the Admin's treg relay; the client calls `<ROOTCLAW_CLOUD_X_URL>/call/<endpoint>` for the X tools' eight endpoints, `/research/search`, `/research/endpoints/<id>` and `/research/call/<id>` for the research tools, and `GET /usage` for the month's calls on the Apps page's X card (`GET /api/x/status`). A person's own treg key (Settings → API keys) wins over it and goes straight to treg. |
+| `ROOTCLAW_CLOUD_X_URL` | env | `https://cloud.rootclaw.example/api/cloud/services/x`, the Admin's treg relay; the client calls `<ROOTCLAW_CLOUD_X_URL>/call/<endpoint>` for the X tools' eight endpoints, `/research/search`, `/research/endpoints/<id>` and `/research/call/<id>` for the research tools, and `GET /usage` for the month's calls on the Apps page's X card (`GET /api/x/status`). The home asks `GET /research/search` with no job at start, which spends nothing: a 400 means research is on, an off answer hides the research tools (x_search stays) until an hour later or a restart, and a research call refused as off does the same. A person's own treg key (Settings → API keys) wins over it and goes straight to treg. |
 | `ROOTCLAW_CLOUD_X_TOKEN` | secret | This machine's X research relay token (`rootclaw_x_…`). Not a treg key; it works only through the relay, within the plan's monthly X research calls. A signed-in desktop gets its own (`rootclaw_xd_…`) from `POST /api/cloud/desktop/services/x` and hands it to its server in memory. |
 
 A service is included only when both its URL and its token are set
@@ -1507,7 +1512,7 @@ place's state (`shared/place-view.ts`); a cause the server words itself
 `approval_undelivered`, `event_log`); the trial credit's refusal
 (`trial_used_up`, …); the turn's stop reason when it says more than "failed"
 (`auth_required`, `shutdown_timeout`, `provider_safety`, `update_required`,
-`spawn_error`, `quota`); the cause's class (`server/drivers/retry.ts`:
+`spawn_error`, `quota`, `tool_error`: a tool call that failed or wasn't allowed); the cause's class (`server/drivers/retry.ts`:
 `auth`, `quota`, `rate_limited`, …); the generic stop reason (`rpc_error`);
 else `unknown`. A turn that ends in `shutdown_timeout`, `auth_required`,
 `update_required`, `spawn_error` or `rpc_error` without a failed row of its own

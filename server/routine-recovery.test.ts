@@ -25,7 +25,7 @@ const SIGN_IN_ACTION = "This bot's AI is signed out. Sign in again in Settings �
 const BUSY = "this thread is already working — interrupt it first";
 const CRASH = "claude exited 3 before result: fake-claude: simulated crash before result";
 const CAPPED = "Stopped after 40 tool calls without a final answer";
-const DENIED = "One or more tool operations failed or were denied. See the tool results; the final response is not an execution receipt.";
+const DENIED = "Stopped because the tool call “gmail_send” wasn't allowed. The bot's reply isn't proof the work was done; that step didn't run.";
 const NO_HOURS = "This month's cloud desktop hours are used up. See your plan on the Plan page.";
 type EventBody = RuntimeEvent extends infer E ? E extends RuntimeEvent ? Omit<E, "eventId" | "provider" | "threadId" | "createdAt"> : never : never;
 

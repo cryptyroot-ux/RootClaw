@@ -4,6 +4,7 @@ import { reachablePeers } from "../peer-roster.ts";
 import type { BotRecord, Store, TaskRecord } from "../store.ts";
 import { stopBackgroundJobs } from "../drivers/workspace-tools.ts";
 import { PASS, type RouteHandler } from "./table.ts";
+import { conversationLanguage, serverLine } from "../server-lines.ts";
 
 type ThreadState = "running" | "waiting-on-you" | "queued" | "idle" | "closed";
 
@@ -95,7 +96,7 @@ export function createInternalThreadRoutes(deps: {
       role: "bot",
       kind: "activity",
       from: { botId: from.id, name: from.name, color: from.color },
-      tool: { name: `Closed by @${from.name}`, ok: true },
+      tool: { name: serverLine(conversationLanguage(threadId), "server.teammates.closedBy", { bot: from.name }), ok: true },
     });
     if (task.unread) store.patchTask(owner.id, threadId, { unread: false });
     store.setTaskClosedBy(owner.id, threadId, { botId: from.id, name: from.name, at: Date.now() });

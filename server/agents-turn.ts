@@ -13,7 +13,8 @@ export interface AgentsConversation {
   room: boolean;
   /** The bot works on its team's cloud computer, so it has no computer of its own to pick. */
   teamComputer: boolean;
-  host: { skillAuthoring: boolean; sharedComputers: boolean; cloudHome: boolean; team: boolean; escalations: boolean; voiceNotes: boolean; research: boolean };
+  /** `x`: a research credential is held (a treg key or a plan's); `research`: research works for it too. */
+  host: { skillAuthoring: boolean; sharedComputers: boolean; cloudHome: boolean; team: boolean; escalations: boolean; voiceNotes: boolean; x: boolean; research: boolean };
 }
 
 /** What one turn may do. Its bearer carries this to the harness, which checks it on every call. */
@@ -42,7 +43,8 @@ export function agentsServerEnv(conversation: AgentsConversation, turn: AgentsTu
     ROOTCLAW_SHARED_COMPUTERS_ENABLED: flag(host.sharedComputers),
     ROOTCLAW_CLOUD_HOME: flag(host.cloudHome), ROOTCLAW_TEAM_PEOPLE: flag(host.team), ROOTCLAW_ROOM: flag(conversation.room),
     ROOTCLAW_VOICE_NOTES: flag(host.voiceNotes),
-    ROOTCLAW_X_RESEARCH: flag(host.research && bot.xResearch !== false),
+    ROOTCLAW_X_RESEARCH: flag(host.x && bot.xResearch !== false),
+    ROOTCLAW_RESEARCH: flag(host.x && host.research && bot.xResearch !== false),
     ...roleToolEnv(bot),
     ROOTCLAW_ESCALATIONS: flag(host.escalations),
     ROOTCLAW_COMPUTER_SELECTION: flag(!conversation.room && bot.computer !== "off" && !conversation.teamComputer),

@@ -342,13 +342,15 @@ it("offers its bots the browser and cloud computers only, and tells them they ca
     expect((await api("POST", `/api/bots/${botId}/messages`, { body: { text: "list the files on my desktop" } })).status).toBe(202);
     await expect.poll(() => existsSync(dump), { timeout: 15_000 }).toBe(true);
     const sent = JSON.parse(readFileSync(dump, "utf8")) as { systemPrompt?: string };
-    expect(sent.systemPrompt).toContain(cloudHomePrompt(true));
+    expect(sent.systemPrompt).toContain(cloudHomePrompt(true, [], [], true));
     expect(sent.systemPrompt).toContain("check list_shared_computers");
+    expect(sent.systemPrompt).toContain("call ask_for_computer");
+    expect(sent.systemPrompt).toContain("never do it on their cloud computer or in the built-in browser instead unless they ask you to");
     expect(sent.systemPrompt).not.toMatch(/Local VM is an isolated desktop|user's host|host desktop|select an available Local VM/);
     expect(JSON.stringify(sent)).not.toContain(token);
     expect(JSON.stringify(sent)).not.toContain(secret);
     const preview = (await api("GET", `/api/bots/${botId}/system-prompt`)).body.sections as Array<{ id: string; text: string }>;
-    expect(preview.find((section) => section.id === "cloud-home")?.text).toBe(cloudHomePrompt(true));
+    expect(preview.find((section) => section.id === "cloud-home")?.text).toBe(cloudHomePrompt(true, [], [], true));
     const minted = await api("POST", "/api/testing/internal-capability", {
       headers: { "x-rootclaw-test-capability": CAPABILITY_KEY },
       body: { botId, threadId, kind: "agents" },

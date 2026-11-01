@@ -17,6 +17,9 @@ export function useAutomationActions() {
   /** What the error is about, e.g. "toggle:<id>", so it shows beside the thing that was clicked. */
   const [errorFor, setErrorFor] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+  /** The automation whose address was copied last: the address carries no secret (audit N21), so the hint to send it
+   * as an Authorization: Bearer header stays up after "Copied" fades. */
+  const [addressCopied, setAddressCopied] = useState<string | null>(null);
 
   const attempt = async (key: string, work: () => Promise<unknown>) => {
     if (busy) return;
@@ -58,7 +61,7 @@ export function useAutomationActions() {
   };
 
   /** The address another app sends to, as the server keeps it: the owning bot may already have given it to an app, so
-   * copying never replaces it. Only one from before addresses were kept, and not copied here before, gets a new one. */
+   * copying never replaces it. It holds no secret; the app sends that as an Authorization: Bearer header (audit N21). Only one from before addresses were kept, and not copied here before, gets a new one. */
   const copyAddress = (webhookId: string, replace = false) => attempt(`copy:${webhookId}`, async () => {
     let credential: WebhookCredential | undefined;
     if (!replace) {
@@ -74,6 +77,7 @@ export function useAutomationActions() {
     }
     if (await copyText(credential.url) !== "copied") throw new Error("Couldn't copy the address");
     setCopied(webhookId);
+    setAddressCopied(webhookId);
     setTimeout(() => setCopied((current) => (current === webhookId ? null : current)), 1_800);
   });
 
@@ -82,5 +86,5 @@ export function useAutomationActions() {
     if (bot && run?.threadId) openBotThread(dispatch, bot, run.threadId, showThreads);
   };
 
-  return { busy, error, errorFor, setError, copied, toggle, runNow, remove, copyAddress, openRun };
+  return { busy, error, errorFor, setError, copied, addressCopied, toggle, runNow, remove, copyAddress, openRun };
 }

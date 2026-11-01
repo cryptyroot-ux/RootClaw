@@ -5,6 +5,7 @@ describe("agents tool bridge", () => {
   it("bridges the native chat runtime only", () => {
     expect(engineBridgeRefusal({}, { driverKind: "openai-compat" })).toBeNull();
     expect(engineBridgeRefusal({}, { driverKind: "groq" })).toBeNull();
+    expect(engineBridgeRefusal({}, { driverKind: "greenference" })).toBeNull();
     expect(engineBridgeRefusal({}, { driverKind: "someOtherEngine" })).toBe("this engine keeps its own tool permissions");
     expect(engineBridgeRefusal({}, null)).toBe("no engine");
   });

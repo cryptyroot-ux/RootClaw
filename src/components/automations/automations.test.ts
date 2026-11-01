@@ -108,7 +108,7 @@ describe("the automation panel", () => {
     expect(container.querySelector("h2 + p")!.textContent).toBe("When your sales form sends something, Scout drafts a follow-up for the lead");
     expect(container.querySelector("[data-automation-status]")!.textContent).toContain("On");
     expect(text).not.toContain("Working");
-    expect(text).toContain("Paste this address into the other app");
+    expect(text).toContain("Paste this address into the other app, and have it send the secret as an Authorization: Bearer header (open More, then Show secret / settings, and use Copy)");
     expect(text).toContain("Recent runs");
     expect(text).toMatch(/Today [^✓]*✓Drafted a follow-up for Ada\./);
     for (const label of ["Copy address", "Run now", "Pause", "Edit", "Delete"]) expect(button(container, label)).toBeTruthy();
@@ -165,7 +165,14 @@ describe("Copy address", () => {
     flushSync(() => button(container, "Copy address").click());
     await vi.waitFor(() => expect(copied.texts).toEqual([kept.url]));
     expect(fixture.api.mock.calls.map(([path]) => path)).not.toContain("/api/webhooks/hook-1/rotate");
+    // The address holds no secret (audit N21): the panel says how to send it, and where its Copy button is (More, then Show secret / settings).
+    expect(container.querySelector("[role=status]")!.textContent).toBe("Address copied. The app must also send the secret as an Authorization: Bearer header: open More, then Show secret / settings, and use Copy.");
     expect(credentials.items.get("rootclaw-webhook-credentials")).toContain(kept.url);
+    // The hint names the panel's real labels, so a person can follow it: More, then Show secret / settings, then Copy.
+    const more = container.querySelector("details")!;
+    expect(more.querySelector("summary")!.textContent).toBe("More");
+    expect(more.textContent).toContain("Show secret / settings");
+    expect(button(more as HTMLElement, "Copy").getAttribute("aria-label")).toBe("Copy the secret");
   });
 
   it("makes a new one only for an address from before addresses were kept that nothing here holds", async () => {

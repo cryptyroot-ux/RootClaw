@@ -51,7 +51,7 @@ function profiles(): Record<string, Profile> {
   }
   all["skills+shared+voice+escalations"] = { env: { ...all["skills+shared+voice"]!.env, ROOTCLAW_ESCALATIONS: "1" } };
   // Research is on only with a treg key or a Cloud plan and the bot's switch; the fullest profile carries it.
-  all["skills+shared+voice+escalations+x"] = { env: { ...all["skills+shared+voice+escalations"]!.env, ROOTCLAW_X_RESEARCH: "1" } };
+  all["skills+shared+voice+escalations+x"] = { env: { ...all["skills+shared+voice+escalations"]!.env, ROOTCLAW_X_RESEARCH: "1", ROOTCLAW_RESEARCH: "1" } };
   // A Team Cloud mounts message_person; the fullest profile carries it.
   all["skills+shared+voice+escalations+x+team"] = { env: { ...all["skills+shared+voice+escalations+x"]!.env, ROOTCLAW_TEAM_PEOPLE: "1" } };
   all["default+legacy-switches"] = {
@@ -74,38 +74,40 @@ const ROOTCLAW_TOOLS = ["list_unread_notifications", "mark_notifications_read"];
 /** RootClaw's tools may make its list at most this much longer than the same Chief's without them. */
 const ROOTCLAW_ADDS = 0.02;
 const RESEARCH_TOOLS = ["x_search", "research_search", "research_endpoint", "research_call"];
+/** Only on the person's own Cloud: never on the fullest profile, a Team Cloud's. */
+const OWN_CLOUD_TOOLS = ["ask_for_computer"];
 /** The fullest profile, checked in whole; every other one is pinned by tool names, bytes and sha256. */
 const FULL = "skills+shared+voice+escalations+x+team";
 
 /** Bytes when the budget was last set; a profile may move at most 2% either way (lower it to lock in a win). */
 const BUDGET_BASELINE: Record<string, number> = {
-  "default": 55532,
-  "voice": 56313,
-  "shared": 57632,
-  "shared+voice": 58413,
-  "skills": 58351,
-  "skills+voice": 59132,
-  "skills+shared": 60451,
-  "skills+shared+voice": 61232,
-  "non-chief": 46628,
-  "voice+non-chief": 47394,
-  "shared+non-chief": 48686,
-  "shared+voice+non-chief": 49452,
-  "skills+non-chief": 49391,
-  "skills+voice+non-chief": 50156,
-  "skills+shared+non-chief": 51449,
-  "skills+shared+voice+non-chief": 52214,
-  "skills+shared+voice+cloud-home": 60313,
-  "skills+shared+voice+non-chief+cloud-home": 51314,
-  "default+legacy-switches": 55532,
-  "default+rootclaw": 56183,
-  "skills+shared+voice+rootclaw": 61883,
-  "skills+shared+voice+escalations": 62062,
-  "skills+shared+voice+escalations+x": 65901,
-  "skills+shared+voice+escalations+x+team": 66533,
-  "default+no-computer-pick": 54320,
-  "default+room": 48473,
-  "non-chief+room": 39416,
+  "default": 57383,
+  "voice": 58164,
+  "shared": 59648,
+  "shared+voice": 60429,
+  "skills": 60202,
+  "skills+voice": 60983,
+  "skills+shared": 62467,
+  "skills+shared+voice": 63248,
+  "non-chief": 48326,
+  "voice+non-chief": 49107,
+  "shared+non-chief": 50591,
+  "shared+voice+non-chief": 51372,
+  "skills+non-chief": 51145,
+  "skills+voice+non-chief": 51926,
+  "skills+shared+non-chief": 53410,
+  "skills+shared+voice+non-chief": 54191,
+  "skills+shared+voice+cloud-home": 63014,
+  "skills+shared+voice+non-chief+cloud-home": 53957,
+  "default+legacy-switches": 57383,
+  "default+rootclaw": 58034,
+  "skills+shared+voice+rootclaw": 63899,
+  "skills+shared+voice+escalations": 64078,
+  "skills+shared+voice+escalations+x": 67917,
+  "skills+shared+voice+escalations+x+team": 68549,
+  "default+no-computer-pick": 56177,
+  "default+room": 49255,
+  "non-chief+room": 40198,
 };
 
 const RPC_PREFIX = '{"jsonrpc":"2.0","id":1,"result":';
@@ -206,7 +208,7 @@ describe("agents proxy tools/list golden", () => {
     const full = new Map(toolsOf(wires[FULL]!).map((tool) => [tool.name, JSON.stringify(tool)]));
     for (const [name, profile] of Object.entries(PROFILES)) {
       for (const tool of toolsOf(wires[name]!)) {
-        if (profile.env.ROOTCLAW_CLOUD_HOME === "1" && tool.name === "select_computer") continue;
+        if (profile.env.ROOTCLAW_CLOUD_HOME === "1" && (tool.name === "select_computer" || OWN_CLOUD_TOOLS.includes(tool.name))) continue;
         if (profile.env.ROOTCLAW_CHIEF_OF_STAFF === "0" && CHIEF_TARGET_TOOLS.includes(tool.name)) continue;
         if (profile.env.ROOTCLAW_ROOTCLAW === "1" && ROOTCLAW_TOOLS.includes(tool.name)) continue;
         expect(JSON.stringify(tool), `${name}: ${tool.name}`).toBe(full.get(tool.name));
@@ -222,8 +224,9 @@ describe("agents proxy tools/list golden", () => {
       for (const alias of ["delegate_bot", "ask_bot", "send_to_bot", "check_delegation", "wait_delegation"]) expect(tools.has(alias), `${name}: ${alias}`).toBe(false);
       expect(JSON.stringify([...tools.values()])).not.toMatch(/Deprecated alias|works for this release/);
       const coordinate = tools.get("coordinate_bots")!.inputSchema.properties;
-      expect(Object.keys(coordinate)).toEqual(["group_id", "bot_ids", "message", "reason", "rework", "thread", "title", "in_my_folder", "reply", "consult", "done_when"]);
-      expect(coordinate.thread!.enum).toEqual(["standing", "new"]);
+      expect(Object.keys(coordinate)).toEqual(["group_id", "bot_ids", "message", "reason", "rework", "thread", "title", "in_my_folder", "reply", "consult", "done_when", "answers"]);
+      expect(coordinate.thread).toMatchObject({ type: "string", description: expect.stringContaining("threadId") });
+      expect(coordinate.thread!.enum).toBeUndefined();
       expect(coordinate.reply!.enum).toEqual(["resume", "none"]);
       expect(Object.keys(tools.get("assignment_status")!.inputSchema.properties)).toEqual(["id", "wait_ms"]);
       expect(tools.get("start_thread")!.inputSchema.properties.bot_id!.enum).toEqual(["bot-golden"]);
@@ -247,6 +250,15 @@ describe("agents proxy tools/list golden", () => {
     }
   });
 
+  it("mounts ask_for_computer only on a person's own Cloud that is lent their computer, never a Team Cloud", () => {
+    for (const [name, profile] of Object.entries(PROFILES)) {
+      expect(toolsOf(wires[name]!).some((tool) => tool.name === "ask_for_computer"), name)
+        .toBe(profile.env.ROOTCLAW_CLOUD_HOME === "1" && profile.env.ROOTCLAW_SHARED_COMPUTERS_ENABLED === "1" && profile.env.ROOTCLAW_TEAM_PEOPLE !== "1");
+    }
+    const team = catalogProfileFromEnv({ ...PROFILES["skills+shared+voice+cloud-home"]!.env, ROOTCLAW_TEAM_PEOPLE: "1", ROOTCLAW_BOT_ID: "bot-golden" });
+    expect(availableTools(team).map((tool) => tool.name)).not.toContain("ask_for_computer");
+  });
+
   it("ignores the switches that once picked a catalog profile", () => {
     expect(wires["default+legacy-switches"]).toBe(wires.default);
     const profile = catalogProfileFromEnv({ ROOTCLAW_BOT_ID: "bot-golden", ROOTCLAW_CHIEF_OF_STAFF: "1", ROOTCLAW_COMPUTER_SELECTION: "1", ROOTCLAW_ROOM_TURN: "1", ROOTCLAW_OWN_THREAD_CREATION: "1", ROOTCLAW_EXTERNAL_RUNTIME: "1", ROOTCLAW_ACTIVE_WAITS: "0" });
@@ -265,7 +277,8 @@ describe("agents proxy tools/list golden", () => {
     for (const name of cloudHome) {
       const desktop = wires[name.slice(0, -"+cloud-home".length)]!;
       const names = toolsOf(wires[name]!).map((tool) => tool.name);
-      expect(names).toEqual(toolsOf(desktop).map((tool) => tool.name).filter((tool) => tool !== "vm_exec"));
+      expect(names).toEqual(expect.arrayContaining(OWN_CLOUD_TOOLS));
+      expect(names.filter((tool) => !OWN_CLOUD_TOOLS.includes(tool))).toEqual(toolsOf(desktop).map((tool) => tool.name).filter((tool) => tool !== "vm_exec"));
       expect(select(desktop).inputSchema.properties.surface.enum).toEqual(["auto", "cloud", "vm", "local", "browser"]);
       expect(toolsOf(desktop).map((tool) => tool.name)).toContain("vm_exec");
       const surface = select(wires[name]!).inputSchema.properties.surface;
@@ -316,13 +329,16 @@ describe("agents proxy tools/list golden", () => {
   it("shows the X and research tools only where research is on, and adds nothing else", () => {
     for (const [name, profile] of Object.entries(PROFILES)) {
       const names = toolsOf(wires[name]!).map((tool) => tool.name);
-      for (const tool of RESEARCH_TOOLS) expect(names.includes(tool), `${name}: ${tool}`).toBe(profile.env.ROOTCLAW_X_RESEARCH === "1");
+      for (const tool of RESEARCH_TOOLS) expect(names.includes(tool), `${name}: ${tool}`).toBe(profile.env.ROOTCLAW_X_RESEARCH === "1" && profile.env.ROOTCLAW_RESEARCH === "1");
     }
     const switchedOn = Object.keys(PROFILES).filter((name) => name.endsWith("+x"));
     expect(switchedOn).toHaveLength(1);
     for (const name of switchedOn) {
       const without = toolsOf(wires[name.slice(0, -"+x".length)]!).map((tool) => tool.name);
       expect(toolsOf(wires[name]!).map((tool) => tool.name).filter((tool) => !RESEARCH_TOOLS.includes(tool))).toEqual(without);
+      // A plan's relay can have X without research: x_search alone, and nothing else changes.
+      const xOnly = availableTools(catalogProfileFromEnv({ ROOTCLAW_BOT_ID: "bot-golden", ...PROFILES[name]!.env, ROOTCLAW_RESEARCH: "0" })).map((tool) => tool.name);
+      expect(xOnly).toEqual(toolsOf(wires[name]!).map((tool) => tool.name).filter((tool) => tool === "x_search" || !RESEARCH_TOOLS.includes(tool)));
     }
   });
 

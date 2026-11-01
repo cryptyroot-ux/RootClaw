@@ -25,6 +25,28 @@ From 80% of a known window, the bot's 1:1 header shows the figure with a
 **Compact now** button that calls this route (hidden again once a compaction
 record is newer than the last reply).
 
+## Warm summaries: summarizing while the conversation is idle
+
+Opt-in in RootClaw (`ROOTCLAW_WARM_SUMMARY=1`); off by default, so the native
+engine's compaction timing is unchanged unless it is turned on. When on,
+RootClaw's own fold runs in the idle gap after a direct conversation's turn
+(not a room or a routine's run) once the conversation is at 85% of the
+threshold its next turn would fold at, so the next turn starts small.
+
+- **A turn that starts meanwhile wins:** the summary is abandoned and nothing
+  changes, except a turn that would fold at its start anyway, which waits (up
+  to 3 minutes) for the fold already running.
+- **Skipped while work is due:** a queued message, a teammate working on this
+  conversation's request, a wait that will carry on here, or the workspace's
+  spend limit reached; retried every 2 minutes while the bot is busy, memory
+  is short, or one of its routines is due.
+- **Turning it off:** unset `ROOTCLAW_WARM_SUMMARY`, or set
+  `context.autoCompact: false`.
+
+```sh
+pnpm exec vitest run server/warm-summary.test.ts server/host/warm-summary-host.test.ts server/thread-presence.test.ts server/routes/presence.test.ts
+```
+
 ## Rooms
 
 A room turn resumes no stored session: every turn re-sends the room's

@@ -7,7 +7,7 @@ import { DEFAULT_FLEET, NATIVE_DEFAULT_INSTANCE, REMOVED_DRIVER_KINDS } from "./
 describe("native engines only", () => {
   it("ships no external agent CLI or ACP driver", () => {
     const kinds = BUILT_IN_DRIVERS.map((driver) => driver.driverKind).sort();
-    expect(kinds).toEqual(["anthropic", "cerebras", "gemini", "grok", "groq", "meta", "minimax", "mistral", "ollama", "openai-compat", "openai-responses"]);
+    expect(kinds).toEqual(["anthropic", "cerebras", "gemini", "greenference", "grok", "groq", "meta", "minimax", "mistral", "ollama", "openai-compat", "openai-responses"]);
     for (const kind of kinds) expect(REMOVED_DRIVER_KINDS.has(kind)).toBe(false);
   });
 

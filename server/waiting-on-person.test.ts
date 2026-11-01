@@ -41,8 +41,8 @@ describe("approvals nobody answered", () => {
     notes.record("t1", "turn-1", "Bash", "npm test");
     notes.record("t1", "turn-1", "Bash", "npm test");
     notes.record("t1", "turn-1", "audit_write", "audit_write {\"name\":\"receipt\"}");
-    expect(notes.annotate("t1", "turn-1", "One or more tool operations failed or were denied", false)).toBe(
-      "One or more tool operations failed or were denied\n\n[RootClaw: nobody answered the approvals for “Bash: npm test”, “audit_write {\"name\":\"receipt\"}” in time, so they did not run. Do not report them as done; they need the person's approval.]",
+    expect(notes.annotate("t1", "turn-1", "Stopped because the tool call “fx_write” failed", false)).toBe(
+      "Stopped because the tool call “fx_write” failed\n\n[RootClaw: nobody answered the approvals for “Bash: npm test”, “audit_write {\"name\":\"receipt\"}” in time, so they did not run. Do not report them as done; they need the person's approval.]",
     );
   });
 

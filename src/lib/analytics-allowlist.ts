@@ -13,7 +13,7 @@ export function allow<const T extends string>(value: unknown, list: readonly T[]
 }
 
 export const KEY_PROVIDER = [
-  "anthropic", "openai", "openrouter", "openai_compat", "xai", "mistral", "cerebras", "groq", "meta", "boat", "composio",
+  "anthropic", "openai", "openrouter", "openai_compat", "xai", "mistral", "cerebras", "groq", "greenference", "meta", "boat", "composio",
   "custom_endpoint", "elevenlabs", "fish_audio", "jev", "openrouter_decider", "openai_image", "custom_image",
   "openai_live", "onepassword", "treg", "deepseek", "postiz", "gemini", "ollama",
 ] as const;
@@ -23,7 +23,7 @@ const CREDENTIAL_PROVIDER = new Map<string, KeyProvider>(Object.entries({
   boxToken: "boat", xaiApiKey: "xai", ttsKey: "elevenlabs", fishAudioKey: "fish_audio",
   openaiImageApiKey: "openai_image", onePasswordToken: "onepassword", composioApiKey: "composio", openaiApiKey: "openai",
   anthropicApiKey: "anthropic", openrouterApiKey: "openrouter", mistralApiKey: "mistral", cerebrasApiKey: "cerebras", groqApiKey: "groq",
-  metaApiKey: "meta", deepseekApiKey: "deepseek",
+  greenferenceApiKey: "greenference", metaApiKey: "meta", deepseekApiKey: "deepseek",
 } satisfies Record<CredentialTargetId, KeyProvider>));
 
 export function credentialProvider(target: unknown): KeyProvider | "other" {
@@ -31,13 +31,13 @@ export function credentialProvider(target: unknown): KeyProvider | "other" {
 }
 
 export const ENGINE = [
-  "openai_compat", "grok_api", "minimax", "mistral", "cerebras", "groq", "meta",
+  "openai_compat", "grok_api", "minimax", "mistral", "cerebras", "groq", "greenference", "meta",
   "anthropic", "gemini", "openai_responses", "ollama",
 ] as const;
 export type Engine = (typeof ENGINE)[number];
 
 const ENGINE_BY_DRIVER = new Map<string, Engine>(Object.entries({
-  "openai-compat": "openai_compat", grok: "grok_api", minimax: "minimax", mistral: "mistral", cerebras: "cerebras", groq: "groq",
+  "openai-compat": "openai_compat", grok: "grok_api", minimax: "minimax", mistral: "mistral", cerebras: "cerebras", groq: "groq", greenference: "greenference",
   meta: "meta", anthropic: "anthropic", gemini: "gemini", "openai-responses": "openai_responses", ollama: "ollama",
 } satisfies Record<string, Engine>));
 

@@ -1174,7 +1174,7 @@ export class RoutineManager {
             await this.options.startTurn(
               run.botId,
               task.threadId,
-              composeExecutionPrompt({ name: run.routineName, trigger: triggerSource, runOn: run.runOn ?? "rootclaw" }, prompt, run.attachments, continuityCarry(run, this.routines, this.runs), run.retried),
+              composeExecutionPrompt({ id: run.routineId, name: run.routineName, trigger: triggerSource, runOn: run.runOn ?? "rootclaw" }, prompt, run.attachments, continuityCarry(run, this.routines, this.runs), run.retried),
               run.runOn ?? "rootclaw",
               triggerSource,
               (message) => this.failThread(task.threadId, message, { cause: "refused" }),

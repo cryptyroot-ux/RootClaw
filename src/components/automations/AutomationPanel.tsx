@@ -70,6 +70,7 @@ export function AutomationPanel({ automation, sentence, onClose, onEdit, onDelet
               {actions.copied === webhook.id ? <Check size={14} /> : <Copy size={14} />}
               {actions.copied === webhook.id ? t("automations.address.copied") : t("automations.address.copy")}
             </button>
+            {actions.addressCopied === webhook.id && <p role="status" className="mt-2 text-[12px] leading-relaxed text-ink-secondary">{t("automations.address.copiedNeedsSecret")}</p>}
             {(!receiving || !state.config?.cloudHome) && <p className="mt-2 text-[12px] leading-relaxed text-ink-secondary">{receiving ? t("automations.address.keepOpen") : t("automations.address.unavailable")}</p>}
             <details className="mt-2.5 text-[12px] text-ink-secondary">
               <summary className="cursor-pointer select-none font-medium text-ink-secondary hover:text-ink">{t("automations.more")}</summary>

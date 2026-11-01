@@ -102,8 +102,8 @@ describe("stoppedTurnOutcome", () => {
 
   it("returns the turn's last message whole after the cause", () => {
     const report = `Implemented the export.\n\n${"Checked boundary case. ".repeat(80)}\nAll 12 tests pass.`;
-    const text = stoppedTurnOutcome({ reason: "One or more tool operations failed or were denied", turnId: "turn-1", activities: [], said: report });
-    expect(text).toBe(`One or more tool operations failed or were denied. No tool calls were seen before it stopped.\nIts last message, quoted: ${JSON.stringify(report)}`);
+    const text = stoppedTurnOutcome({ reason: "Stopped because the tool call “fx_write” failed", turnId: "turn-1", activities: [], said: report });
+    expect(text).toBe(`Stopped because the tool call “fx_write” failed. No tool calls were seen before it stopped.\nIts last message, quoted: ${JSON.stringify(report)}`);
   });
 
   it("quotes the turn's last message, so a teammate's words never pass for the harness's", () => {

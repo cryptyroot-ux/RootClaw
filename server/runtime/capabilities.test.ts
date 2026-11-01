@@ -16,6 +16,7 @@ const EXPECTED: Record<string, EngineCapabilities> = {
   mistral: chat,
   cerebras: chat,
   groq: chat,
+  greenference: chat,
   meta: chat,
   anthropic: chat,
   gemini: chat,

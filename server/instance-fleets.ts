@@ -30,6 +30,7 @@ export const DEFAULT_FLEET: InstanceConfigMap = {
   mistral: { driver: "mistral" },
   cerebras: { driver: "cerebras" },
   groq: { driver: "groq" },
+  greenference: { driver: "greenference" },
   meta: { driver: "meta" },
   ...API_KEY_FLEET,
 };
@@ -40,6 +41,7 @@ export const PRODUCT_FLEET_ADDITIONS = {
   mistral: { driver: "mistral" },
   cerebras: { driver: "cerebras" },
   groq: { driver: "groq" },
+  greenference: { driver: "greenference" },
   meta: { driver: "meta" },
   ...API_KEY_FLEET,
 } as const;

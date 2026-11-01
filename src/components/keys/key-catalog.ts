@@ -17,7 +17,7 @@ export const KEY_SECTIONS: ReadonlyArray<{ id: KeySectionId; titleKey: LocaleKey
   { id: "helpers", titleKey: "keys.section.helpers", purposeKey: "keys.section.helpers.purpose" },
 ];
 
-export type TestableProvider = "anthropic" | "openai" | "openrouter" | "openaiCompat" | "xai" | "mistral" | "cerebras" | "groq" | "meta" | "treg";
+export type TestableProvider = "anthropic" | "openai" | "openrouter" | "openaiCompat" | "xai" | "mistral" | "cerebras" | "groq" | "greenference" | "meta" | "treg";
 
 export type DesktopSlot = Parameters<NonNullable<NonNullable<Window["ogb"]>["setCredential"]>>[0];
 
@@ -39,7 +39,7 @@ export interface KeyTarget {
 }
 
 export type KeyId =
-  | "openai" | "anthropic" | "xai" | "openrouter" | "mistral" | "cerebras" | "groq" | "meta" | "deepseek" | "gemini" | "ollama"
+  | "openai" | "anthropic" | "xai" | "openrouter" | "mistral" | "cerebras" | "groq" | "greenference" | "meta" | "deepseek" | "gemini" | "ollama"
   | "lmStudio" | "openaiCompat" | "liveCalls" | "liveKey" | "elevenlabs" | "fishAudio" | "box" | "vps" | "onePassword" | "composio" | "treg" | "postiz"
   | "jev" | "openrouterHelper" | "workersAi" | "imageOpenai" | "imageCustom";
 
@@ -66,7 +66,7 @@ function flag(saved: SavedKey | undefined): SavedState {
   return { configured: saved?.configured === true, ...(saved?.configured && saved.last4 ? { last4: saved.last4 } : {}) };
 }
 
-type TopLevelKey = "openai" | "openrouter" | "xai" | "mistral" | "cerebras" | "groq" | "meta" | "deepseek" | "gemini" | "ollama" | "treg";
+type TopLevelKey = "openai" | "openrouter" | "xai" | "mistral" | "cerebras" | "groq" | "greenference" | "meta" | "deepseek" | "gemini" | "ollama" | "treg";
 
 function providerKey(name: TopLevelKey, rest: Omit<KeyTarget, "patch" | "saved">): KeyTarget {
   return { patch: (value) => ({ [name]: { key: value } }), saved: (config) => flag(config[name]), ...rest };
@@ -98,6 +98,9 @@ export const KEY_CATALOG: readonly KeyEntry[] = [
   { id: "groq", section: "ai", labelKey: "keys.groq.label", purposeKey: "keys.purpose.groq", name: "Groq", env: ["ROOTCLAW_GROQ_API_KEY"],
     words: ["groq", "fast"], mark: provider("groq"), kind: "key",
     target: providerKey("groq", { placeholder: "gsk_…", href: "https://console.groq.com/keys", test: "groq", analytics: "groq", shape: /^gsk_/ }) },
+  { id: "greenference", section: "ai", labelKey: "keys.greenference.label", purposeKey: "keys.purpose.greenference", name: "Greenference", env: ["ROOTCLAW_GREENFERENCE_API_KEY"],
+    words: ["greenference", "green", "open models"], mark: provider("greenference"), kind: "key",
+    target: providerKey("greenference", { placeholder: "…", placeholderKey: "keys.greenference.placeholder", href: "https://greenference.com/dashboard/tokens", test: "greenference", analytics: "greenference" }) },
   { id: "meta", section: "ai", labelKey: "keys.meta.label", purposeKey: "keys.purpose.meta", name: "Meta", env: ["ROOTCLAW_META_API_KEY"],
     words: ["meta", "muse", "llama"], mark: provider("meta", "meta"), kind: "key",
     target: providerKey("meta", { placeholder: "LLM|…", href: "https://dev.meta.ai/docs/authentication", test: "meta", analytics: "meta", shape: /^LLM\|/ }) },
@@ -214,7 +217,7 @@ export function looksLikeOtherKey(entry: KeyEntry, value: string): KeyEntry | nu
 
 const INSTANCE_KEYS: Readonly<Record<string, KeyId>> = {
   openai: "openai", claudeApi: "anthropic", xaiApi: "xai", grok: "xai", openrouter: "openrouter", mistral: "mistral", cerebras: "cerebras",
-  groq: "groq", meta: "meta", deepseek: "deepseek", openaiCompat: "openaiCompat",
+  groq: "groq", greenference: "greenference", meta: "meta", deepseek: "deepseek", openaiCompat: "openaiCompat",
   anthropicApi: "anthropic", geminiApi: "gemini", openaiResponses: "openai", ollamaCloud: "ollama",
 };
 

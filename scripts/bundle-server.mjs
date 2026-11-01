@@ -2,9 +2,10 @@
 // packaged app ships no node_modules. Entry points keep their exact relative
 // paths under dist-server, where the server locates each proxy by path.
 import { build } from "esbuild";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { serverLocalePlugin } from "./server-locale-plugin.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const server = join(root, "server");
@@ -72,7 +73,7 @@ await build({
   // Written after tsc, replacing its output for these entry points.
   allowOverwrite: true,
   logLevel: "info",
-  plugins: [yamlEsmPlugin],
+  plugins: [yamlEsmPlugin, serverLocalePlugin],
   banner: NODE_REQUIRE,
 });
 
@@ -87,6 +88,7 @@ await build({
   outfile: join(root, "dist-server", "mcp-server.js"),
   allowOverwrite: true,
   logLevel: "info",
+  plugins: [serverLocalePlugin],
 });
 
 // `rootclaw serve --tunnel` spawns the connector guardian as its own
@@ -128,6 +130,7 @@ if (existsSync(join(root, "enterprise", "server", "index.ts"))) {
     outfile: join(root, "dist-server", "enterprise", "server", "index.js"),
     allowOverwrite: true,
     logLevel: "info",
+    plugins: [serverLocalePlugin],
   });
   copyFileSync(join(root, "enterprise", "LICENSE"), join(root, "dist-server", "enterprise", "LICENSE"));
 }
@@ -149,3 +152,7 @@ copyFileSync(join(server, "model-catalog", "models-dev.snapshot.json"), catalogS
 // package.json, and the server reports this one (server/environment.ts).
 const { version } = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 writeFileSync(join(root, "dist-server", "package.json"), `${JSON.stringify({ type: "module", version })}\n`);
+
+// tsc copies the language packs server/server-lines.ts imports (13 MB) beside its own output. The bundles above carry
+// the server's keys, so nothing reads the copies.
+rmSync(join(root, "dist-server", "src", "locales"), { recursive: true, force: true });

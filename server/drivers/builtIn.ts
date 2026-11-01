@@ -3,6 +3,7 @@ import { OpenAICompatDriver } from "./openai-compat.ts";
 import { MistralDriver } from "./mistral.ts";
 import { CerebrasDriver } from "./cerebras.ts";
 import { GroqDriver } from "./groq.ts";
+import { GreenferenceDriver } from "./greenference.ts";
 import { MetaDriver } from "./meta.ts";
 import { GrokDriver } from "./grok.ts";
 import { MinimaxDriver } from "./minimax.ts";
@@ -16,6 +17,7 @@ export const BUILT_IN_DRIVERS: readonly AnyProviderDriver[] = [
   MistralDriver,
   CerebrasDriver,
   GroqDriver,
+  GreenferenceDriver,
   MetaDriver,
   AnthropicDriver,
   GeminiDriver,

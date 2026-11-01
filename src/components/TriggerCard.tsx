@@ -84,6 +84,7 @@ export function TriggerCard({ card, threadId }: { card: OptionCardData; threadId
           {threadId && card.requestId && <><span aria-hidden="true">·</span><button type="button" onClick={undo} disabled={undoing} className={cn(ACTION, "text-accent")}>{undoing ? t("automations.card.undoing") : t("automations.card.undo")}</button></>}
         </span>
       </div>
+      {automation.kind === "webhook" && actions.addressCopied === automation.id && <p role="status" className="mt-1 pl-[22px] text-[12px] text-ink-secondary">{t("automations.address.copiedNeedsSecret")}</p>}
       {(error || actions.error) && <div role="alert" className="mt-1 pl-[22px] text-[12px] text-warning">{error ?? actions.error}</div>}
       {/* On the page, not in the transcript: the transcript's scroller would clip it and the composer would cover Save. */}
       {editing && createPortal(

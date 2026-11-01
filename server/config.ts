@@ -344,6 +344,7 @@ const appConfigSchema = z.object({
   mistral: z.object({ key: optionalText }).optional(),
   cerebras: z.object({ key: optionalText }).optional(), treg: z.object({ key: optionalText }).optional(), postiz: z.object({ key: optionalText, url: optionalText }).optional(),
   groq: z.object({ key: optionalText, url: optionalText }).optional(),
+  greenference: z.object({ key: optionalText }).optional(),
   meta: z.object({ key: optionalText, url: optionalText }).optional(),
   deepseek: z.object({ key: optionalText }).optional(),
   /** Gemini API key (or `oauth` from Google sign-in, see docs/api-providers.md); `url` for a proxy or test double. */
@@ -509,6 +510,7 @@ export interface AppConfig extends HelperConfig {
   mistral?: { key?: string };
   cerebras?: { key?: string }; treg?: { key?: string }; /** Postiz: an organisation API key and the server it belongs to (blank: Postiz Cloud). */ postiz?: { key?: string; url?: string };
   groq?: { key?: string; url?: string };
+  greenference?: { key?: string };
   meta?: { key?: string; url?: string };
   gemini?: { key?: string; url?: string; oauth?: { clientId?: string; clientSecret?: string; refreshToken?: string; projectId?: string } };
   ollama?: { key?: string; url?: string };
@@ -809,6 +811,8 @@ export function loadConfig(): AppConfig {
   if (process.env.ROOTCLAW_TREG_KEY !== undefined) cfg.treg = { ...cfg.treg, key: process.env.ROOTCLAW_TREG_KEY }; if (process.env.ROOTCLAW_POSTIZ_API_KEY !== undefined) cfg.postiz = { ...cfg.postiz, key: process.env.ROOTCLAW_POSTIZ_API_KEY };
   cfg.groq = { ...cfg.groq };
   if (process.env.ROOTCLAW_GROQ_API_KEY !== undefined) cfg.groq.key = process.env.ROOTCLAW_GROQ_API_KEY;
+  cfg.greenference = { ...cfg.greenference };
+  if (process.env.ROOTCLAW_GREENFERENCE_API_KEY !== undefined) cfg.greenference.key = process.env.ROOTCLAW_GREENFERENCE_API_KEY;
   cfg.meta = { ...cfg.meta };
   if (process.env.ROOTCLAW_META_API_KEY !== undefined) cfg.meta.key = process.env.ROOTCLAW_META_API_KEY;
   cfg.gemini = { ...cfg.gemini };
@@ -884,6 +888,7 @@ export function syncCredentialEnv(patch: Partial<Omit<AppConfig, "threads" | "ne
     [patch.mistral?.key, "MISTRAL_API_KEY"],
     [patch.cerebras?.key, "CEREBRAS_API_KEY"], [patch.treg?.key, "ROOTCLAW_TREG_KEY"], [patch.postiz?.key, "ROOTCLAW_POSTIZ_API_KEY"],
     [patch.groq?.key, "ROOTCLAW_GROQ_API_KEY"],
+    [patch.greenference?.key, "ROOTCLAW_GREENFERENCE_API_KEY"],
     [patch.meta?.key, "ROOTCLAW_META_API_KEY"],
     [patch.deepseek?.key, "ROOTCLAW_DEEPSEEK_API_KEY"],
     [patch.gemini?.key, "ROOTCLAW_GEMINI_API_KEY"],
@@ -953,7 +958,7 @@ export function saveConfig(
   const before = configSaveListeners.size ? structuredClone(disk) : disk;
   const storedProfiles = storedBrowserProfilesSchema.safeParse(disk.browserProfiles);
   if (storedProfiles.success) disk.browserProfiles = storedProfiles.data;
-  for (const key of ["xai", "anthropic", "mistral", "cerebras", "treg", "postiz", "groq", "meta", "deepseek", "gemini", "ollama", "openai", "openrouter", "openaiCompat", "composio", "box", "tts", "decider", "imageGen", "live", "profile", "rooms", "mcp", "threads", "context", "memory", "localVm", "features", "budgets", "modelPrices", "billing", "decisions", "loopGuard", "onboarding", "browserEngine", "newBots", "safetyFloor"] as const) {
+  for (const key of ["xai", "anthropic", "mistral", "cerebras", "treg", "postiz", "groq", "greenference", "meta", "deepseek", "gemini", "ollama", "openai", "openrouter", "openaiCompat", "composio", "box", "tts", "decider", "imageGen", "live", "profile", "rooms", "mcp", "threads", "context", "memory", "localVm", "features", "budgets", "modelPrices", "billing", "decisions", "loopGuard", "onboarding", "browserEngine", "newBots", "safetyFloor"] as const) {
     const section = checkedPatch[key];
     if (!section) continue;
     const current = jsonObjectSchema.safeParse(disk[key]);
@@ -1099,6 +1104,8 @@ export function instanceOwnsRouting(
       return own(entry.environment?.CEREBRAS_API_KEY) || ownUrl("https://api.cerebras.ai/v1");
     case "groq":
       return own(entry.environment?.GROQ_API_KEY) || ownUrl("https://api.groq.com/openai/v1", cfg.groq?.url);
+    case "greenference":
+      return own(entry.environment?.GREENFERENCE_API_KEY) || ownUrl("https://llm.eu.greenference.com/v1");
     case "meta":
       return own(entry.environment?.META_API_KEY) || ownUrl("https://api.meta.ai/v1", cfg.meta?.url);
     case "anthropic":
@@ -1123,6 +1130,7 @@ function injectedEnvironment(cfg: AppConfig, instanceId: string, driver: string)
   if (driver === "mistral" && cfg.mistral?.key) environment.set("MISTRAL_API_KEY", cfg.mistral.key);
   if (driver === "cerebras" && cfg.cerebras?.key) environment.set("CEREBRAS_API_KEY", cfg.cerebras.key);
   if (driver === "groq" && cfg.groq?.key) environment.set("GROQ_API_KEY", cfg.groq.key);
+  if (driver === "greenference" && cfg.greenference?.key) environment.set("GREENFERENCE_API_KEY", cfg.greenference.key);
   if (driver === "meta" && cfg.meta?.key) environment.set("META_API_KEY", cfg.meta.key);
   if (driver === "grok" && cfg.xai?.key) environment.set("XAI_API_KEY", cfg.xai.key);
   if (driver === "anthropic" && cfg.anthropic?.key) environment.set("ANTHROPIC_API_KEY", cfg.anthropic.key);

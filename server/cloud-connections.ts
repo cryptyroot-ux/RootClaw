@@ -46,7 +46,7 @@ export interface ConnectionListing {
  * research, the decider) are not listed, since the person's own key would replace what it includes. */
 interface Provider { id: string; label: string; for: string[]; config(cfg: AppConfig): Partial<AppConfig> | null }
 
-const keyed = (name: "openai" | "openrouter" | "mistral" | "cerebras") => (cfg: AppConfig): Partial<AppConfig> | null => {
+const keyed = (name: "openai" | "openrouter" | "mistral" | "cerebras" | "greenference") => (cfg: AppConfig): Partial<AppConfig> | null => {
   const key = cfg[name]?.key;
   return key ? { [name]: { key } } : null;
 };
@@ -64,6 +64,7 @@ export const KEY_PROVIDERS: readonly Provider[] = [
   { id: "mistral", label: "Mistral", for: ["mistral"], config: keyed("mistral") },
   { id: "cerebras", label: "Cerebras", for: ["cerebras"], config: keyed("cerebras") },
   { id: "groq", label: "Groq", for: ["groq"], config: keyedUrl("groq") },
+  { id: "greenference", label: "Greenference", for: ["greenference"], config: keyed("greenference") },
   { id: "meta", label: "Meta", for: ["meta"], config: keyedUrl("meta") },
   { id: "openaiCompat", label: "OpenAI-compatible", for: ["openaiCompat"], config: (cfg) => cfg.openaiCompat?.key
     ? { openaiCompat: Object.fromEntries(Object.entries(cfg.openaiCompat).filter(([, value]) => typeof value === "string" && value)) } : null },

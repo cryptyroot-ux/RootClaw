@@ -86,7 +86,7 @@ const EXPECT_TTL_MS = 60_000;
 
 /** Anthropic reports each model call; OpenAI-style chat providers report a turn's running total. */
 const PER_CALL = new Set(["anthropic"]);
-const TURN_TOTALS = new Set(["grok", "groq", "cerebras", "mistral", "minimax", "meta", "openai-compat"]);
+const TURN_TOTALS = new Set(["grok", "groq", "greenference", "cerebras", "mistral", "minimax", "meta", "openai-compat"]);
 const MAX_LINKS = 5_000;
 const ENDED_GRACE_MS = 120_000;
 const RECEIPT_SLACK_MS = 3_000;

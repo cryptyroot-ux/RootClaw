@@ -30,6 +30,7 @@ import { applyPlanUpdate, carryPlan, completePlan, parseVerdict, pinPlan, PLAN_H
 import { failoverHold, failoverKind } from "./failover.ts";
 import { classifyError, HttpStatusError, interruptibleDelay, nextRetryDelay, parseRetryAfter, RETRY_MAX_ATTEMPTS } from "./retry.ts";
 import { plainFailureMessage } from "./engine-errors.ts";
+import { toolFailureMessage } from "./tool-failure.ts";
 import { refusesRequestSize, RequestTooLargeError, sizeChange, smallerResend } from "./chat-size-limit.ts";
 import { completionError, completionUsage, httpErrorDetail, REFUSED_TOOL_CALL_ATTEMPTS, RejectedToolCallError, refusedToolCall, refusedToolCallFailure,
   rejectsReasoningReplay, rejectsToolsParameter, UnsupportedReasoningReplayError, usageFrom, type CompletionJson } from "./openai-chat-errors.ts";
@@ -527,7 +528,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
       let failedWith: Error | undefined;
       const meter = turn.budget ? new BudgetMeter(turn.budget, turn.budget.price ?? null) : null;
       let correctiveRounds = 0;
-      const denials: string[] = [];
+      const denials: string[] = [], failedCalls: string[] = [];
       const seenCalls = new Set<string>();
       const callSignatures = new Map<string, string>();
       const loopGuard = new ToolLoopGuard();
@@ -961,7 +962,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
                 continue;
               }
               stopReason = "tool_error";
-              throw new ChatProtocolError("One or more tool operations failed or were denied. See the tool results; the final response is not an execution receipt.");
+              throw new ChatProtocolError(toolFailureMessage(failedCalls, denials.filter((name) => name !== ASK_USER_TOOL)));
             }
             if (options.nudgeAnnouncedAction && tools.definitions.length && announcesAction(completion.text)) {
               if (nudges >= MAX_ANNOUNCEMENT_NUDGES || turnEntry.ending) {
@@ -1052,13 +1053,13 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           // A failure is judged by the round that follows it: a new round of real tools supersedes earlier failures, and
           // only failures in the last tool round before the final answer mark the turn. A plan-only update is not
           // progress, and a person's denial always stands.
-          if (!planOnly && !denials.length) toolFailed = false;
+          if (!planOnly && !denials.length) { toolFailed = false; failedCalls.length = 0; }
           const screenshotParts: ChatContentPart[] = [];
           const session = tools;
           const runCall = async (call: ChatToolCall) => {
             let result: ChatToolResult;
             let started = false;
-            let fatal: Error | undefined;
+            let fatal: Error | undefined, title = call.function.name;
             // A call that runs a command carries it as the activity's summary, so the run card can list its steps.
             let command: string | undefined;
             const commandSummary = () => command ? { summary: command } : {};
@@ -1103,7 +1104,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
                 }
               } else if (workspace && workspaceNames.has(call.function.name)) {
                 validateWorkspaceArgs(call.function.name, args as Record<string, unknown>);
-                const shown = workspaceToolView(call.function.name, args as Record<string, unknown>);
+                const shown = workspaceToolView(call.function.name, args as Record<string, unknown>); title = shown.title;
                 const full = (turn.approvalModeNow?.() ?? turn.approvalMode) === "full";
                 const floored = approval.floored({ full, threadId: turn.threadId, botId: turn.botId, shown, summary: inputPreview });
                 const allowed = !floored && (full || !shown.ask
@@ -1145,7 +1146,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
                 result = readToolOutput(args as Record<string, unknown>, { dir: ctx.offloadDir, threadId: turn.threadId });
               } else {
                 session.validate(call.function.name, args);
-                const shown = session.view(call.function.name, args as Record<string, unknown>);
+                const shown = session.view(call.function.name, args as Record<string, unknown>); title = shown.title;
                 const shownPreview = shown.input === args ? inputPreview : preview(shown.input);
                 // This runtime has no provider reviewer, so Full access is honoured here.
                 const full = (turn.approvalModeNow?.() ?? turn.approvalMode) === "full";
@@ -1195,7 +1196,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             const output = preview({ ok: result.ok, result: text });
             emit({ ...base(turn.threadId, turnId), type: "item.completed", itemType: "tool", itemId: call.id, ok: result.ok, output });
             const body = offloaded ? offloaded.text : text;
-            return { call, result, content: JSON.stringify({ ok: result.ok, result: call.function.name === UPDATE_PLAN_TOOL || call.function.name === ASK_USER_TOOL ? body : fenceUntrustedToolOutput(body) }), fatal };
+            return { call, result, content: JSON.stringify({ ok: result.ok, result: call.function.name === UPDATE_PLAN_TOOL || call.function.name === ASK_USER_TOOL ? body : fenceUntrustedToolOutput(body) }), fatal, title };
           };
           // Read-only calls run concurrently (bounded); mutating ones one at a time, in order. Results reach the model in call order.
           await runToolBatch(completion.toolCalls, {
@@ -1205,10 +1206,10 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
               emit({ ...base(turn.threadId, turnId), type: "item.completed", itemType: "tool", itemId: call.id, ok: true, output: preview(parsed) });
             }),
             signal: abort.signal,
-            commit: ({ call, result, content, fatal }) => {
+            commit: ({ call, result, content, fatal, title }) => {
               // A failed read changed nothing, so it cannot make the answer a false receipt (a probe such as git_status
               // outside a repo, or read_file on a missing file, is often the point); the model sees the error either way.
-              if (!result.ok && call.function.name !== UPDATE_PLAN_TOOL && !readOnlyTool(call.function.name)) toolFailed = true;
+              if (!result.ok && call.function.name !== UPDATE_PLAN_TOOL && !readOnlyTool(call.function.name)) { toolFailed = true; failedCalls.push(title); }
               messages.push({ role: "tool", tool_call_id: call.id, content });
               if (loopGuard.commit(call, readOnlyTool(call.function.name), content, round + 1)) emit({ ...base(turn.threadId, turnId), type: "runtime.notice", message: TOOL_LOOP_NOTICE });
               screenshotParts.push(...chatToolImages(call.id, result.images));
