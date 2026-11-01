@@ -841,12 +841,13 @@ describe("installing the browser engine", () => {
 
 describe("what a bot gets", () => {
   // Without a gate the browser connects nowhere: Chrome fails every connection through port 0.
-  const gateArgs = ["--webrtc-ip-handling-policy=disable_non_proxied_udp", "--force-webrtc-ip-handling-policy=disable_non_proxied_udp", ...credentialStoreFlags()];
   const cacheArg = `--disk-cache-size=${64 * 1024 * 1024}`;
+  const argSeparator = (platform: NodeJS.Platform = process.platform) => platform === "win32" ? "," : "\n";
   /** A saved session's browser: its own kept profile, behind no gate. */
-  const keptNoGate = (session: string) => ({
+  const keptNoGate = (session: string, platform: NodeJS.Platform = "linux") => ({
     AGENT_BROWSER_PROXY: "socks5://127.0.0.1:0", AGENT_BROWSER_PROXY_BYPASS: "<-loopback>",
-    AGENT_BROWSER_PROFILE: browserProfileDirectory(session), AGENT_BROWSER_ARGS: [cacheArg, ...gateArgs].join("\n"),
+    AGENT_BROWSER_PROFILE: browserProfileDirectory(session),
+    AGENT_BROWSER_ARGS: [cacheArg, "--webrtc-ip-handling-policy=disable_non_proxied_udp", "--force-webrtc-ip-handling-policy=disable_non_proxied_udp", ...credentialStoreFlags(platform)].join(argSeparator(platform)),
   });
 
   it("gives each saved session a profile of its own that outlives Chrome, and a temporary or My Chrome browser none", () => {
@@ -858,7 +859,7 @@ describe("what a bot gets", () => {
     expect(resolve(work, "..")).toBe(browserProfilesRoot(dataDir));
     expect(kept("bot-1").AGENT_BROWSER_PROFILE).toBe(work);
     expect(kept("bot-2").AGENT_BROWSER_PROFILE).not.toBe(work);
-    expect(kept("bot-1").AGENT_BROWSER_ARGS!.split("\n")).toContain(cacheArg);
+    expect(kept("bot-1").AGENT_BROWSER_ARGS!.split(argSeparator())).toContain(cacheArg);
     for (const env of [kept("guest-1", { persistent: false }), kept("work", { attach: {} })]) {
       expect(env).not.toHaveProperty("AGENT_BROWSER_PROFILE");
       expect(env.AGENT_BROWSER_ARGS ?? "").not.toContain(cacheArg);
