@@ -56,6 +56,8 @@ export interface ModelRequest {
   onUsage?: TextGenerationOptions["onUsage"];
   /** Output-token ceiling: helper calls (the verifier) and rounds whose input leaves less than the default room; absent leaves the provider default. */
   maxTokens?: number;
+  /** "none": the tools stay in the request but the model may not call one (a turn's final request under its request budget). */
+  toolChoice?: "none";
 }
 
 export interface ModelAdapter {

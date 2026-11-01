@@ -50,7 +50,8 @@ test("calibration only scales up", () => {
   c.observe(100, 50);
   expect(c.apply(100)).toBe(100);
   c.observe(100, 150);
-  expect(c.apply(100)).toBe(150);
+  // An EMA (alpha 0.3) over the clamped ratios: 0.3 * 1.5 + 0.7 * 1.
+  expect(c.apply(100)).toBe(115);
 });
 
 test("carries a model's calibration into its next turn, and keeps models apart", () => {

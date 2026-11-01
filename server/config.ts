@@ -376,7 +376,7 @@ const appConfigSchema = z.object({
   modelPrices: z.record(z.string().min(1).max(160), modelPriceSchema).optional(),
   /** Retention for large tool outputs saved under the data dir: age limit (default 7 days) and total size cap (default 500 MB). */
   /** Native engine switches. planVerify: planner (+ self-check verifier) for multi-step turns; off by default. */
-  engine: z.object({ planVerify: z.union([z.boolean(), z.enum(["off", "plan", "plan+verify"])]).optional(), maxVerifyRetries: z.number().int().min(0).max(3).optional(), verifyMinSteps: z.number().int().min(1).max(9).optional() }).optional(),
+  engine: z.object({ planVerify: z.union([z.boolean(), z.enum(["off", "plan", "plan+verify"])]).optional(), maxVerifyRetries: z.number().int().min(0).max(3).optional(), verifyMinSteps: z.number().int().min(1).max(9).optional(), maxTurnRequests: z.number().int().min(2).max(64).optional() }).optional(),
   toolOutputRetention: z.object({ maxAgeDays: z.number().positive().max(3650).optional(), maxTotalMb: z.number().positive().max(1_000_000).optional() }).optional(),
   /** Operator sell prices per million tokens by model id, `driver/model` or `default`; read only with the `billing` entitlement. */
   billing: z
@@ -528,7 +528,7 @@ export interface AppConfig extends HelperConfig {
   safetyFloor?: { enabled?: boolean };
   modelPrices?: Record<string, { inputPerMillion: number; outputPerMillion: number; cachedInputPerMillion?: number }>;
   toolOutputRetention?: { maxAgeDays?: number; maxTotalMb?: number };
-  engine?: { planVerify?: boolean | "off" | "plan" | "plan+verify"; maxVerifyRetries?: number; verifyMinSteps?: number };
+  engine?: { planVerify?: boolean | "off" | "plan" | "plan+verify"; maxVerifyRetries?: number; verifyMinSteps?: number; maxTurnRequests?: number };
   billing?: { currency?: string; prices?: Record<string, { inputPerMillion: number; outputPerMillion: number; cachedInputPerMillion?: number }> };
   openaiCompat?: { key?: string; url?: string; model?: string; provider?: string };
   composio?: { apiKey?: string; userId?: string; sessionId?: string };
