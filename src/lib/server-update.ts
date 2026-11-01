@@ -10,6 +10,8 @@ export interface ServerUpdateCheck {
   releaseUrl?: string;
   command?: string;
   restart?: boolean;
+  /** Why there is no command (server/update-check.ts NOT_A_CLONE). */
+  note?: string;
 }
 
 export type ServerUpdatePhase = "idle" | "checking" | "up-to-date" | "available" | "reload" | "error";
@@ -40,7 +42,7 @@ export function serverUpdateRow(
     const how = otherServer
       ? (check.restart ? "sidebar.update.howOtherRestart" : "sidebar.update.howOther")
       : (check.restart ? "sidebar.update.howRestart" : "sidebar.update.how");
-    const subtitle = check.command ? t(how, { command: check.command }) : undefined;
+    const subtitle = check.command ? t(how, { command: check.command }) : check.note;
     const label = otherServer
       ? t("sidebar.update.availableOther", { name: otherServer, version: check.latest })
       : t("sidebar.update.availableServer", { version: check.latest });

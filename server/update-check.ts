@@ -9,14 +9,14 @@ const CACHE_MS = 60 * 60_000;
 export type InstallKind = "desktop" | "managed" | "docker" | "podman" | "npm" | "git" | "unknown";
 
 /** A clone is updated in place: pull, then rebuild the web app and the server it serves. */
-export const CLONE_UPGRADE = "git pull && pnpm install && pnpm build && pnpm build:server";
+export const CLONE_UPGRADE = "git pull && pnpm install --frozen-lockfile && pnpm build && pnpm build:server";
 
 /** The rootclaw npm package is private and unpublished, so an install that is not a clone has nothing to update from. */
-export const NOT_A_CLONE = `This RootClaw install is not a git clone, so it cannot update itself: the rootclaw npm package is not published. Clone https://github.com/cryptyroot-ux/RootClaw, build it (pnpm install && pnpm build && pnpm build:server) and run it from there; later updates are \`${CLONE_UPGRADE}\` in that clone.`;
+export const NOT_A_CLONE = `This RootClaw install is not a git clone, so it cannot update itself: the rootclaw npm package is not published. Clone https://github.com/cryptyroot-ux/RootClaw, build it (pnpm install --frozen-lockfile && pnpm build && pnpm build:server) and run it from there; later updates are \`${CLONE_UPGRADE}\` in that clone.`;
 
-/** As docs/self-hosting.md and deploy/podman/README.md give them. A non-clone install gets NOT_A_CLONE instead of a command. */
+/** As docs/self-hosting.md and deploy/podman/README.md give them: no image is published, so Docker rebuilds from the clone. A non-clone install gets NOT_A_CLONE instead of a command. */
 export const UPDATE_COMMANDS: Partial<Record<InstallKind, { command: string; restart: boolean }>> = {
-  docker: { command: "docker compose pull rootclaw && docker compose up -d", restart: false },
+  docker: { command: "git pull && docker compose up -d --build", restart: false },
   podman: { command: "git pull && cd deploy/podman && PODMAN_COMPOSE_PROVIDER=podman-compose podman compose --env-file .env -f compose.yaml up -d --build", restart: false },
   git: { command: CLONE_UPGRADE, restart: true },
 };
