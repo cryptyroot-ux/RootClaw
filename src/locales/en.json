@@ -7053,7 +7053,6 @@
   "providerConnect.openrouter": "Sign in with OpenRouter",
   "providerConnect.google": "Sign in with Google (Gemini)",
   "providerConnect.googleSignedIn": "Signed in with Google — sign in again",
-  "providerConnect.googleNeedsClient": "Google sign-in needs your own OAuth client id in Settings. A Gemini API key works without it.",
   "providerConnect.opened": "Finish signing in on the page that opened, then check again.",
   "providerConnect.keysTitle": "Or paste an API key",
   "noEngines.customTitle": "Your own server",

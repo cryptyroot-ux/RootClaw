@@ -108,7 +108,7 @@ export const KEY_CATALOG: readonly KeyEntry[] = [
     words: ["gemini", "google", "ai studio"], mark: provider("gemini", "google"), kind: "key",
     target: providerKey("gemini", { placeholder: "AIza…", href: "https://aistudio.google.com/apikey", analytics: "gemini", shape: /^AIza/ }) },
   { id: "ollama", section: "ai", labelKey: "keys.ollama.label", purposeKey: "keys.purpose.ollama", name: "Ollama Cloud", env: ["ROOTCLAW_OLLAMA_API_KEY"],
-    words: ["ollama", "ollama cloud", "open models"], mark: provider("ollama"), kind: "key",
+    words: ["ollama", "ollama cloud", "open models"], mark: provider("ollama", "ollama"), kind: "key",
     target: providerKey("ollama", { placeholder: "…", href: "https://ollama.com/settings/keys", analytics: "ollama" }) },
   { id: "deepseek", section: "ai", labelKey: "keys.deepseek.label", purposeKey: "keys.purpose.deepseek", name: "DeepSeek", env: ["ROOTCLAW_DEEPSEEK_API_KEY"],
     words: ["deepseek", "dsh", "harness"], mark: provider("deepseekAgent", "deepseek"), kind: "key",

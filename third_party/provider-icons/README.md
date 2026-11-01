@@ -11,5 +11,9 @@ artwork at runtime.
 - Cohere: Lobe Icons 1.95.0,
   <https://github.com/lobehub/lobe-icons>, MIT License.
 
+Ollama is a vector trace of the official Ollama llama mark, supplied by the
+project owner. It is drawn in the current ink colour so it reads in light and
+dark themes.
+
 OpenAI, Anthropic, xAI, Qwen, and Moonshot reuse provider marks that were
 already part of RootClaw.

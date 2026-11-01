@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PROVIDER_ICON_MAX_BYTES, providerIconError } from "./provider-icon";
+import { PROVIDER_ICON_LABELS, PROVIDER_ICON_MAX_BYTES, PROVIDER_ICON_PRESETS, providerIconError } from "./provider-icon";
 
 describe("provider icon validation", () => {
   it("accepts known presets and bounded raster data", () => {
@@ -8,6 +8,12 @@ describe("provider icon validation", () => {
     expect(providerIconError({ kind: "custom", dataUrl: "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAMCAgICAgMCAgIDAwMDBAYEBAQEBAgGBgUGCQgKCgkICQkKDA8MCgsOCwkJDRENDg8QEBEQCgwSExIQEw8QEBD/2wBDAQMDAwQDBAgEBAgQCwkLEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBD/wAARCAADAAIDAREAAhEBAxEB/8QAFAABAAAAAAAAAAAAAAAAAAAABv/EABQQAQAAAAAAAAAAAAAAAAAAAAD/xAAVAQEBAAAAAAAAAAAAAAAAAAAECP/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/AD60CH//2Q==" })).toBeNull();
     expect(providerIconError({ kind: "custom", dataUrl: "data:image/webp;base64,UklGRjQAAABXRUJQVlA4ICgAAABQAQCdASoDAAIAAgA0JaAABDOAAP7fgD//7B3//nAf/84D+l4HAAAA" })).toBeNull();
     expect(providerIconError({ kind: "custom", dataUrl: "data:image/webp;base64,UklGRh4AAABXRUJQVlA4TBEAAAAvAkAAAAfQq+L1v/+BiOh/AAA=" })).toBeNull();
+  });
+
+  it("offers Ollama as a preset", () => {
+    expect(PROVIDER_ICON_PRESETS).toContain("ollama");
+    expect(PROVIDER_ICON_LABELS.ollama).toBe("Ollama");
+    expect(providerIconError({ kind: "preset", preset: "ollama" })).toBeNull();
   });
 
   it("rejects remote URLs, forged media types, and oversized payloads", () => {

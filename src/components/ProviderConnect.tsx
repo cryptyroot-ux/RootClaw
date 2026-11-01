@@ -72,10 +72,8 @@ export function ProviderConnect({ className }: { className?: string }) {
         <p className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">{t("providerConnect.oauthHint")}</p>
         <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
           {oauthButton("openrouter", t("providerConnect.openrouter"), false)}
-          {oauthButton("google", googleSignedIn ? t("providerConnect.googleSignedIn") : t("providerConnect.google"), !googleClient,
-            googleClient ? undefined : t("providerConnect.googleNeedsClient"))}
+          {googleClient && oauthButton("google", googleSignedIn ? t("providerConnect.googleSignedIn") : t("providerConnect.google"), false)}
         </div>
-        {!googleClient && <p className="mt-1.5 text-[11px] leading-relaxed text-ink-tertiary">{t("providerConnect.googleNeedsClient")}</p>}
         {opened && <p role="status" className="mt-1.5 flex items-center gap-1.5 text-[12px] text-ink-secondary">
           <ExternalLink size={12} aria-hidden="true" />{t("providerConnect.opened")}
         </p>}

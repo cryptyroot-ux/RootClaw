@@ -18,7 +18,7 @@ export const API_KEY_FLEET: InstanceConfigMap = {
   anthropicApi: { driver: "anthropic", displayName: "Anthropic", access: "api", icon: { kind: "preset", preset: "anthropic" } },
   geminiApi: { driver: "gemini", displayName: "Google Gemini", access: "api", icon: { kind: "preset", preset: "google" } },
   openaiResponses: { driver: "openai-responses", displayName: "OpenAI (Responses)", access: "api", icon: { kind: "preset", preset: "openai" } },
-  ollamaCloud: { driver: "ollama", displayName: "Ollama Cloud", access: "api" },
+  ollamaCloud: { driver: "ollama", displayName: "Ollama Cloud", access: "api", icon: { kind: "preset", preset: "ollama" } },
   [OPENROUTER_API_INSTANCE]: {
     driver: "openai-compat", displayName: "OpenRouter", access: "api", icon: { kind: "preset", preset: "openrouter" },
     config: { url: "https://openrouter.ai/api/v1", apiKeyEnv: OPENROUTER_API_KEY_ENV },
