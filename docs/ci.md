@@ -35,9 +35,11 @@ areas run the union of their jobs. Why the mapping is what it is:
   catalogs are read only by `src/` tests, the locale generator's test and an
   Electron node test; `scripts/ci-scope.test.ts` fails if another test starts
   reading them, or the docs, without being listed.
-- Windows CUA and the Linux ARM64 cloudflared installer test only their own
-  scripts and pinned downloads, so only `scripts/` and dependency changes run
-  them.
+- Windows CUA starts computer control the way the installed app does and
+  takes a Cloud's first look at the PC through the lend path, so a change to
+  those Electron modules runs it, as do `scripts/` and dependency changes. The
+  Linux ARM64 cloudflared installer tests only its own script and pinned
+  download.
 
 ## Lanes: pull requests, main and the full lane
 
@@ -265,7 +267,7 @@ are bounded per file: once a listed test fails all three attempts, that is a
 real failure, and the file's later listed tests get no retry. Otherwise a
 regression that breaks a whole fixture (six listed tests share
 `server/delta-context.e2e.test.ts`) would triple their wall time and push the
-Linux shard past its 20-minute cap, and a timed-out job loses the failing
+Linux shard past its 25-minute cap, and a timed-out job loses the failing
 tests' annotations and this summary. The cost: a real flake listed after a
 broken test in the same file is not retried in that run. A listed
 test that needed a retry is written to the vitest job's summary and raised as

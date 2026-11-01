@@ -11,7 +11,7 @@ export function engineReady(instance: InstanceInfo): boolean {
 }
 
 const providers: Record<string, string> = {
-  grok: "xAI", mistral: "Mistral AI", cerebras: "Cerebras", groq: "Groq", meta: "Meta",
+  grok: "xAI", mistral: "Mistral AI", cerebras: "Cerebras", groq: "Groq", greenference: "Greenference", meta: "Meta",
 };
 
 export function providerName(instance: InstanceInfo): string {

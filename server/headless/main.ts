@@ -67,7 +67,7 @@ export const VERB_HELP: Record<string, string> = {
   "team export": "rootclaw team export [--team NAME]… --out FILE\n  Write the workspace (or some teams) as a team file; skills go beside it, keys as placeholders,\n  and a key written into a soul, brief or skill is taken out.",
   engine: "rootclaw engine set KIND … | engine list   (see help engine set)",
   "engine set": `rootclaw engine set KIND (--key-env VAR | --key-file FILE) [--base-url URL] [--rotate] [--dry-run]
-  Configure a native API provider key: claude (Anthropic), openai, openrouter, openai-compatible, xai, groq, mistral, cerebras or ollama (Ollama Cloud).
+  Configure a native API provider key: claude (Anthropic), openai, openrouter, openai-compatible, xai, groq, greenference, mistral, cerebras or ollama (Ollama Cloud).
   The key is never printed. One already set is kept unless --rotate. This command never installs an external CLI.`,
   "engine list": "rootclaw engine list\n  The engines, whether each is ready, and which keys are set (never their values).",
   connect: `rootclaw connect [URL] [--code CODE] --out FILE [--label NAME] [--client] [--force]

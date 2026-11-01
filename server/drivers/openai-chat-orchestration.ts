@@ -43,10 +43,10 @@ export function reuseOrRun<C extends { id: string; function: { name: string; arg
   readOnly: boolean,
   run: (call: C) => Promise<R>,
   note: (parsed: unknown) => void,
-): Promise<R | { call: C; result: ChatToolResult; content: string; fatal: undefined }> {
+): Promise<R | { call: C; result: ChatToolResult; content: string; fatal: undefined; title: string }> {
   const reused = guard.reuse(call, readOnly);
   if (reused === undefined) return run(call);
   note(JSON.parse(reused) as unknown);
   const result: ChatToolResult = { ok: true, text: "" };
-  return Promise.resolve({ call, result, content: reused, fatal: undefined });
+  return Promise.resolve({ call, result, content: reused, fatal: undefined, title: call.function.name });
 }

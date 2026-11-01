@@ -102,7 +102,7 @@ describe("engine list", () => {
   it("shows each engine and which keys are set, never their values", async () => {
     const w = workspace({ configured: { anthropic: true }, available: ["anthropicApi"] });
     const listed = await w.run(["engine", "list", "--json"]);
-    expect(JSON.parse(listed.out).keys).toEqual({ claude: true, openai: false, openrouter: false, "openai-compatible": false, xai: false, groq: false, mistral: false, cerebras: false, ollama: false });
+    expect(JSON.parse(listed.out).keys).toEqual({ claude: true, openai: false, openrouter: false, "openai-compatible": false, xai: false, groq: false, greenference: false, mistral: false, cerebras: false, ollama: false });
     const human = await w.run(["engine", "list"]);
     expect(human.out).toContain("anthropicApi · anthropic · available");
     expect(human.out).toContain("Keys set: claude");

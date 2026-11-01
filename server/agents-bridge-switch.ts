@@ -65,7 +65,7 @@ export interface EngineHost {
   managedPolicyFiles: readonly string[];
 }
 
-const CHAT_RUNTIME_DRIVERS: ReadonlySet<string> = new Set(["cerebras", "grok", "groq", "meta", "minimax", "mistral", "openai-compat"]);
+const CHAT_RUNTIME_DRIVERS: ReadonlySet<string> = new Set(["cerebras", "greenference", "grok", "groq", "meta", "minimax", "mistral", "openai-compat"]);
 
 /** Why this engine's turns are not bridged, or null. Only the in-process chat runtime qualifies: it never
  * asks for an agents tool and reads no per-tool configuration. */

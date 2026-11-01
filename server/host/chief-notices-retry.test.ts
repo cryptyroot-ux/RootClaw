@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { TRIAL_CREDIT_REFUSED } from "../../shared/trial-credit.ts";
+import "../server-line-packs.ts";
 import { AUTO_RETRY_LEAD, RETRY_BLOCKED } from "../incidents.ts";
 import type { RoutineFailureFacts } from "../routine-recovery.ts";
 import { createChiefNotices, type ChiefNoticeDeps } from "./chief-notices.ts";
@@ -66,7 +67,7 @@ describe("why a Chief's retry of a teammate's thread is refused", () => {
 });
 
 const CRASH = "claude exited 3 before result: fake-claude: simulated crash before result";
-const DENIED = "One or more tool operations failed or were denied. See the tool results; the final response is not an execution receipt.";
+const DENIED = "Stopped because the tool call “gmail_send” wasn't allowed. The bot's reply isn't proof the work was done; that step didn't run.";
 const RETRIED = "RootClaw already retried this run once by itself; the failure above is how that retry ended.";
 
 describe("RootClaw's one automatic retry of a teammate's failed thread", () => {
@@ -150,5 +151,15 @@ describe("RootClaw's one automatic retry of a teammate's failed thread", () => {
 
   it("opens its retry with a lead the delivered-note rules know, so the request it retries stays the thread's request", () => {
     expect(AUTO_RETRY_LEAD.startsWith("[Retry requested by ")).toBe(true);
+  });
+});
+
+describe("the person's line about an incident", () => {
+  it("is in the language of the person whose work failed, while the Chief's report stays English", () => {
+    const f = fixture({ threadLanguage: (threadId) => (threadId === "ada-job" ? "de" : undefined) });
+    f.notices.reportIncident({ kind: "stalled", bot: f.ada as never, threadId: "ada-job", detail: "" });
+    const row = f.store.messagesFor("notices-1").find((line) => line.kind === "activity") as { tool: { name: string } } | undefined;
+    expect(row?.tool.name).toBe("Vorfall: Die Ausführung von Ada im Thread #Invoices wurde gestoppt, weil sie keine Aktivität mehr zeigte");
+    expect(f.turnsOf("chief")[0]!.text).toContain("Ada's run in its thread #Invoices stopped after showing no activity");
   });
 });

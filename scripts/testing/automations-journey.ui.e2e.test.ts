@@ -159,15 +159,21 @@ async function openApp(server: { url: string; port: number; dataDir: string; log
     expect(await clickCard(FORM, "Copy address")).toBe(true);
     await expect.poll(() => evaluate("window.__copied.length")).toBe(1);
     const address = await evaluate("window.__copied[0]") as string;
-    expect(address).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/hooks\/wh_[\w-]+\/whsec_[\w-]+$/);
+    // The address holds no secret (audit N21): the other app sends it as an Authorization: Bearer header.
+    expect(address).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/hooks\/wh_[\w-]+$/);
+    expect(address).not.toContain("whsec_");
+    const kept = (await api("GET", `/api/webhooks/${(await state()).webhooks[0].id}/address`)).credential as { url: string; secret: string };
+    expect(kept.url).toBe(address);
+    expect(kept.secret).toMatch(/^whsec_[\w-]+$/);
     expect(await cardText(FORM)).toContain("Copied");
+    expect(await cardText(FORM)).toContain("The app must also send the secret as an Authorization: Bearer header");
     await screenshot("webhook-card-copied");
     const lead = { lead: "Ada Lovelace", email: "ada@example.com", message: "Interested in the Pro plan" };
-    const accepted = await fetch(address, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(lead) });
+    const accepted = await fetch(address, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${kept.secret}` }, body: JSON.stringify(lead) });
     expect(accepted.status).toBe(202);
     await expect.poll(() => cardText(FORM), { timeout: 30_000 }).toMatch(/Last ran today [^\n]* ✓ Drafted a follow-up for Ada\./);
     await screenshot("webhook-ran");
-    const wrong = await fetch(address.replace(/whsec_[\w-]+$/, "whsec_not-the-secret"), { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+    const wrong = await fetch(address, { method: "POST", headers: { "content-type": "application/json", authorization: "Bearer whsec_not-the-secret" }, body: "{}" });
     expect(wrong.status).toBe(401);
     await openAutomations();
     await expect.poll(() => rowText(FORM)).toMatch(/Working · last ran today/);

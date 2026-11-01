@@ -9,6 +9,8 @@ import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { readHandoffs } from "./testing/handoff-rows.ts";
 import { FAKE_OPENAI_MODEL, startFakeOpenAiChat, type FakeOpenAiChat } from "./testing/fake-openai-chat.ts";
 import { freePortBlock } from "./testing/ports.ts";
+import "./server-line-packs.ts";
+import { serverLine } from "./server-lines.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const TEST_CAPABILITY_KEY = "post-to-room-fixture-capability";
@@ -474,6 +476,22 @@ describe("post_to_room", () => {
     expect(receipt, "no receipt in the poster's own conversation").toBeDefined();
     expect(receipt?.tool?.ok, "the receipt never settled").toBe(true);
     expect(receipt?.comm).toMatchObject({ groupId: room.id, withName: "Standup" });
+  }, 40_000);
+
+  it("writes the poster's receipt in the language set for this place", async () => {
+    const poster = await makeBot("Herold", "Posting");
+    const listener = await makeBot("Hoerer", "Posting");
+    const room = await makeRoom("Morgenrunde", [poster.id, listener.id], "Posting", { kind: "member", botId: listener.id });
+    expect((await api("PATCH", "/api/config", { language: "de" })).status).toBe(200);
+    try {
+      const posted = await post(poster.id, poster.threadId, room.id, "Deploy ist grün");
+      expect(posted.status, JSON.stringify(posted.body)).toBe(201);
+      const receipt = (await messagesOf(poster.threadId)).find((message) => message.comm?.groupId === room.id);
+      expect(receipt?.tool?.name).toBe(serverLine("de", "server.rooms.postedIn", { room: "Morgenrunde" }));
+      expect(receipt?.tool?.name).not.toBe("Posted in Morgenrunde");
+    } finally {
+      await api("PATCH", "/api/config", { language: "en" });
+    }
   }, 40_000);
 
   it("refuses a source conversation the sender has no claim on", async () => {

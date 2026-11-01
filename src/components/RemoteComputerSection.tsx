@@ -154,7 +154,7 @@ export function RemoteComputerSection({ hideWhenUnavailable = false }: { hideWhe
                 {t("remote.client.server.hint")}
               </p>
               <code className="select-all rounded-lg bg-inset px-3 py-2 text-[12px] text-ink">
-                npx rootclaw pair --client
+                node dist-server/rootclaw.js pair --client
               </code>
               <label className="flex flex-col gap-1.5 text-[12px] text-ink-secondary">
                 {t("remote.client.server.pairingLink")}

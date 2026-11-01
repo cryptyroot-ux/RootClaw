@@ -11,7 +11,7 @@ const record = (value: unknown): value is Json => value !== null && typeof value
 /** Every switch on: each tool the catalog can list, in the form tools/list sends it. */
 const LISTED = availableTools(catalogProfileFromEnv({
   ROOTCLAW_BOT_ID: WATCHER_OPTIONS_CARD_BOT_ID, ROOTCLAW_CHIEF_OF_STAFF: "1", ROOTCLAW_SKILL_AUTHORING_ENABLED: "1", ROOTCLAW_SHARED_COMPUTERS_ENABLED: "1",
-  ROOTCLAW_VOICE_NOTES: "1", ROOTCLAW_X_RESEARCH: "1", ROOTCLAW_ESCALATIONS: "1", ROOTCLAW_TEAM_PEOPLE: "1", ROOTCLAW_ROOTCLAW: "1",
+  ROOTCLAW_VOICE_NOTES: "1", ROOTCLAW_X_RESEARCH: "1", ROOTCLAW_RESEARCH: "1", ROOTCLAW_ESCALATIONS: "1", ROOTCLAW_TEAM_PEOPLE: "1", ROOTCLAW_ROOTCLAW: "1",
 }));
 
 /** Each keyword the advertised node lacks, with where it sat in the full one. */

@@ -39,7 +39,7 @@ describe("engine eval tasks", () => {
   it("tells provider failures from task failures, and leaves infra runs out of the success rate", () => {
     expect(isInfraError("upstream HTTP 429: rate limited")).toBe(true);
     expect(isInfraError("Provider returned error (503)")).toBe(true);
-    expect(isInfraError("One or more tool operations failed or were denied.")).toBe(false);
+    expect(isInfraError("Stopped because the tool call “fx_write” failed.")).toBe(false);
     const row = (pass: boolean, infra?: boolean): RunRow => ({ task: pass ? "a" : infra ? "b" : "c", mode: "off", pass, why: "", rounds: 1, input: 1, output: 1, ms: 1, stopReason: null, capped: false, tools: [], ...(infra ? { infra } : {}) });
     expect(summarize([row(true), row(false, true), row(false)])).toContain("success OFF 1/2");
   });
