@@ -12,6 +12,8 @@ export interface ServerUpdateCheck {
   restart?: boolean;
   /** Why there is no command (server/update-check.ts NOT_A_CLONE). */
   note?: string;
+  /** This server installs the update itself on POST /api/updates/apply, and this caller may ask it to. */
+  canApply?: boolean;
 }
 
 export type ServerUpdatePhase = "idle" | "checking" | "up-to-date" | "available" | "reload" | "error";
@@ -38,6 +40,9 @@ export function serverUpdateRow(
   if (phase === "error") return { label: t("sidebar.update.checkFailed") };
   if (check?.install === "desktop") return { label: t("sidebar.update.howDesktop") };
   if (check?.install === "managed") return { label: t("sidebar.update.managed") };
+  if (phase === "available" && check?.latest && check.canApply && !otherServer) {
+    return { label: t("sidebar.update.updateNow", { version: check.latest }), subtitle: t("sidebar.update.updateNowHint", { version: check.latest }) };
+  }
   if (phase === "available" && check?.latest) {
     const how = otherServer
       ? (check.restart ? "sidebar.update.howOtherRestart" : "sidebar.update.howOther")
@@ -45,7 +50,8 @@ export function serverUpdateRow(
     const subtitle = check.command ? t(how, { command: check.command }) : check.note;
     const label = otherServer
       ? t("sidebar.update.availableOther", { name: otherServer, version: check.latest })
-      : t("sidebar.update.availableServer", { version: check.latest });
+      // A row with a command copies it (SidebarProfileMenu); only one without opens the release notes.
+      : t(check.command && !check.canApply ? "sidebar.update.availableServerCopy" : "sidebar.update.availableServer", { version: check.latest });
     return { label, subtitle };
   }
   if (phase === "reload" && check) {
