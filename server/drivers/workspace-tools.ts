@@ -201,7 +201,8 @@ export function createWorkspacePaths(config: WorkspaceToolsConfig) {
     display(path: string): string {
       const rel = relative(root, path);
       if (rel === "") return ".";
-      return !rel.startsWith("..") && !isAbsolute(rel) ? rel : path;
+      // Tool output uses `/` even on Windows, so a model and its tests see one spelling.
+      return !rel.startsWith("..") && !isAbsolute(rel) ? rel.split(sep).join("/") : path;
     },
   };
 }
@@ -278,6 +279,11 @@ export function shellEnvironment(root: string, source: NodeJS.ProcessEnv = proce
 
 function killGroup(pid: number | undefined, signal: NodeJS.Signals) {
   if (!pid) return;
+  // Windows has no negative-pid process groups. taskkill /T stops the shell and the children it started.
+  if (process.platform === "win32") {
+    spawnSync("taskkill", ["/F", "/T", "/PID", String(pid)], { stdio: "ignore", windowsHide: true });
+    return;
+  }
   try { process.kill(-pid, signal); } catch { try { process.kill(pid, signal); } catch {} }
 }
 
@@ -367,7 +373,10 @@ const MAX_JOBS = 32;
 const UNSCOPED = "";
 const jobs = new Map<string, Set<number>>();
 /** Whether any process of the group is left: the shell itself may exit while what it started runs on. */
-const groupAlive = (pid: number) => { try { process.kill(-pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === "EPERM"; } };
+const groupAlive = (pid: number) => {
+  try { process.kill(process.platform === "win32" ? pid : -pid, 0); return true; }
+  catch (error) { return (error as NodeJS.ErrnoException).code === "EPERM"; }
+};
 const prune = () => {
   for (const [scope, set] of jobs) {
     for (const pid of set) if (!groupAlive(pid)) set.delete(pid);
@@ -437,7 +446,10 @@ async function runShell(args: Record<string, unknown>, paths: Paths, signal: Abo
     const log = join(dir, `${Date.now()}-${randomBytes(3).toString("hex")}.log`);
     const out = openSync(log, "a");
     const child = spawn(program.file, program.args, { cwd, env, detached: true, stdio: ["ignore", out, out] });
-    closeSync(out);
+    // Close after the child has inherited the handle. Closing first loses the log on Windows.
+    const release = () => { try { closeSync(out); } catch { /* already closed */ } };
+    child.once("spawn", release);
+    child.once("error", release);
     child.unref();
     if (child.pid) jobs.set(scope, (jobs.get(scope) ?? new Set()).add(child.pid));
     return ok(`Started in the background${unsandboxed ? ` (${unsandboxed.slice(2)})` : ""}: pid ${child.pid}. Output goes to ${paths.display(log)} (read it with read_file); stop it with \`kill ${child.pid}\`.`);
@@ -766,7 +778,11 @@ async function grepTool(args: Record<string, unknown>, paths: Paths, signal: Abo
       child.once("close", (code) => { signal.removeEventListener("abort", onAbort); done({ code, out, err }); });
     });
     if (result.code === 2 && !result.out) return fail(`grep failed: ${result.err.trim().slice(0, 500)}`);
-    lines = result.out.split("\n").filter(Boolean).map((line) => line.startsWith("./") ? line.slice(2) : line);
+    lines = result.out.split("\n").filter(Boolean).map((line) => {
+      const trimmed = line.startsWith("./") ? line.slice(2) : line.startsWith(".\\") ? line.slice(2) : line;
+      const match = /^(.*?):(\d+)(:.*)$/.exec(trimmed);
+      return match ? `${match[1].replaceAll("\\", "/")}:${match[2]}${match[3]}` : trimmed;
+    });
   } else {
     let regex: RegExp;
     try { regex = new RegExp(pattern, args.ignore_case === true ? "i" : ""); } catch (error) { return fail(`invalid pattern: ${(error as Error).message}`); }
@@ -867,7 +883,7 @@ export function skillReadRoots(...texts: Array<string | undefined>): string[] {
   const roots = new Set<string>();
   for (const text of texts) {
     if (!text) continue;
-    for (const match of text.matchAll(/Read ("(?:[^"\\]|\\.)*\/SKILL\.md")/g)) {
+    for (const match of text.matchAll(/Read ("(?:[^"\\]|\\.)*(?:\/|\\\\)SKILL\.md")/g)) {
       try {
         const file = JSON.parse(match[1]!) as string;
         if (isAbsolute(file)) roots.add(dirname(file));

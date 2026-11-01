@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { backgroundJobs, realTarget, sandboxedShell, shellSandbox, stopBackgroundJobs, createWorkspacePaths, executeWorkspaceTool, globToRegExp, parseUnifiedDiff, shellEnvironment, workspaceToolReadOnly, workspaceToolView, type WorkspaceToolsConfig } from "./workspace-tools.ts";
 
 // CI runners may lack bubblewrap; the shell fails closed there (audit N02), so these tests opt out explicitly.
@@ -144,7 +144,8 @@ describe("shell", () => {
     const result = await run("shell", { command: "pwd; echo err >&2; exit 3" });
     expect(result.ok).toBe(false);
     expect(result.text).toContain("exit code 3");
-    expect(result.text).toContain(root);
+    // Git bash prints a POSIX pwd (`/tmp/.../root`); the workspace folder name is in both spellings.
+    expect(result.text.replaceAll("\\", "/")).toContain(`${basename(dirname(root))}/${basename(root)}`);
     expect(result.text).toContain("err");
     expect((await run("shell", { command: "echo hi", cwd: "." })).ok).toBe(true);
     expect((await run("shell", { command: "true", cwd: ".." })).ok).toBe(false);
