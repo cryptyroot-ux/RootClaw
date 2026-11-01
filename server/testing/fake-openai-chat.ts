@@ -10,6 +10,8 @@
 //                | hang (never answers until the request is aborted) | error (HTTP errorStatus, default 500,
 //                with errorMessage, on every streamed call)
 //   gate         file path for `slow` (FAKE_CHAT_GATE / FAKE_CLAUDE_SLOW_FINISH_GATE)
+//   gates        folder for `slow`, instead of `gate`: each conversation waits for <gates>/<its working folder's name>.gate,
+//                so a test can release one thread's turn at a time (FAKE_CHAT_GATES)
 //   replies      replies used in order, one per turn's final answer; past the end, the default reply
 //   toolCalls    [{name, input?, round?}] asked for in tool round `round` (default 0) of every turn, before its answer
 //   sequence     [[calls], [calls], ...]: streamed request N asks for entry N (empty or past the end: answer). Unlike
@@ -24,11 +26,14 @@
 // One-shot helpers (non-streamed requests: titles, memory upkeep, setup answers) never touch `dump`:
 //   setupFile    the new bot's setup-card answers; missing fails the call (…_SETUP_FILE); setupDump records its prompt
 //   textFile     every other one-shot's reply; missing or "__FAIL__" fails the call (…_TEXT_FILE); textDump records it
+//   textRoutes   {marker: reply}: a one-shot whose prompt contains a marker answers its reply (FAKE_CHAT_TEXT_ROUTES, a JSON
+//                object or a file holding one; the legacy FAKE_CLAUDE_TEXT_ROUTES file too)
+//   textUsage    the `usage` object one-shots report (default 1 prompt and 1 completion token); null reports none
 // FAKE_CHAT_ROOM_PLAN (FAKE_CLAUDE_ROOM_PLAN) is a room-plan file, re-read on every streamed request. A missing or
 // unreadable file, or a bot the plan does not name, falls through to the script above. One-shots never consume a turn.
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type Server, type ServerResponse } from "node:http";
-import { basename } from "node:path";
+import { basename, join } from "node:path";
 
 export const FAKE_OPENAI_MODEL = "fixture-model";
 
@@ -37,10 +42,11 @@ export interface FakeToolCall { name: string; input?: Record<string, unknown>; r
 export interface FakeRoute { match: string; reply?: string; toolCalls?: FakeToolCall[]; mode?: FakeMode }
 export type FakeMode = "happy" | "slow" | "hang" | "error";
 export interface FakeScript {
-  mode?: FakeMode; gate?: string; replies?: string[]; toolCalls?: FakeToolCall[]; sequence?: FakeToolCall[][]; routes?: FakeRoute[];
+  mode?: FakeMode; gate?: string; gates?: string; replies?: string[]; toolCalls?: FakeToolCall[]; sequence?: FakeToolCall[][]; routes?: FakeRoute[];
   models?: string[]; dump?: string; prompts?: string; cost?: number;
   errorStatus?: number; errorMessage?: string;
   release?: string; finishGate?: string; setupFile?: string; setupDump?: string; textFile?: string; textDump?: string;
+  textRoutes?: Record<string, string>; textUsage?: Record<string, unknown> | null;
 }
 
 export interface FakeOpenAiChat {
@@ -65,6 +71,8 @@ export function scriptFromEnv(env: NodeJS.ProcessEnv): FakeScript {
   if (mode && (MODES as readonly string[]).includes(mode)) script.mode = mode as FakeMode;
   const gate = pick("GATE", "SLOW_FINISH_GATE");
   if (gate) script.gate = gate;
+  const gates = pick("GATES");
+  if (gates) script.gates = gates;
   const replies = json<unknown[]>(pick("REPLIES", "REPLIES"));
   if (Array.isArray(replies)) script.replies = replies.map((reply) => Array.isArray(reply) ? reply.join("\n\n") : String(reply));
   const calls = json<FakeToolCall[]>(pick("TOOL_CALLS", "TOOL_CALLS"));
@@ -79,6 +87,11 @@ export function scriptFromEnv(env: NodeJS.ProcessEnv): FakeScript {
   if (prompts) script.prompts = prompts;
   const cost = Number(pick("COST"));
   if (pick("COST") && Number.isFinite(cost) && cost >= 0) script.cost = cost;
+  const textRoutesRaw = pick("TEXT_ROUTES", "TEXT_ROUTES");
+  const textRoutes = json<unknown>(textRoutesRaw) ?? (textRoutesRaw && existsSync(textRoutesRaw) ? json<unknown>(readFileSync(textRoutesRaw, "utf8")) : undefined);
+  if (textRoutes && typeof textRoutes === "object" && !Array.isArray(textRoutes)) script.textRoutes = textRoutes as Record<string, string>;
+  const textUsage = pick("TEXT_USAGE") ? json<Record<string, unknown> | null>(pick("TEXT_USAGE")) : undefined;
+  if (textUsage !== undefined) script.textUsage = textUsage;
   for (const [key, name] of [["release", "RELEASE"], ["finishGate", "FINISH_GATE"], ["setupFile", "SETUP_FILE"], ["setupDump", "SETUP_DUMP"],
     ["textFile", "TEXT_FILE"], ["textDump", "TEXT_DUMP"]] as const) {
     const value = pick(name, name);
@@ -136,12 +149,14 @@ export async function startFakeOpenAiChat(env: NodeJS.ProcessEnv = {}): Promise<
       if (setup && script.setupDump) writeFileSync(script.setupDump, JSON.stringify({ model, prompt }, null, 2));
       if (!setup && script.textDump) writeFileSync(script.textDump, JSON.stringify({ model, prompt }, null, 2));
       const file = setup ? script.setupFile : script.textFile;
-      const text = !file && !setup ? `Fixture reply: ${userText}` : file && existsSync(file) ? readFileSync(file, "utf8") : "__FAIL__";
+      const routed = setup ? undefined : Object.entries(script.textRoutes ?? {}).find(([marker]) => messages.some((message) => textOf(message.content).includes(marker)))?.[1];
+      const text = routed !== undefined ? routed
+        : !file && !setup ? `Fixture reply: ${userText}` : file && existsSync(file) ? readFileSync(file, "utf8") : "__FAIL__";
       if (text.trim() === "__FAIL__") { fail("fixture one-shot failed"); return; }
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ id: "fixture", object: "chat.completion", model,
         choices: [{ index: 0, message: { role: "assistant", content: text }, finish_reason: "stop" }],
-        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }));
+        ...(script.textUsage === null ? {} : { usage: script.textUsage ?? { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }) }));
       return;
     }
     const __systemPrompt = textOf(messages.find((message) => message.role === "system")?.content);
@@ -169,11 +184,12 @@ export async function startFakeOpenAiChat(env: NodeJS.ProcessEnv = {}): Promise<
       }
     }
     if (mode === "slow" && body.stream === true) {
-      while (!script.gate || !existsSync(script.gate)) {
+      const gate = script.gates && __cwd ? join(script.gates, `${basename(__cwd)}.gate`) : script.gate;
+      while (!gate || !existsSync(gate)) {
         if (res.destroyed || res.socket?.destroyed !== false) return;
         await new Promise((resolve) => setTimeout(resolve, 50));
       }
-      if (readFileSync(script.gate, "utf8").trim() === "fail") {
+      if (readFileSync(gate, "utf8").trim() === "fail") {
         res.writeHead(500, { "content-type": "application/json" }); res.end(JSON.stringify({ error: { message: "fixture turn failed" } })); return;
       }
     }

@@ -174,7 +174,7 @@ describe("resolve, update, remove", () => {
   });
 
   it("lets the person edit and delete, and keeps the file private", () => {
-    const { entry } = memory.propose("", { kind: "term", name: "ROOTCLAW", detail: "RootClaw" }, source);
+    const { entry } = memory.propose("", { kind: "term", name: "RC", detail: "RootClaw" }, source);
     const edited = memory.update("", entry.id, { detail: "RootClaw, the app", aliases: ["RootClaw"] });
     expect(edited?.detail).toBe("RootClaw, the app");
     expect(edited?.aliases).toEqual(["RootClaw"]);
@@ -184,7 +184,7 @@ describe("resolve, update, remove", () => {
   });
 
   it("survives a restart", () => {
-    memory.propose("", { kind: "term", name: "ROOTCLAW", detail: "RootClaw" }, source);
+    memory.propose("", { kind: "term", name: "RC", detail: "RootClaw" }, source);
     const reopened = new TeamMemory(join(dir, "team-memory.json"));
     expect(reopened.list("")).toHaveLength(1);
     expect(JSON.parse(readFileSync(join(dir, "team-memory.json"), "utf8")).version).toBe(2);

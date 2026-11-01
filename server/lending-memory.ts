@@ -18,8 +18,17 @@ export const ANCESTOR_FILES = ["CLAUDE.md", "CLAUDE.local.md", "AGENTS.md", "AGE
 export const FOLDER_ENTRY_CAP = 200;
 const ROOT_ENTRY_CAP = 5_000;
 
+/** A file system stamps times from a clock that ticks every few milliseconds, so a change made in the tick a file or
+ * folder was read in carries the same times as what was read. Like git's "racy" index entries, a cache entry made while
+ * its times were that fresh is not trusted: the next look reads it again, and only a read made after the times have
+ * aged past a tick is reused. */
+const RACY_NS = 20_000_000n;
+const nowNs = () => BigInt(Date.now()) * 1_000_000n;
+const racy = (stat: { mtimeNs: bigint; ctimeNs: bigint }, at: bigint) =>
+  (stat.ctimeNs > stat.mtimeNs ? stat.ctimeNs : stat.mtimeNs) + RACY_NS > at;
+
 /** Cached by identity, size and ctime, which no process can set back. */
-const contentCache = new Map<string, { key: string; hash: string }>();
+const contentCache = new Map<string, { key: string; hash: string; racy: boolean }>();
 function describe(file: string): string | undefined {
   let stat;
   try { stat = lstatSync(file, { bigint: true, throwIfNoEntry: false }); } catch { return undefined; }
@@ -30,16 +39,17 @@ function describe(file: string): string | undefined {
   if (!stat.isFile()) return `other:${stat.mode}`;
   const key = `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
   const cached = contentCache.get(file);
-  if (cached?.key === key) return cached.hash;
+  if (cached?.key === key && !cached.racy) return cached.hash;
+  const at = nowNs();
   let hash: string;
   try { hash = `file:${createHash("sha256").update(readFileSync(file)).digest("hex")}`; } catch { hash = "file:unreadable"; }
   if (contentCache.size > 50_000) contentCache.clear();
-  contentCache.set(file, { key, hash });
+  contentCache.set(file, { key, hash, racy: racy(stat, at) });
   return hash;
 }
 
 /** Adding, removing or renaming an entry moves a folder's mtime and ctime; editing a file in place does not. */
-type Listing = { key: string; names: ReadonlySet<string>; overflow: boolean; link?: true };
+type Listing = { key: string; names: ReadonlySet<string>; overflow: boolean; link?: true; racy?: true };
 const listingCache = new Map<string, Listing>();
 function listing(dir: string, cap: number, through = false): Listing | undefined {
   let stat;
@@ -54,7 +64,8 @@ function listing(dir: string, cap: number, through = false): Listing | undefined
   const key = `${stat.dev}:${stat.ino}:${stat.mtimeNs}:${stat.ctimeNs}`;
   const cacheKey = `${cap}\u0000${dir}`;
   const cached = listingCache.get(cacheKey);
-  if (cached?.key === key) return cached;
+  if (cached?.key === key && !cached.racy) return cached;
+  const at = nowNs();
   const names = new Set<string>();
   let overflow = false;
   try {
@@ -70,7 +81,7 @@ function listing(dir: string, cap: number, through = false): Listing | undefined
   } catch {
     return { key: `${key}:unreadable`, names: new Set(), overflow: true };
   }
-  const listed = { key, names, overflow };
+  const listed: Listing = { key, names, overflow, ...(racy(stat, at) ? { racy: true as const } : {}) };
   if (listingCache.size > 50_000) listingCache.clear();
   listingCache.set(cacheKey, listed);
   return listed;

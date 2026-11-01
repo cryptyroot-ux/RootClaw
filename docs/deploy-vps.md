@@ -17,7 +17,8 @@ Whichever you pick, the login is the same: you **pair** each device once with a 
 Path A was exercised on a blank Hetzner CX43 (x86-64, Ubuntu 24.04), using
 Node 24.20.0 and Codex 0.153.4. The published 0.1.60 baseline was followed by
 local candidate fixes from this change; these results do not certify the
-unmodified published 0.1.60 package.
+unmodified published 0.1.60 package. This check predates the removal of the
+external engines: it ran the Codex CLI, which RootClaw no longer uses.
 
 The paired web UI completed a real GPT-6-Astra chat, two automatically
 scheduled routine runs, and a browser title/screenshot test. The browser
@@ -32,7 +33,7 @@ providers, and capacity limits were outside this run.
 
 ## What runs on a server, and what does not
 
-Runs fully on the server: every engine CLI (Claude Code, Codex, Grok, custom ACP engines), chats, rooms, bot-to-bot coordination, routines, connected apps and custom MCP servers, webhooks, Company Brain, computer use on cloud or container computers, text-to-speech, and the web UI (the server serves it itself).
+Runs fully on the server: the built-in engine with every model provider, chats, rooms, bot-to-bot coordination, routines, connected apps and custom MCP servers, webhooks, Company Brain, computer use on cloud or container computers, text-to-speech, and the web UI (the server serves it itself).
 
 Needs the desktop app instead: dictation and controlling the server's own desktop. Bots browse on a server too, once the browser engine is installed (below).
 
@@ -46,7 +47,7 @@ Needs the desktop app instead: dictation and controlling the server's own deskto
    ```
 
    Path B uses Docker instead and needs no Node on the host.
-3. **Your engine accounts.** Bots run on the same engine CLIs you use on your laptop, with your subscriptions. You sign them in on the server once, the same way.
+3. **A model provider key.** Bots run on RootClaw's built-in engine; you give the server one provider API key (Ollama Cloud, OpenAI, OpenRouter, Anthropic, Gemini and others). No agent CLI is installed or signed in.
 
 Connect to the server for everything below:
 
@@ -64,7 +65,7 @@ sudo -iu rootclaw
 ```
 
 The login shell also changes into `/home/rootclaw`; run setup there, not from `/root`.
-Run the `npx` commands and engine sign-ins below in this account. Keep a separate
+Run the `npx` commands below, including the provider setup, in this account. Keep a separate
 administrator shell for system packages and systemd. If you already signed in as
 root, sign in again as `rootclaw`; those accounts have different homes and credentials.
 
@@ -79,14 +80,14 @@ npx rootclaw serve --tunnel # runs the server there and prints the pairing link 
 ```
 
 `setup` connects an AI provider; it is separate from the RootClaw account.
-Use Codex's device-code option over SSH, or enter a hidden API key for a
-chat-only connection. More engines can be added later. See [CLI setup](cli-onboarding.md).
+Paste a provider API key into the hidden prompt; it works over SSH. More
+providers can be added later. See [CLI setup](cli-onboarding.md).
 
 `login` asks for your email, sends an 8-digit code, and prints the address it reserved for this machine. `serve --tunnel` downloads `cloudflared` on the first run (a pinned version with a verified digest, into `~/.rootclaw`), starts the server, connects the tunnel, and after a few seconds prints `tunnel: live at https://…`. Leave it running; see "Keep it running" for a service.
 
 The account credentials live in `~/.rootclaw/tunnel-account.json`, readable only by your user. `npx rootclaw logout` releases the address.
 
-Skip to "Install and sign the engines in".
+Skip to "Connect a model provider".
 
 ## Path B: your own domain, with Docker
 
@@ -105,10 +106,10 @@ One container for the server plus Caddy for HTTPS at `https://rootclaw.example.c
    ```sh
    git clone https://github.com/cryptyroot-ux/RootClaw && cd RootClaw/deploy
    cp .env.example .env
-   nano .env                # DOMAIN=rootclaw.example.com ; ENGINES=@anthropic-ai/claude-code @openai/codex
+   nano .env                # DOMAIN=rootclaw.example.com ; ENGINES=
    ```
 
-   `ENGINES` lists the engine CLIs baked into your image, separated by spaces. Change it later and rebuild if you add one.
+   Leave `ENGINES` empty. It installs agent CLIs into the image at build time, and RootClaw no longer runs them; the example file still lists one.
 
 4. **Start it:**
 
@@ -160,26 +161,24 @@ The one-click installer downloads the browser; it does not grant these OS permis
 Then turn the browser on under Settings → Computers, and per bot. Each bot
 gets its own isolated session whose logins persist across restarts.
 
-## Install and sign the engines in
+## Connect a model provider
 
-The npm RootClaw package does not install model engine CLIs. For paths A and C,
-install the engine you use in the service account, then sign it in. For example,
-from the `rootclaw` shell, for Claude:
+The server needs one model provider key. For paths A and C, from the service
+account's shell while the server runs:
 
 ```sh
-npm install --global --prefix "$HOME/.local" @anthropic-ai/claude-code
-export PATH="$HOME/.local/bin:$PATH"
-claude
+export ROOTCLAW_OLLAMA_API_KEY=...        # or use --key-file FILE
+npx rootclaw engine set ollama --key-env ROOTCLAW_OLLAMA_API_KEY
 ```
 
-For Codex, use `@openai/codex` as the npm package and run `codex login --device-auth`
-to sign in from a headless server. Complete the CLI's account flow in your browser. Repeat only for the
-engines you use. For path B, run the installed CLI inside the container, for
-example `docker compose exec rootclaw claude`.
-
-Engine logins belong to the service user's home (for example `~/.codex` and
-`~/.claude`), separately from RootClaw's `~/.rootclaw`. Keep that home when
-restarting or upgrading. The systemd example below includes `~/.local/bin` in PATH.
+`--key-env` is read by the CLI only; the key is saved in `~/.rootclaw/config.json`
+(mode 600) and never printed. Other kinds: `claude` (Anthropic), `openai`,
+`openrouter`, `xai`, `groq`, `mistral`, `cerebras`,
+`openai-compatible --base-url URL`. You can instead paste the key under
+**Settings → API keys** after pairing, or put a `ROOTCLAW_*_API_KEY` variable in
+the service's environment, which wins over a saved key. For path B, use
+**Settings → API keys**; the key is saved in the `/data` volume. See
+[API providers](api-providers.md) for every provider and variable name.
 
 ## Pair your first device
 
@@ -276,8 +275,8 @@ Routines and queued work survive a restart. A teammate turn running at that mome
 
 Stop the server before copying its SQLite database: Ctrl-C for a foreground
 process, or `sudo systemctl stop rootclaw` from the administrator shell for
-the service above. Stop any engine processes and managed desktops still writing
-files you intend to back up.
+the service above. Stop any managed desktops still writing files you intend to
+back up.
 
 For paths A and C, this backs up application state (bots, chats, routines, tunnel
 credentials, and paired sessions). Run it from the service account's shell:
@@ -288,13 +287,13 @@ backup_dir=$(mktemp -d "$PWD/rootclaw-backup.XXXXXX")
 tar czf "$backup_dir/rootclaw-data.tgz" -C "$HOME" .rootclaw
 ```
 
-A full backup also needs your engine credential/configuration paths, such as
-`~/.codex`, `~/.claude` and `~/.claude.json`, and browser session state under
-`~/.agent-browser` if used. Include the paths that exist for your installed CLIs,
-any configured home/data-directory overrides, and workspaces outside the app
-directory. These are not included in the command above.
+The archive includes `config.json`, so it holds any provider keys saved there;
+protect it accordingly. A full backup also needs the service's environment file
+if provider keys live there, browser session state under `~/.agent-browser` if
+used, any configured home/data-directory overrides, and workspaces outside the
+app directory. These are not included in the command above.
 
-For path B, the whole `/data` volume includes the container's CLI homes. From
+For path B, the whole `/data` volume includes saved provider keys. From
 `RootClaw/deploy`, stop the app before archiving; `deploy_data` is the default
 volume name, so use your actual volume name if you changed the Compose project:
 
@@ -332,7 +331,7 @@ Read this before putting anything else in front of the server.
 
 **Pairing code refused.** It expired (five minutes) or was used. Mint a new one. "Too many failed pairing attempts" means wait a minute.
 
-**A bot says the engine is not signed in.** Sign that engine in again on the server.
+**A bot says its provider has no API key.** Save the key under Settings → API keys, or run `engine set` again with `--rotate`.
 
 **What does the server think it is?** `https://<address>/.well-known/rootclaw/environment` is public and shows its id, label, version and capabilities; `npx rootclaw status` prints the same on the server.
 

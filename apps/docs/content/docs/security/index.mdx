@@ -8,10 +8,10 @@ RootClaw is designed around a local owner, explicit capabilities, and narrow pro
 
 ## Core boundaries
 
-- The harness owns agent processes and listens on loopback.
+- The harness runs the agents and listens on loopback.
 - The renderer receives configured-or-not credential state, not secret values.
-- Provider-specific credentials are injected only into the process that needs them.
-- Bots start at Full access, as in T3 Code: each engine runs in its own most permissive mode. Choose **Ask for approval** on a bot or thread to turn risky actions into approval cards. Real questions and missing credentials always come to you.
+- Provider API keys are used by the harness to call the model provider.
+- Bots start at Full access (a hosted company workspace starts at Ask for approval). Choose **Ask for approval** or **Approve for me** on a bot or thread to turn risky actions into approval cards. Real questions and missing credentials always come to you.
 - Local computer control is a separate opt-in and per-bot selection.
 - Paired phones use a default-deny API allowlist and per-device bearer tokens.
 - Cloud and VPS backends are validated before reuse.
@@ -23,6 +23,6 @@ RootClaw is designed around a local owner, explicit capabilities, and narrow pro
 - Use dedicated environments for untrusted or destructive work.
 - Keep provider accounts and connected apps scoped to what a bot needs.
 - Revoke lost companion devices immediately.
-- Keep RootClaw and agent CLIs updated.
+- Keep RootClaw updated.
 
 Security reports should be filed through the repository's documented security channel rather than disclosed in a public issue before a fix is available.

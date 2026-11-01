@@ -97,22 +97,12 @@ checked against what it does.
 
 | Engines | Available selection |
 | --- | --- |
-| Pi, Grok CLI, Grok API, OpenAI compatible, Mistral, MiniMax | Native and app-supplied MCP tools |
-| Claude, Codex, Gemini, Kimi, Droid, Cursor, OpenCode Go, Qwen, Hermes, Custom ACP, Antigravity | App-supplied MCP tools; keep `native:*` in Allow and do not exclude native tools |
-| Boat native | Meaningful tool restrictions are unsupported |
+| Anthropic, Gemini, OpenAI Responses, OpenAI compatible, Ollama, Grok (xAI API), Groq, Mistral, MiniMax, Cerebras, Meta | Native and app-supplied MCP tools |
+| Any other engine id | Tool restrictions are refused |
 
-Grok CLI's native contract is verified on version **1.0.41**. Other versions
-refuse native restrictions until their contract is verified. Inherited Grok
-profile restrictions still apply. Grok accepts simple `[agent]` name/definition
-entries, including trailing comments, and an explicit `--agent-profile` file.
-Quoted or dotted keys, inline agent tables, multiline TOML, conflicting
-profile sources and CLI tool overrides refuse scoped turns when their existing
-restrictions cannot be safely resolved. Scoped Grok disables its managed MCP gateway;
-unexpected native MCP servers prevent the prompt from starting. Scoped Claude
-requires a modern CLI with strict MCP isolation and cannot inherit its native
-MCP configuration. Scoped Codex checks its effective MCP configuration before
-starting the prompt. Each Codex MCP mount keeps independent private gate
-settings on new and resumed threads; custom servers retain approval prompts.
+The external CLI and ACP engines (Claude Code, Codex, Grok CLI, Pi and the
+rest) were removed; every bot now runs on the built-in engine, whose providers
+all limit native and MCP tools (`shared/tool-scope-support.ts`).
 
 Unsupported restrictions and malformed saved selections stop the turn with a
 setup error. The settings warning is deliberate: it does not claim an engine

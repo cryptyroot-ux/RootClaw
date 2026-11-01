@@ -68,6 +68,35 @@ export function turnCompactBudget(window: number, compactAt?: number): number {
   return Math.max(1, Math.floor(Math.min(at < 1 ? window * at : at, window * 0.9)));
 }
 
+/** The reply ceiling adapters send when the window has room for it (Anthropic requires one on every call). */
+export const DEFAULT_OUTPUT_TOKENS = 8_192;
+
+/** Output tokens kept free of input in every request: the default reply, or an eighth of a small window. */
+export function outputReserve(window: number): number {
+  return Math.min(DEFAULT_OUTPUT_TOKENS, Math.floor(window / 8));
+}
+
+/** Slack for the gap between the estimate and the provider's own count. */
+export function windowMargin(window: number): number {
+  return Math.max(64, Math.ceil(window * 0.01));
+}
+
+/** The input budget of a round: the compaction threshold, never above what leaves the output reserve free. */
+export function turnInputBudget(window: number, compactAt?: number): number {
+  return Math.max(1, Math.min(turnCompactBudget(window, compactAt), window - outputReserve(window) - windowMargin(window)));
+}
+
+/** The smallest reply ceiling worth sending a request for. */
+export function minOutputTokens(window: number): number {
+  return Math.max(256, Math.floor(outputReserve(window) / 4));
+}
+
+/** A reply ceiling for a request of `inputTokens` (0 when none is left), or undefined when the adapter default already fits beside it. */
+export function outputTokensFor(window: number, inputTokens: number): number | undefined {
+  const room = Math.max(0, Math.floor(window - inputTokens - windowMargin(window)));
+  return room < DEFAULT_OUTPUT_TOKENS ? room : undefined;
+}
+
 /** What each model's last provider count said about the estimate, kept across turns (and threads) so a turn's first
  * request is already calibrated: for Claude, Gemini and other models without a local tokenizer the character estimate
  * can be off by 2-3x on code or non-Latin text, and only the provider's prompt_tokens knows by how much. */
@@ -83,15 +112,19 @@ export class TokenCalibration {
     this.model = model;
     this.ratio = (model && learnedRatios.get(model)) || 1;
   }
+  private observed: number | undefined;
   observe(estimated: number, reported: number | undefined) {
     if (!reported || reported <= 0 || estimated <= 0) return;
-    this.ratio = Math.min(3, Math.max(1, reported / estimated));
+    this.observed = reported / estimated;
+    this.ratio = Math.min(3, Math.max(1, this.observed));
     if (!this.model) return;
     learnedRatios.delete(this.model);
     learnedRatios.set(this.model, this.ratio);
     if (learnedRatios.size > MAX_LEARNED_MODELS) learnedRatios.delete(learnedRatios.keys().next().value!);
   }
   apply(estimated: number) { return Math.ceil(estimated * this.ratio); }
+  /** The provider's own count for `estimated`, by the last ratio it reported (unclamped, so it may be below the estimate). */
+  provider(estimated: number) { return Math.ceil(estimated * (this.observed ?? this.ratio)); }
 }
 
 // ---------- tool-output offload ----------
@@ -101,7 +134,7 @@ export const READ_TOOL_OUTPUT_DEFINITION: ChatToolDefinition = {
   type: "function",
   function: {
     name: READ_TOOL_OUTPUT_TOOL,
-    description: "Read part of a large tool output that was saved to disk instead of being shown in full. Pass the handle from the shortened result; offset and limit are in characters.",
+    description: "Read part of a large tool output or message that was saved to disk instead of being shown in full. Pass the handle from the shortened text; offset and limit are in characters.",
     parameters: {
       type: "object",
       properties: {
@@ -122,7 +155,7 @@ export const threadFolder = (dir: string, threadId: string) => join(dir, createH
 export interface Offloaded { text: string; handle: string; bytes: number }
 
 /** Saves `text` in full and returns head + tail + a note naming the handle; null when it is small enough. */
-export function offloadToolOutput(text: string, input: { dir?: string; threadId: string; callId: string; thresholdBytes?: number }): Offloaded | null {
+export function offloadToolOutput(text: string, input: { dir?: string; threadId: string; callId: string; thresholdBytes?: number; what?: string; headBytes?: number; tailBytes?: number }): Offloaded | null {
   const threshold = input.thresholdBytes ?? DEFAULT_OFFLOAD_BYTES;
   const bytes = Buffer.byteLength(text);
   if (!input.dir || bytes <= threshold) return null;
@@ -130,12 +163,43 @@ export function offloadToolOutput(text: string, input: { dir?: string; threadId:
   const folder = threadFolder(input.dir, input.threadId);
   mkdirSync(folder, { recursive: true, mode: 0o700 });
   writeFileSync(join(folder, `${handle}.txt`), text, { mode: 0o600 });
-  const head = prefixBytes(text, HEAD_BYTES);
-  const tailStart = Math.max(head.length, text.length - TAIL_BYTES);
+  const head = prefixBytes(text, input.headBytes ?? HEAD_BYTES);
+  const tailStart = Math.max(head.length, text.length - (input.tailBytes ?? TAIL_BYTES));
   const tail = text.slice(tailStart);
-  const note = `\n\n[… output shortened: ${text.length} characters in total, ${text.length - head.length - tail.length} omitted. ` +
-    `Full output saved with handle ${handle}; call ${READ_TOOL_OUTPUT_TOOL} {"handle":"${handle}","offset":${head.length},"limit":8000} to read more.]\n\n`;
+  const what = input.what ?? "output";
+  const note = `\n\n[… ${what} shortened: ${text.length} characters in total, ${text.length - head.length - tail.length} omitted. ` +
+    `Full ${what} saved with handle ${handle}; call ${READ_TOOL_OUTPUT_TOOL} {"handle":"${handle}","offset":${head.length},"limit":8000} to read more.]\n\n`;
   return { text: `${head}${note}${tail}`, handle, bytes };
+}
+
+const OFFLOAD_NOTE_TOKENS = 120;
+
+/** Saves the middle of a pinned message over `maxTokens` the same way, in place, keeping as much head and tail as
+ * `maxTokens` allows; the handles made. */
+export function offloadRequest(message: OpenAIChatMessage, input: { dir?: string; threadId: string; turnId: string; maxTokens: number; model?: string }): Offloaded[] {
+  const tokens = estimateMessageTokens(message, input.model);
+  if (!input.dir || tokens <= input.maxTokens) return [];
+  const { text: all } = textOf(message.content);
+  const parts = Array.isArray(message.content) ? Math.max(1, message.content.filter((part) => part.type === "text").length) : 1;
+  const bytesPerToken = Buffer.byteLength(all) / Math.max(1, tokens);
+  const keep = Math.max(HEAD_BYTES + TAIL_BYTES, Math.floor((input.maxTokens - OFFLOAD_NOTE_TOKENS * parts) * bytesPerToken * 0.95 / parts));
+  const save = (text: string, index: number) => offloadToolOutput(text, { dir: input.dir, threadId: input.threadId, callId: `request:${input.turnId}:${index}`,
+    thresholdBytes: keep + 1_000, what: "message", headBytes: Math.floor(keep * 2 / 3), tailBytes: keep - Math.floor(keep * 2 / 3) });
+  if (typeof message.content === "string") {
+    const offloaded = save(message.content, 0);
+    if (offloaded) message.content = offloaded.text;
+    return offloaded ? [offloaded] : [];
+  }
+  if (!Array.isArray(message.content)) return [];
+  const made: Offloaded[] = [];
+  message.content = message.content.map((part, index) => {
+    if (part.type !== "text") return part;
+    const offloaded = save(part.text, index);
+    if (!offloaded) return part;
+    made.push(offloaded);
+    return { ...part, text: offloaded.text };
+  });
+  return made;
 }
 
 export function readToolOutput(args: Record<string, unknown>, input: { dir?: string; threadId: string }): { ok: boolean; text: string } {
@@ -283,24 +347,35 @@ export interface CompactResult { messages: OpenAIChatMessage[]; folded: number; 
  * With `targetTokens`, it folds enough in ONE pass to land at or under the target (keeping as many recent exchanges as
  * fit, at least one), and bounds the summary itself; without it, it keeps `keepExchanges` as before. Folding a fixed
  * small batch per pass barely shrank a history far over budget, and an unbounded summary could be as large as what it
- * replaced. */
+ * replaced. `minSavedTokens` skips a fold that would free less than that, `fitWithinTokens` one whose best plan
+ * still lands above that size (summary at its cap), and `tailWithinTokens` one whose kept tail alone (no summary) is
+ * above it; all return null without calling `summarize`. */
 export async function compactTurnMessages(
   messages: readonly OpenAIChatMessage[],
   request: OpenAIChatMessage,
   input: { tools?: readonly ChatToolDefinition[]; model?: string; keepExchanges?: number; summarize: (prompt: string) => Promise<string>; summaryBudgetBytes: number;
-    targetTokens?: number },
+    targetTokens?: number; minSavedTokens?: number; fitWithinTokens?: number; tailWithinTokens?: number; signal?: AbortSignal },
 ): Promise<CompactResult | null> {
   const target = input.targetTokens;
   const summaryCapBytes = target ? Math.max(1_200, Math.floor(target * 0.25 * 3.5)) : undefined;
   const plan = target ? planToFit(messages, request, input, target, summaryCapBytes!) : planCompaction(messages, request, input.keepExchanges);
   if (!plan) return null;
   const beforeTokens = estimateRequestTokens(messages, input.tools, input.model);
+  if (input.fitWithinTokens && estimateRequestTokens(plan.build("x".repeat(summaryCapBytes ?? input.summaryBudgetBytes)), input.tools, input.model) > input.fitWithinTokens) return null;
+  if (input.tailWithinTokens && estimateRequestTokens(plan.build(""), input.tools, input.model) > input.tailWithinTokens) return null;
+  if (input.minSavedTokens) {
+    const foldedBytes = Buffer.byteLength(renderForSummary(plan.folded, input.summaryBudgetBytes)) + Buffer.byteLength(plan.previousSummary ?? "");
+    const projected = estimateRequestTokens(plan.build("x".repeat(Math.min(summaryCapBytes ?? input.summaryBudgetBytes, foldedBytes))), input.tools, input.model);
+    if (beforeTokens - projected < input.minSavedTokens) return null;
+  }
   let summary: string;
   let summarizer: CompactResult["summarizer"] = "model";
   try {
     summary = (await input.summarize(summaryPrompt(plan.previousSummary, renderForSummary(plan.folded, input.summaryBudgetBytes), summaryCapBytes))).trim();
     if (!summary) throw new Error("empty summary");
-  } catch {
+  } catch (error) {
+    // An aborted turn stops here; only a failed summary call falls back to the deterministic note.
+    if (input.signal?.aborted || (error as Error | undefined)?.name === "AbortError") throw error;
     summary = deterministicTurnSummary(plan.previousSummary, plan.folded);
     summarizer = "fallback";
   }
@@ -333,8 +408,70 @@ function planToFit(messages: readonly OpenAIChatMessage[], request: OpenAIChatMe
   return fallback;
 }
 
+/** Without a summary call: when even the smallest compaction (one kept exchange, summary at its cap) would still be
+ * over `fitWithinTokens`, the tool results in that kept tail are saved to disk like a large tool output, the biggest
+ * first, each cut to an equal share so the projected request lands at `targetTokens`. The handles made. */
+export function offloadTail(messages: OpenAIChatMessage[], request: OpenAIChatMessage, input: { dir?: string; threadId: string; tools?: readonly ChatToolDefinition[];
+  model?: string; fitWithinTokens: number; targetTokens: number }): Offloaded[] {
+  if (!input.dir) return [];
+  const capBytes = Math.max(1_200, Math.floor(input.targetTokens * 0.25 * 3.5));
+  const plan = planCompaction(messages, request, 1);
+  const projected = () => estimateRequestTokens(plan ? plan.build("x".repeat(capBytes)) : messages, input.tools, input.model);
+  const before = projected();
+  if (before <= input.fitWithinTokens) return [];
+  let start = messages.length - 1;
+  while (start >= 0 && messages[start]!.role !== "assistant") start--;
+  start = Math.max(start, messages.indexOf(request));
+  const results = messages.slice(start + 1).filter((message) => message.role === "tool" && typeof message.content === "string");
+  const sizes = results.map((message) => estimateMessageTokens(message, input.model));
+  let room = input.targetTokens - (before - sizes.reduce((sum, size) => sum + size, 0));
+  // The equal share: results under it stay whole and leave their unused share to the larger ones.
+  const order = sizes.map((size, index) => ({ size, index })).sort((a, b) => a.size - b.size);
+  let share = 0;
+  for (let i = 0; i < order.length; i++) {
+    share = Math.floor(room / (order.length - i));
+    if (order[i]!.size > share) break;
+    room -= order[i]!.size;
+  }
+  const made: Offloaded[] = [];
+  for (const { size, index } of order) {
+    if (size <= share) continue;
+    const message = results[index]!;
+    const content = message.content as string;
+    let parsed: { ok?: unknown; result?: unknown } | null = null;
+    try { parsed = JSON.parse(content) as { ok?: unknown; result?: unknown }; } catch { /* plain text result */ }
+    const text = parsed && typeof parsed.result === "string" ? parsed.result : content;
+    const keep = Math.max(HEAD_BYTES + TAIL_BYTES, Math.floor((share - OFFLOAD_NOTE_TOKENS) * Buffer.byteLength(text) / size * 0.9));
+    const offloaded = offloadToolOutput(text, { dir: input.dir, threadId: input.threadId, callId: `tail:${message.tool_call_id ?? index}`,
+      thresholdBytes: keep + 1_000, headBytes: Math.floor(keep * 2 / 3), tailBytes: keep - Math.floor(keep * 2 / 3) });
+    if (!offloaded) continue;
+    message.content = parsed && typeof parsed.result === "string" ? JSON.stringify({ ...parsed, result: offloaded.text }) : offloaded.text;
+    made.push(offloaded);
+  }
+  return made;
+}
+
 /** A provider's refusal of a prompt over its context window (OpenAI, Groq, Mistral, OpenRouter, vLLM, llama.cpp, LM Studio …). */
 const CONTEXT_OVERFLOW = /context[_ ]length[_ ]exceeded|maximum context length|context (?:window|length) (?:of|is|exceeded)|exceeds? (?:the )?(?:model'?s? )?(?:maximum )?context|prompt is too long|too many (?:input )?tokens|reduce the length of the messages|input (?:is )?too long|exceeds (?:the )?available context(?: size)?|request exceeds the maximum|tokens? (?:limit|budget) exceeded/i;
+
+const OVERFLOW_LIMITS = [
+  /maximum context length is (\d[\d,]*)/i,
+  /\d[\d,]* tokens? > (\d[\d,]*) maximum/i,
+  /exceed context limit: \d[\d,]* \+ \d[\d,]* > (\d[\d,]*)/i,
+  /maximum number of tokens allowed \(?(\d[\d,]*)/i,
+  /available context size \((\d[\d,]*) tokens?\)/i,
+  /context (?:window|length|size) (?:limit )?(?:of|is) (\d[\d,]*) tokens?/i,
+];
+
+/** The context limit a provider names in its overflow refusal, when it names one. */
+export function overflowLimit(message: string): number | undefined {
+  for (const pattern of OVERFLOW_LIMITS) {
+    const found = pattern.exec(message)?.[1];
+    const limit = found ? Number(found.replace(/,/g, "")) : NaN;
+    if (Number.isSafeInteger(limit) && limit >= 256) return limit;
+  }
+  return undefined;
+}
 
 export function refusesContextLength(status: number, body: string): boolean {
   return (status === 400 || status === 413 || status === 422 || status === 500) && CONTEXT_OVERFLOW.test(body);

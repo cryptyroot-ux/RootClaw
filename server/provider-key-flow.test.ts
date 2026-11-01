@@ -35,6 +35,8 @@ it("saving and replacing a workspace key reaches an existing bot's next request 
   const api = fixtureApi(fixture.info.url);
   const sse = await openSse(`${fixture.info.url}/api/events`);
   try {
+    // The fixture boots on its own saved openaiCompat key; clear it so this starts from no saved key.
+    expect((await api("PUT", "/api/config", { openaiCompat: { key: "" } })).openaiCompat.configured).toBe(false);
     const missing = await fetch(`${fixture.info.url}/api/keys/test`, {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ provider: "openaiCompat" }),
     });

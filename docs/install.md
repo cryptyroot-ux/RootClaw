@@ -12,7 +12,12 @@ bot, chat, and have the bot write a file in its workspace.
 - **Node.js 24 or newer** (`engines.node >= 24`; Node 22 is too old)
 - **pnpm 10.33.0** through corepack (pinned in `packageManager`)
 - git, curl
-- Optional: `bubblewrap` (`apt install bubblewrap`) so bot shell commands run sandboxed
+- **`bubblewrap`** (`apt install bubblewrap`) for the bots' shell tool. Bot shell
+  commands run inside a bwrap sandbox; without it the shell tool refuses to run.
+  `ROOTCLAW_SHELL_SANDBOX=off` in the server environment lets commands run
+  without the sandbox, confined by folder only (writes outside the workspace are
+  not blocked, and each result says it ran unsandboxed). Use it only if you
+  accept that risk.
 
 Install Node 24 any way you like (distro package, nvm, or the nodejs.org
 tarball). Tarball example:
@@ -84,22 +89,46 @@ Give the running server a key. The key is read from an environment variable
 It is never printed.
 
 ```bash
-export OLLAMA_API_KEY=...                 # or use --key-file FILE
-rootclaw engine set ollama --key-env OLLAMA_API_KEY
+export ROOTCLAW_OLLAMA_API_KEY=...        # any variable name works; or use --key-file FILE
+rootclaw engine set ollama --key-env ROOTCLAW_OLLAMA_API_KEY
 rootclaw models                           # ollamaCloud · available · ...
 ```
 
-Other kinds: `claude`, `openai`, `openrouter`, `xai`, `groq`, `mistral`,
-`cerebras`, `openai-compatible --base-url URL`. Add `--rotate` to replace a
-saved key. Alternatives: put the variable (`OLLAMA_API_KEY`,
-`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, ...) in the server's
-environment before it starts (see `EnvironmentFile` below), or paste the key
-in the web app under Settings → API keys.
+`--key-env VAR` is read by the CLI on your side only; the key is then saved in
+`~/.rootclaw/config.json` (mode 600). Other kinds: `claude` (Anthropic),
+`openai`, `openrouter`, `xai`, `groq`, `mistral`, `cerebras`,
+`openai-compatible --base-url URL`. Add `--rotate` to replace a saved key.
+
+Alternatives: paste the key in the web app under Settings → API keys, or set
+it in the server's environment before it starts (see `EnvironmentFile`
+below). A variable in the server's environment wins over a saved key. The
+server reads these names:
+
+| Provider | Instance | Server environment variable |
+| --- | --- | --- |
+| Ollama Cloud | `ollamaCloud` | `ROOTCLAW_OLLAMA_API_KEY` |
+| OpenAI | `openai` | `ROOTCLAW_OPENAI_API_KEY` |
+| OpenRouter | `openrouter` | `ROOTCLAW_OPENROUTER_API_KEY` |
+| Anthropic | `anthropicApi` | `ROOTCLAW_ANTHROPIC_API_KEY` (optional `ROOTCLAW_ANTHROPIC_API_URL`) |
+| Google Gemini | `geminiApi` | `ROOTCLAW_GEMINI_API_KEY` |
+| Groq | `groq` | `ROOTCLAW_GROQ_API_KEY` |
+| Meta | `meta` | `ROOTCLAW_META_API_KEY` |
+| xAI | `xaiApi` | `XAI_API_KEY` |
+| Mistral | `mistral` | `MISTRAL_API_KEY` |
+| Cerebras | `cerebras` | `CEREBRAS_API_KEY` |
+| Any OpenAI-compatible API | `openaiCompat` | `OPENAI_COMPAT_API_KEY`, `OPENAI_COMPAT_URL`, `OPENAI_COMPAT_MODEL` |
+
+Use the `ROOTCLAW_` names. The unprefixed `OLLAMA_API_KEY`, `ANTHROPIC_API_KEY`,
+`GEMINI_API_KEY`, `OPENAI_API_KEY` (OpenAI Responses) and `META_API_KEY` are only
+a fallback inside the driver, used when no key is saved and the provider's
+default URL is in use. That fallback still lets the engine run, but Settings
+and `rootclaw engine list` do not count it as a configured key. More on each
+provider: [api-providers.md](api-providers.md).
 
 ## 4. First bot
 
 ```bash
-rootclaw new-bot helper --model ollamaCloud/beam
+rootclaw new-bot helper --model ollamaCloud/gemma4:31b   # or any id from `rootclaw models`
 rootclaw run helper "Reply with exactly: hello from rootclaw"
 rootclaw run helper "Create hello.txt in your workspace containing: install test ok"
 ```
@@ -129,7 +158,27 @@ EnvironmentFile=/etc/rootclaw.env
 ```
 
 with `/etc/rootclaw.env` (mode 600) containing for example
-`OLLAMA_API_KEY=...` and `ROOTCLAW_PUBLIC_URL=https://rootclaw.example.com`.
+`ROOTCLAW_OLLAMA_API_KEY=...` and `ROOTCLAW_PUBLIC_URL=https://rootclaw.example.com`.
+
+## Context and compaction
+
+Long conversations are compacted automatically. The defaults work; to tune
+them, add a `context` block to `~/.rootclaw/config.json` (all keys optional):
+
+| Key | Meaning |
+| --- | --- |
+| `autoCompact` | `false` turns automatic compaction off (default on). |
+| `compactAt` | When to compact: a fraction of the model's context window below 1 (e.g. `0.7`) or a token count. Default 80% of the window. |
+| `turnCompactAt` | Compact inside a long turn at this fraction (below 1) of the window or this many tokens (default `0.75`). |
+| `toolOffloadBytes` | Tool outputs above this many bytes are saved to disk and paged (default 16000, range 1000–10,000,000). |
+| `turnSummaryModel` | A cheaper model id for mid-turn summaries; absent uses the turn's model. |
+| `rebuildBytes` | Bytes of history replayed into a rebuilt session (default 24000). |
+| `replayToolHistory` | `true` also tells a rebuilt session which tools already ran, one line per call (off by default; `ROOTCLAW_REPLAY_TOOL_HISTORY=1` or `0` overrides). |
+
+How compaction is measured and verified:
+[verification/context-compaction.md](verification/context-compaction.md).
+Spending caps and model fallback live in the same file:
+[fallback-and-budgets.md](fallback-and-budgets.md).
 
 ## 6. HTTPS and remote access
 
@@ -173,10 +222,13 @@ Your data in `~/.rootclaw` is kept; back it up before upgrading.
 | `Cannot find module .../dist-server/rootclaw.js` | Run `pnpm build:server`. |
 | Browser shows a blank page | Run `pnpm build` (the web UI lives in `dist/`). |
 | Provider shows `unavailable` in `rootclaw models` | No key yet: `rootclaw engine set KIND --key-env VAR`, then `rootclaw doctor`. |
+| Bot shell commands fail with "Install bubblewrap (bwrap)…" | `sudo apt install bubblewrap`, then restart the server. |
 | `EADDRINUSE` on 8799 | Something else is on the port: `ss -ltnp \| grep 8799`, or use `--port`. |
 | "browser engine: unavailable" at start | Optional. `rootclaw browser install --with-deps` (as root once) enables bots' web browsing. |
 | Bots' `web_fetch` says every site is "a private or local address" | Your DNS hands out fake IPs (Clash/sing-box/VPN fake-IP mode, e.g. 198.18.0.0/15). Allow just that range: `ROOTCLAW_WEB_ALLOW_PRIVATE=198.18.0.0/15` in the service environment. |
 | A remote browser only shows the pair page | Expected: run `rootclaw pair` on the server and enter the code. |
 
 More detail: [self-hosting.md](self-hosting.md), [deploy-vps.md](deploy-vps.md),
-[headless-cli.md](headless-cli.md).
+[headless-cli.md](headless-cli.md), [api-providers.md](api-providers.md),
+[fallback-and-budgets.md](fallback-and-budgets.md),
+[verification/context-compaction.md](verification/context-compaction.md).

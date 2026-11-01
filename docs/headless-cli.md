@@ -307,11 +307,11 @@ alike from a Windows checkout and from Linux CI.
 Before it writes anything, apply also checks the file against the server
 (exit 1): every `model` must be one its engine offers, every room member a bot
 that exists or that the file makes, and every `tools` selection one the bot's
-engine can hold. Claude, Codex and the other agent engines limit only MCP
-tools (`mcp:SERVER:TOOL`); a `native:` selector for one of them would stop
-every turn it runs, so apply refuses it (docs/tool-selection.md lists which
-engines can limit built-in tools). `tools: {}` or `{ deny: [] }` means every
-tool: the bot's selection is cleared.
+engine can hold. Every built-in provider limits both native and MCP tools;
+an engine that could limit only MCP tools (`mcp:SERVER:TOOL`) would have a
+`native:` selector refused (docs/tool-selection.md lists the providers).
+`tools: {}` or `{ deny: [] }` means every tool: the bot's selection is
+cleared.
 
 `team export` writes the workspace in this format, skills as `SKILL.md` files
 beside it and provider keys as `{ env: SET_ME }` placeholders, so applying an

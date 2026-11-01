@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { USAGE } from "../cli-usage.ts";
 import { HEADLESS_VERBS } from "./args.ts";
+import { ENGINE_KINDS } from "./engine.ts";
 import type { HeadlessIo } from "./output.ts";
 import { runHeadless, VERB_HELP } from "./main.ts";
 
@@ -42,6 +43,11 @@ describe("the headless command line", () => {
     const human = capture();
     await runHeadless(["messages", "--bot", "b1"], { io: human.io, env: { ROOTCLAW_URL: "http://127.0.0.1:19999" }, callTool: callTool as any });
     expect(human.out.join("\n")).not.toContain("sk-ant-abcdefghijklmnopqrstuv0123");
+  });
+
+  it("names every engine kind `engine set` accepts in its help", () => {
+    const listed = VERB_HELP["engine set"]!.split("\n")[1]!;
+    for (const kind of Object.keys(ENGINE_KINDS)) expect(listed, kind).toMatch(new RegExp(`(^|[\\s:,])${kind}([\\s,.]|$)`));
   });
 
   it("has plain help for every verb, and the main usage names them", async () => {

@@ -4,10 +4,11 @@ import type { ChatToolCall } from "../openai-chat-protocol.ts";
 import { ChatProtocolError, MalformedToolCallError } from "../openai-chat-protocol.ts";
 import type { Completion, ModelAdapter, OpenAIChatMessage, Usage } from "../model-adapter.ts";
 import { tokenCount } from "../model-adapter.ts";
+import { DEFAULT_OUTPUT_TOKENS } from "../turn-context.ts";
 import { dataUrl, parseJson, postJson, sseEvents, textOf } from "./http.ts";
 
 export const ANTHROPIC_VERSION = "2023-06-01";
-const DEFAULT_MAX_TOKENS = 8192;
+const DEFAULT_MAX_TOKENS = DEFAULT_OUTPUT_TOKENS;
 type Block = Record<string, unknown>;
 type Message = { role: "user" | "assistant"; content: Block[] };
 

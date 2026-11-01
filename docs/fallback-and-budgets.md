@@ -19,7 +19,7 @@ The person's message is resent on the backup with one notice. Holds persist in `
 `limit-takeover-holds.json`; the move persists in `limit-failovers.json`, and the conversation returns to its own engine
 before the next turn once the hold has passed. Any other engine instance may be a chain entry (no per-driver lists).
 
-## Budget guard (`settings.json` → `budgets`)
+## Budget guard (`config.json` → `budgets`)
 
 ```json
 {

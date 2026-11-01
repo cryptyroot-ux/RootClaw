@@ -18,7 +18,9 @@ async function restartFixture(fixture: VerificationServer): Promise<ChildProcess
   await waitForExit(fixture.child, { signal: "SIGTERM" });
   const dataDir = fixture.info.dataDir;
   const config = JSON.parse(readFileSync(join(dataDir, "config.json"), "utf8"));
-  assert.equal(resolve(config.instances.claude.config.cli), join(ROOT, "server", "testing", "fake-claude-cli.ts"));
+  // The native engine on the launcher's loopback fake chat server, which outlives this process swap.
+  assert.equal(config.openaiCompat?.url, fixture.fakeChat.url);
+  assert.equal(config.instances?.openaiCompat?.driver, "openai-compat");
   const env: NodeJS.ProcessEnv = {};
   for (const key of ["SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "LANG", "LC_ALL", "TZ"]) {
     if (process.env[key]) env[key] = process.env[key];
@@ -34,7 +36,6 @@ async function restartFixture(fixture: VerificationServer): Promise<ChildProcess
     TEMP: temp, TMP: temp, TMPDIR: temp, HERMES_HOME: join(home, ".hermes"),
     ROOTCLAW_DATA_DIR: dataDir, ROOTCLAW_PORT: new URL(fixture.info.url).port,
     ROOTCLAW_WEBHOOK_PORT: String(Number(new URL(fixture.info.url).port) + 1),
-    FAKE_CLAUDE_MODE: "happy", FAKE_CLAUDE_DUMP: fixture.fixtureDumpPath,
     PATH: dirname(process.execPath),
   });
   const log = openSync(fixture.info.logPath, "a", 0o600);
@@ -141,13 +142,15 @@ export async function verifyWorkspaceBackup(report: (event: unknown) => void = (
     assert.equal(uploaded.status, 201);
     const attached = await uploaded.json() as { path: string; bytes: number };
     record({ method: "POST", path: "/api/files", status: 201, bytes: attached.bytes });
+    // A fixed reply: the fake's default echoes the prompt, and with it the source's attachment path, into bot prose.
+    source.fakeChat.set({ routes: [{ match: "backup-note\\.txt", reply: "Backup conversation kept." }] });
     const text = `Keep this backup conversation.\n<attached-file path="${escapeAttribute(attached.path)}" name="backup-note.txt" />`;
     await control(source, "send", "--bot", bot.id, "--text", text);
     assert.equal((await control(source, "wait", "--bot", bot.id, "--timeout", "30") as { status: string }).status, "settled");
     await control(source, "messages", "--bot", bot.id, "--limit", "20");
     const before = (await api(source, "GET", "/api/bots?messages=200")).body;
     const original = before.bots.find((candidate: { id: string }) => candidate.id === bot.id);
-    assert.ok(original.messages.some((message: { text?: string }) => message.text?.includes("hello from fake claude")));
+    assert.ok(original.messages.some((message: { text?: string }) => message.text === "Backup conversation kept."));
     const oldBytes = readFileSync(join(destination.info.dataDir, "bots.json"));
     const clientState = { "rootclaw-skin": "default", "rootclaw-drafts": JSON.stringify({ [bot.threadId]: "Keep draft" }), "rootclaw-webhook-credentials": "private-source-webhook-url", "unrelated-auth-token": "must-not-transfer" };
     const exported = await api(source, "POST", "/api/workspace-backup/export", { password: PASSWORD, clientState });

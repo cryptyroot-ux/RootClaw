@@ -12,7 +12,8 @@ import { authorizeExternalRuntime, externalRuntimeIsActive, type ExternalRuntime
 import { z } from "zod";
 import { selectReplay, replayToolCalls, DEFAULT_REBUILD_BYTES, MAX_SUMMARY_BYTES } from "./context-rebuild.ts";
 import { draftSummary, foldPoint } from "./compaction-summary.ts";
-import { compactBudget, compactionReading, contextWindowFor, shouldCompact } from "./context-budget.ts";
+import { compactBudget, compactionReading, contextWindowFor, shouldCompact, threadTokens } from "./context-budget.ts";
+import { prepareTokenizer } from "./drivers/tokenizer.ts";
 import { RoomContextTracker, roomResetNote } from "./room-context.ts";
 import { createRoomTranscript, GROUP_CONTEXT_MESSAGES } from "./host/room-transcript.ts";
 import { LentComputers, provenRequestPerson, SharedComputers, sharedComputerOperation } from "./shared-computers.ts"; import { lentScreenResult } from "./lent-screen-guidance.ts"; import { DeviceLinks } from "./device-links.ts";
@@ -7071,15 +7072,16 @@ async function compactConversation(input: {
   const history = selected.transcript.filter(entry => entry.id);
   if (!history.length) return;
   const measurement = compactionReading(instance.adapter.capabilities, task.lastContextModel === `${instance.instanceId}:${model}` && !task.rewound ? task.usage?.context : undefined);
-  const window = contextWindowFor(model, instance.models, measurement?.window);
-  const bytes = history.reduce((n, entry) => n + Buffer.byteLength(entry.text), 0);
+  const window = contextWindowFor(model, instance.models, measurement?.window, instance.instanceId);
+  await prepareTokenizer(model);
+  const tokens = threadTokens(history.map(entry => entry.text), model);
   let floor = task.contextFloor;
   if (record && record.id === task.appliedCompactionId && floor === undefined && measurement?.tokens) {
     floor = measurement.tokens;
     store.patchTask(bot.id, threadId, { contextFloor: floor });
   }
   const nativeCompactAt = nativeCompactTokens(instance);
-  if (!manual && !shouldCompact({ contextTokens: measurement?.tokens, estimatedBytes: bytes,
+  if (!manual && !shouldCompact({ contextTokens: measurement?.tokens, estimatedTokens: tokens,
     budget: compactBudget(window, cfg.context?.compactAt, nativeCompactAt), floor, window, nativeCompactAt })) return;
   const fold = manual ? { folded: history, firstKeptId: "" } : foldPoint(history);
   if (!fold) return;
@@ -7101,7 +7103,7 @@ async function compactConversation(input: {
     store.appendMessage(threadId, {
       role: "bot", kind: "compaction",
       compaction: { summary, firstKeptId: fold.firstKeptId, foldedThroughId,
-        tokensBefore: measurement?.tokens ?? Math.ceil(bytes / 4), by: manual ? "person" : "harness" },
+        tokensBefore: measurement?.tokens ?? tokens, by: manual ? "person" : "harness" },
     }, { kind: "compaction.append", key: `${threadId}:${messages.at(-1)?.id}:${fold.firstKeptId}` });
   } finally {
     if (compactionControllers.get(threadId)?.generation === generation) compactionControllers.delete(threadId);

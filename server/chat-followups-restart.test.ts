@@ -1,8 +1,8 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { closeSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { closeSync, mkdirSync, openSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 
 import { launchVerificationServer, runControlOmb } from "../scripts/control-rootclaw.ts";
@@ -39,13 +39,16 @@ it("survives a real server crash: queued sends keep receipts, cancellation and u
     return result;
   };
   const messages = async (thread: string) => (await api("GET", `/api/threads/${thread}/messages?limit=100`)).messages as any[];
-  const prompts = (thread: string): any[] => {
-    try { return readFileSync(join(dataDir, `${thread}.prompts`), "utf8").trim().split("\n").map((line) => JSON.parse(line)); }
-    catch (error) {
-      if (error instanceof SyntaxError || (error as NodeJS.ErrnoException).code === "ENOENT") return [];
-      throw error;
-    }
+  // The turns the provider was asked to start for a thread, by the working folder its system prompt names: the fake
+  // runs in this process, so what it saw outlives the server's crash and restart.
+  const folderOf = (request: any): string | undefined => {
+    const system = (request.messages as any[] | undefined)?.find((message) => message.role === "system")?.content;
+    const match = /"currentWorkingFolder":\s*"([^"]+)"/.exec(typeof system === "string" ? system : JSON.stringify(system ?? ""));
+    return match ? basename(JSON.parse(`"${match[1]}"`)) : undefined;
   };
+  const prompts = (thread: string): any[] => fixture.fakeChat.requests
+    .filter((request: any) => request.stream === true && request.messages?.at(-1)?.role === "user" && folderOf(request) === thread)
+    .map((request: any) => ({ message: request.messages.at(-1) }));
   const journal = () => {
     const db = new DatabaseSync(join(dataDir, "messages.db"), { readOnly: true });
     try { return db.prepare("SELECT id, status FROM chat_followups ORDER BY rowid").all(); }
@@ -76,22 +79,8 @@ it("survives a real server crash: queued sends keep receipts, cancellation and u
     }, { timeout: 20_000 }).toBe(true);
   };
   try {
-    const wrapper = join(dataDir, "queued-claude.mjs");
-    writeFileSync(wrapper, [
-      "#!/usr/bin/env node",
-      'import { existsSync } from "node:fs";',
-      'import { basename, join } from "node:path";',
-      'const thread = basename(process.cwd());',
-      `const home = ${JSON.stringify(dataDir)};`,
-      'process.env.FAKE_CLAUDE_MODE = existsSync(join(home, "restarted")) ? "happy" : "slow";',
-      'process.env.FAKE_CLAUDE_SLOW_FINISH_GATE = join(home, thread + ".gate");',
-      'process.env.FAKE_CLAUDE_PROMPTS = join(home, thread + ".prompts");',
-      // Crash the server, not unrelated processes: a fixture provider exits
-      // when its parent's pipe closes, even if its fake finish gate is shut.
-      'process.stdin.on("end", () => process.exit(0));',
-      `await import(${JSON.stringify(pathToFileURL(fileURLToPath(new URL("./testing/fake-claude-cli.ts", import.meta.url))).href)});`,
-    ].join("\n"), { mode: 0o700 });
-    await api("PATCH", "/api/instances/claude", { cli: wrapper });
+    // Each thread's turn waits for <dataDir>/<thread>.gate until the restart, then turns finish freely.
+    fixture.fakeChat.set({ mode: "slow", gates: dataDir });
     await api("PATCH", "/api/config", { threads: { maxConcurrentPerBot: 1 } });
     const pairing = await fetch(`${url}/api/auth/pair`, {
       method: "POST",
@@ -183,7 +172,7 @@ it("survives a real server crash: queued sends keep receipts, cancellation and u
     ]));
 
     await waitForExit(fixture.child, { signal: "SIGKILL" });
-    writeFileSync(join(dataDir, "restarted"), "allow restored fake turns to finish");
+    fixture.fakeChat.set({ mode: "happy" });
     const crashed = new DatabaseSync(join(dataDir, "messages.db"));
     try {
       // The narrowest crash window: the dispatch claim reached disk, the transcript line did not. One row names its sender, one
@@ -219,7 +208,7 @@ it("survives a real server crash: queued sends keep receipts, cancellation and u
     ]);
     expect((await api("POST", `/api/bots/${bot.id}/messages`, cancelledBody, 409)).error).toContain("cancelled");
     expect(prompts(bot.threadId)).toHaveLength(2);
-    expect(prompts(bot.threadId)[1].message.content).toEqual(expect.arrayContaining([expect.objectContaining({ type: "image" })]));
+    expect(prompts(bot.threadId)[1].message.content).toEqual(expect.arrayContaining([expect.objectContaining({ type: "image_url" })]));
 
     await expect.poll(async () => (await messages(channel.threadId)).filter((message) => message.sendId === channelBody.sendId).length, { timeout: 15_000 }).toBe(1);
     expect((await api("POST", `/api/groups/${channel.id}/messages`, channelBody, 202)).message).toMatchObject({

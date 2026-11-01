@@ -1,6 +1,5 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-rootclaw.ts";
@@ -19,20 +18,15 @@ describe("organizational folders through an isolated HTTP fixture", () => {
     evidence.push({ method, path, body, result });
     return result;
   };
-  const selection = (model: string) => ({ instanceId: "claude", model });
+  const selection = (model: string) => ({ instanceId: "openaiCompat", model });
   const getBot = async (botId: string) => (await api("GET", "/api/bots?messages=30")).body.bots.find((bot: any) => bot.id === botId);
   const persistedBot = (botId: string) => JSON.parse(readFileSync(join(fixture.info.dataDir, "bots.json"), "utf8")).find((bot: any) => bot.id === botId);
 
   beforeAll(async () => {
-    fixture = await launchVerificationServer();
-    const wrapper = join(fixture.info.dataDir, "project-fixture.mjs");
-    writeFileSync(wrapper, [
-      "#!/usr/bin/env node",
-      'process.env.FAKE_CLAUDE_MODE = "hang";',
-      `await import(${JSON.stringify(pathToFileURL(join(process.cwd(), "server/testing/fake-claude-cli.ts")).href)});`,
-    ].join("\n"), { mode: 0o700 });
-    expect((await api("PATCH", "/api/instances/claude", { cli: wrapper })).status).toBe(200);
-    const catalog = (await api("GET", "/api/instances")).body.instances.find((instance: any) => instance.instanceId === "claude");
+    // Two catalog models, so a thread can carry its own; every turn holds open until interrupted.
+    fixture = await launchVerificationServer({ ...process.env, FAKE_CHAT_MODELS: JSON.stringify(["fixture-model", "fixture-model-b"]) });
+    fixture.fakeChat.set({ mode: "hang" });
+    const catalog = (await api("GET", "/api/instances")).body.instances.find((instance: any) => instance.instanceId === "openaiCompat");
     models = catalog.models.options.map((model: any) => model.id);
     expect(models.length).toBeGreaterThanOrEqual(2);
   });

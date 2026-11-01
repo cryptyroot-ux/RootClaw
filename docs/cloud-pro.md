@@ -1019,12 +1019,9 @@ layers (Node, Chrome's libraries, agent-browser and its Chrome) and adds:
 
 - Caddy (`deploy/fly/Caddyfile`), as the only listener the network can reach
   (`0.0.0.0:8080`);
-- Grok Build (`/usr/local/bin/grok`) from xAI's own installer, pinned by
-  `GROK_VERSION` to the version the Grok driver is verified against. The
-  build fails if the installer cannot be reached, rather than shipping an
-  image whose Grok sign-in cannot run; `--build-arg GROK_VERSION=` leaves it
-  out on purpose;
-- the engine CLIs from `CLOUD_HOME_ENGINES` (default Claude Code and Codex);
+- the bot-box tools (Python, poppler-utils, unzip, bubblewrap, socat, pnpm).
+  No external engine CLI is installed: RootClaw's native engine talks to
+  model providers over their APIs;
 - the app files, root's, with `server/cloud-home-start.ts` (bundled to
   `dist-server/cloud-home-start.js`) as the entry point. The build fails if
   any file under `/app`, or Caddy, is not root's or is writable by others.

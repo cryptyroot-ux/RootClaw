@@ -15,13 +15,18 @@ import { readUsage } from "./usage-ledger.ts";
 describe("spend cap and prices through real turns", () => {
   let session: VerificationServer;
   let layerDir: string;
+  // The native fake reports $0.01 for every chat turn, as an OpenRouter-style provider would.
+  const paidTurns = { ...process.env, FAKE_CHAT_COST: "0.01" };
+  /** Chat turns the engine actually started: streamed requests that end on the person's (or room's) message. */
+  const turnsStarted = () => session.fakeChat.requests.filter((request) => request.stream === true &&
+    (request.messages as { role?: string }[] | undefined)?.at(-1)?.role === "user").length;
 
   beforeEach(async () => {
     // The folder shape core looks for: <dir>/server/index.js exporting register().
     layerDir = mkdtempSync(join(tmpdir(), "rootclaw-fake-layer-"));
     mkdirSync(join(layerDir, "server"));
     writeFileSync(join(layerDir, "server", "index.js"), 'export async function register() { return { customer: "Fixture Co", features: ["budgets", "billing"], expiresAt: "2099-01-01" }; }\n');
-    session = await launchVerificationServer(process.env, undefined, undefined, undefined, { dir: layerDir, licenseKey: "fixture-key" });
+    session = await launchVerificationServer(paidTurns, undefined, undefined, undefined, { dir: layerDir, licenseKey: "fixture-key" });
   }, 60_000);
 
   afterEach(async () => {
@@ -44,7 +49,8 @@ describe("spend cap and prices through real turns", () => {
       [ORGANIZE_MARKER]: '{"moves":[]}',
       [TIDY_MARKER]: '{"pairs":[]}',
     }));
-    session = await launchVerificationServer({ ...process.env, FAKE_CLAUDE_TEXT_ROUTES: routes, FAKE_CLAUDE_TEXT_DUMP: dump },
+    session = await launchVerificationServer({ ...paidTurns, FAKE_CHAT_TEXT_ROUTES: routes, FAKE_CHAT_TEXT_DUMP: dump,
+      FAKE_CHAT_TEXT_USAGE: JSON.stringify({ prompt_tokens: 15, completion_tokens: 5, prompt_tokens_details: { cached_tokens: 2 }, cost: 0.01 }) },
       undefined, undefined, undefined, { dir: layerDir, licenseKey: "fixture-key" });
     const created = await api("/api/bots", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Budgeted memory" }) });
     expect(created.status).toBe(201);
@@ -75,7 +81,7 @@ describe("spend cap and prices through real turns", () => {
     }
     await expect.poll(rows).toHaveLength(1);
     expect(rows()[0]).toMatchObject({
-      botId: bot.id, botName: bot.name, driverKind: "claudeAgent", model: "claude-haiku-5-5",
+      botId: bot.id, botName: bot.name, driverKind: "openai-compat", model: "fixture-model",
       input: 15, output: 5, cachedInput: 2, costUsd: 0.01, costSource: "reported",
       trigger: { kind: "bot", botId: bot.id }, threadId: expect.stringMatching(/^memory-/),
     });
@@ -113,14 +119,15 @@ describe("spend cap and prices through real turns", () => {
   }, 120_000);
 
   it.each([
-    { name: "missing usage stays unpriced", metadata: {}, costUsd: null, costSource: undefined },
-    { name: "reported zero stays reported", metadata: { total_cost_usd: 0 }, costUsd: 0, costSource: "reported" },
-    { name: "tokens without cost are estimated", metadata: { usage: { input_tokens: 10, output_tokens: 5 } }, costUsd: 0.0000035, costSource: "estimated" },
-  ])("memory helper accounting: $name", async ({ metadata, costUsd, costSource }) => {
-    await session.close();
-    session = await launchVerificationServer({ ...process.env,
-      FAKE_CLAUDE_TEXT_RESULT: JSON.stringify({ type: "result", result: '{"moves":[]}', ...metadata }),
-    }, undefined, undefined, undefined, { dir: layerDir, licenseKey: "fixture-key" });
+    { name: "missing usage stays unpriced", usage: null, costUsd: null, costSource: undefined },
+    { name: "reported zero stays reported", usage: { prompt_tokens: 10, completion_tokens: 5, cost: 0 }, costUsd: 0, costSource: "reported" },
+    { name: "tokens without cost are estimated", usage: { prompt_tokens: 10, completion_tokens: 5 }, costUsd: 0.0000035, costSource: "estimated" },
+  ])("memory helper accounting: $name", async ({ usage, costUsd, costSource }) => {
+    const reply = join(layerDir, "helper-reply.txt");
+    writeFileSync(reply, '{"moves":[]}');
+    session.fakeChat.set({ textFile: reply, textUsage: usage });
+    // The fixture endpoint's model has no list price; the person's own price for it is what an estimate uses.
+    expect((await put({ modelPrices: { "fixture-model": { inputPerMillion: 0.1, outputPerMillion: 0.5 } } })).status).toBe(200);
     const { bot } = await control(["new-bot", "--name", "Helper usage"]);
     expect((await api(`/api/bots/${bot.id}/memory/file`, {
       method: "PUT", headers: { "content-type": "application/json" },
@@ -190,14 +197,12 @@ describe("spend cap and prices through real turns", () => {
 
   it.each([1, 2])("blocks a goal after %i paid turn(s) without retrying or spending another turn", async (allowedTurns) => {
     await session.close();
-    const replyState = join(layerDir, "reply-state");
     session = await launchVerificationServer({
-      ...process.env,
-      FAKE_CLAUDE_REPLIES: JSON.stringify([
+      ...paidTurns,
+      FAKE_CHAT_REPLIES: JSON.stringify([
         'Delegating the check.<rootclaw-goal>{"status":"continue","next":"Worker","instruction":"Check the draft"}</rootclaw-goal>',
         "The draft has been checked.",
       ]),
-      FAKE_CLAUDE_REPLY_STATE: replyState,
     }, undefined, undefined, undefined, { dir: layerDir, licenseKey: "fixture-key" });
     expect((await put({ budgets: { monthlyUsd: allowedTurns * 0.01 } })).status).toBe(200);
     const lead = (await control(["new-bot", "--name", "Lead"])).bot;
@@ -223,7 +228,7 @@ describe("spend cap and prices through real turns", () => {
       /reached its monthly spend limit/i.test(message.tool?.name ?? ""));
     expect(capErrors).toHaveLength(1);
     expect(JSON.stringify(page)).not.toContain("retrying once");
-    expect(Number(readFileSync(replyState, "utf8"))).toBe(allowedTurns);
+    expect(turnsStarted()).toBe(allowedTurns);
     const usage = await (await api("/api/usage")).json() as any;
     expect(usage.total.turns).toBe(allowedTurns);
     expect(usage.budget.exceeded).toBe(true);
