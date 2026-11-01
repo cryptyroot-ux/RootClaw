@@ -31,10 +31,15 @@ export async function startIdentitySidecar(url: string, identity: SidecarIdentit
   let onClosed!: () => void;
   const closed = new Promise<void>((resolve) => { onClosed = resolve; });
   let cdp: Cdp | null = null;
+  // Chrome attaches the targets already open before it answers setAutoAttach, and those already run: the engine's next
+  // navigation must wait for their override, or the page loads with the flag's user agent and empty client hints.
+  let open: Promise<void>[] | null = [];
   const configure = (message: CdpEvent) => {
     if (message.method !== "Target.attachedToTarget" || !cdp) return;
     const { sessionId, targetInfo } = (message.params ?? {}) as { sessionId?: string; targetInfo?: { type?: string } };
-    if (typeof sessionId === "string") void applyIdentity(cdp, sessionId, targetInfo?.type ?? "", identity, options);
+    if (typeof sessionId !== "string") return;
+    const applied = applyIdentity(cdp, sessionId, targetInfo?.type ?? "", identity, options);
+    open?.push(applied);
   };
   cdp = await connect(url, 15_000, { event: configure, closed: () => onClosed() });
   try {
@@ -43,6 +48,9 @@ export async function startIdentitySidecar(url: string, identity: SidecarIdentit
     cdp.close();
     throw error;
   }
+  const applying = open;
+  open = null;
+  await Promise.all(applying);
   return { closed, close: () => cdp?.close() };
 }
 
