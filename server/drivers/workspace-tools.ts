@@ -156,13 +156,20 @@ export function realTarget(path: string): string {
   return canonicalPath(current);
 }
 
-/** Unsandboxed shell. Windows runners have Git bash, not `/bin/bash`. */
+/** Unsandboxed shell. Windows runners have Git bash, not `/bin/bash`. The verification
+ * fixture seals ProgramFiles, so the lookup also tries the default install path.
+ * `usr\bin\bash.exe` sits next to msys-2.0.dll; the `bin` copy is only a launcher. */
 function plainShell(): string {
   if (process.platform !== "win32") return "/bin/bash";
-  const roots = [process.env.ProgramFiles, process.env["ProgramFiles(x86)"]].filter((dir): dir is string => Boolean(dir));
+  const roots = [process.env.ProgramFiles, process.env["ProgramFiles(x86)"], process.env.ProgramW6432, "C:\\Program Files", "C:\\Program Files (x86)"].filter((dir): dir is string => Boolean(dir));
+  const seen = new Set<string>();
   for (const root of roots) {
-    const candidate = join(root, "Git", "bin", "bash.exe");
-    if (existsSync(candidate)) return candidate;
+    const key = root.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    for (const candidate of [join(root, "Git", "usr", "bin", "bash.exe"), join(root, "Git", "bin", "bash.exe")]) {
+      if (existsSync(candidate)) return candidate;
+    }
   }
   return "bash.exe";
 }

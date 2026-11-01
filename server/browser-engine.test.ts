@@ -587,12 +587,12 @@ describe("finding the browser engine", () => {
   it("pins the native-verified Windows revision in both download and desktop manifests", () => {
     const asset = resolveAgentBrowserReleaseAsset("win32", "x64")!;
     expect(asset).toEqual({
-      target: "win32-x64", version: "0.36.0-rootclaw.1",
-      asset: "agent-browser-win32-x64-0.36.0-rootclaw.1.exe",
-      url: "https://github.com/cryptyroot-ux/RootClaw/releases/download/browser-engine-v0.36.0-rootclaw.1/agent-browser-win32-x64-0.36.0-rootclaw.1.exe",
-      bytes: 13806080, sha256: "33bee834f6a6072ec8688b0914726e0262874d758f69f27e8baf7eaac6b5ed15",
+      target: "win32-x64", version: "0.41.0",
+      asset: "agent-browser-win32-x64.exe",
+      url: "https://github.com/vercel-labs/agent-browser/releases/download/v0.41.0/agent-browser-win32-x64.exe",
+      bytes: 18057728, sha256: "dee86b78071cbe7217f71ec1c9df6a50efa73cd44d64a18877bb36556fc8e270",
     });
-    expect(agentBrowserReleaseVersion(asset)).toBe("0.36.0-rootclaw.1");
+    expect(agentBrowserReleaseVersion(asset)).toBe("0.41.0");
     expect(browserBundleSpec("win32-x64").engine).toEqual({
       version: asset.version, asset: asset.asset, url: asset.url,
       bytes: asset.bytes, sha256: asset.sha256, executable: "agent-browser.exe",
@@ -606,12 +606,12 @@ describe("finding the browser engine", () => {
     const dataDir = join(tmpdir(), "rootclaw-versioned-browser-fixture");
     const old = join(dataDir, "tools", "agent-browser", "0.36.0", "agent-browser.exe");
     const revised = pinnedBinaryPath(dataDir, "win32", "x64");
-    expect(revised).toBe(join(dataDir, "tools", "agent-browser", "0.36.0-rootclaw.1", "agent-browser.exe"));
+    expect(revised).toBe(join(dataDir, "tools", "agent-browser", "0.41.0", "agent-browser.exe"));
     const files = new Set([old]);
     const options = { dataDir, platform: "win32" as const, arch: "x64", env: { PATH: "" }, exists: (file: string) => files.has(file) };
     expect(resolveAgentBrowserBinary(options)).toBeNull();
     files.add(revised);
-    expect(browserEngineStatus(options)).toMatchObject({ kind: "ready", binaryPath: revised, version: "0.36.0-rootclaw.1" });
+    expect(browserEngineStatus(options)).toMatchObject({ kind: "ready", binaryPath: revised, version: "0.41.0" });
     expect(resolveAgentBrowserBinary({ ...options, env: { PATH: "", ROOTCLAW_AGENT_BROWSER_PATH: old } })).toBe(old);
   });
 
