@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { backgroundJobs, realTarget, sandboxedShell, shellSandbox, stopBackgroundJobs, createWorkspacePaths, executeWorkspaceTool, globToRegExp, parseUnifiedDiff, shellEnvironment, workspaceToolReadOnly, workspaceToolView, type WorkspaceToolsConfig } from "./workspace-tools.ts";
 
 // CI runners may lack bubblewrap; the shell fails closed there (audit N02), so these tests opt out explicitly.
@@ -60,7 +60,7 @@ describe("path safety", () => {
     expect((await run("write_file", { path: join(skills, "n.md"), content: "x" })).ok).toBe(true);
   });
   it("unrestricted lifts confinement", () => {
-    expect(createWorkspacePaths({ root, unrestricted: true }).resolve("/etc/hosts", "read")).toBe("/etc/hosts");
+    expect(createWorkspacePaths({ root, unrestricted: true }).resolve("/etc/hosts", "read")).toBe(resolve("/etc/hosts"));
   });
 });
 

@@ -3,7 +3,7 @@
 // Engine-level and provider-agnostic: a driver only hands over the turn's folder.
 import { spawn, spawnSync } from "node:child_process";
 import { closeSync, constants as fsConstants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, parse as parsePath, relative, resolve, sep } from "node:path";
 import { randomBytes } from "node:crypto";
 import { homedir, tmpdir } from "node:os";
 import type { ChatToolCallView, ChatToolDefinition, ChatToolResult } from "./chat-mcp-tools.ts";
@@ -132,10 +132,15 @@ function canonicalPath(path: string): string {
 }
 
 /** The real path of `path`, following every symlink component, including dangling ones (a link to a file that does
- * not exist yet still points somewhere, and writing through it would create that target). Missing tails are kept. */
+ * not exist yet still points somewhere, and writing through it would create that target). Missing tails are kept.
+ * The walk starts at the path's own root. Joining a drive letter onto `\` produces `\\C:`, which resolves
+ * from the current drive as `D:\C:\...`. */
 export function realTarget(path: string): string {
-  let pending = resolve(path).split(sep).filter(Boolean);
-  let current: string = sep;
+  const rooted = (from: string) => {
+    const root = parsePath(from).root;
+    return { current: root, pending: from.slice(root.length).split(sep).filter(Boolean) };
+  };
+  let { current, pending } = rooted(resolve(path));
   for (let hops = 0; pending.length;) {
     const next = join(current, pending.shift()!);
     let stat;
@@ -143,9 +148,10 @@ export function realTarget(path: string): string {
     if (!stat.isSymbolicLink()) { current = next; continue; }
     if (++hops > 40) throw new WorkspacePathError(`${path} has too many symbolic links`);
     const link = readlinkSync(next);
-    const target = isAbsolute(link) ? link : join(current, link);
-    pending = [...resolve(target).split(sep).filter(Boolean), ...pending];
-    current = sep;
+    const target = resolve(isAbsolute(link) ? link : join(current, link));
+    const restarted = rooted(target);
+    current = restarted.current;
+    pending = [...restarted.pending, ...pending];
   }
   return canonicalPath(current);
 }
