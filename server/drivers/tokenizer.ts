@@ -9,6 +9,40 @@ export const FALLBACK_CHARS_PER_TOKEN = 3.5;
 /** Text longer than this is estimated, not tokenized, to bound CPU on huge payloads. */
 const MAX_TOKENIZE_CHARS = 400_000;
 const NO_SPECIAL = { allowedSpecial: new Set<string>(), disallowedSpecial: new Set<string>() };
+/** Shorter texts are counted every time: cheap to encode, and too many to be worth an entry. */
+const MIN_CACHED_CHARS = 256;
+export const TOKEN_COUNT_CACHE_MAX_CHARS = 4_000_000;
+type CacheEncoding = EncodingName | "chars";
+
+/** Counts already made, keyed by the text itself (so a message rewritten in place is simply a new key), least
+ * recently used first, bounded by the characters held. */
+export class TokenCountCache {
+  private readonly entries = new Map<string, Partial<Record<CacheEncoding, number>>>();
+  chars = 0;
+  private readonly maxChars: number;
+  constructor(maxChars: number) { this.maxChars = maxChars; }
+  count(encoding: CacheEncoding, text: string, compute: Count): number {
+    const entry = this.entries.get(text);
+    const known = entry?.[encoding];
+    if (entry) { this.entries.delete(text); this.entries.set(text, entry); }
+    if (known !== undefined) return known;
+    const tokens = compute(text);
+    if (text.length > this.maxChars) return tokens;
+    if (entry) entry[encoding] = tokens;
+    else {
+      this.entries.set(text, { [encoding]: tokens });
+      this.chars += text.length;
+      for (const oldest of this.entries.keys()) {
+        if (this.chars <= this.maxChars) break;
+        this.entries.delete(oldest);
+        this.chars -= oldest.length;
+      }
+    }
+    return tokens;
+  }
+  clear() { this.entries.clear(); this.chars = 0; }
+}
+export const tokenCountCache = new TokenCountCache(TOKEN_COUNT_CACHE_MAX_CHARS);
 
 const loaded = new Map<EncodingName, Count>();
 const loading = new Map<EncodingName, Promise<Count | null>>();
@@ -71,6 +105,7 @@ export function countTokens(text: string, model?: string): number {
   if (!text) return 0;
   const name = encodingForModel(model);
   const count = name ? loaded.get(name) : undefined;
-  if (!count || text.length > MAX_TOKENIZE_CHARS) return estimateTokensByChars(text);
-  try { return count(text); } catch { return estimateTokensByChars(text); }
+  const exact = count && text.length <= MAX_TOKENIZE_CHARS ? count : undefined;
+  const measure: Count = exact ? (value) => { try { return exact(value); } catch { return estimateTokensByChars(value); } } : estimateTokensByChars;
+  return text.length < MIN_CACHED_CHARS ? measure(text) : tokenCountCache.count(exact ? name! : "chars", text, measure);
 }
