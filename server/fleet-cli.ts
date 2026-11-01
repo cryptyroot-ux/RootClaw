@@ -1,7 +1,7 @@
 // Runs fleet.ts plans as root with fixed argument lists, or prints them for a root shell; never a shell command from user input.
 import { execFileSync, spawn } from "node:child_process";
 import { appendFileSync, closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, rmSync, statSync } from "node:fs";
-import { dirname, posix } from "node:path";
+import { posix } from "node:path";
 import { writeFileAtomic } from "./atomic.ts";
 import { unstableInstallWarning } from "./service-unit.ts";
 import { cloneRoot } from "./update-check.ts";
@@ -413,7 +413,7 @@ export function planFleetAction(input: FleetInput, deps: FleetDeps): FleetStep[]
       return deletePlan({ registry, slug: input.slug, keepData: input.keepData, layout }).steps;
     }
     case "upgrade": {
-      const root = cloneRoot(dirname(input.script), deps.pathExists);
+      const root = cloneRoot(posix.dirname(input.script), deps.pathExists, posix);
       const uid = root ? deps.processUid?.() ?? null : null;
       const owner = root && uid !== null ? deps.pathOwner?.(root) : undefined;
       // Never safe.directory, chown or a user switch: git and pnpm run only as the clone's own owner.

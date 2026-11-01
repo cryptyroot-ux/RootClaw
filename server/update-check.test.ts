@@ -1,4 +1,4 @@
-import { join, sep } from "node:path";
+import { join, posix, sep, win32 } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { cloneRoot, createUpdateChecker, installKind, isNewerVersion, LATEST_RELEASE_URL, NOT_A_CLONE, UPDATE_COMMANDS } from "./update-check.ts";
@@ -26,6 +26,8 @@ describe("server update check", () => {
     const root = ["", "srv", "RootClaw"].join(sep);
     expect(cloneRoot(join(root, "dist-server"), (path) => path === join(root, ".git"))).toBe(root);
     expect(cloneRoot(join(root, "dist-server"), () => false)).toBeNull();
+    expect(cloneRoot("/srv/RootClaw/dist-server", (path) => path === "/srv/RootClaw/.git", posix)).toBe("/srv/RootClaw");
+    expect(cloneRoot("C:\\RootClaw\\dist-server", (path) => path === "C:\\RootClaw\\.git", win32)).toBe("C:\\RootClaw");
     expect(UPDATE_COMMANDS.git).toEqual({ command: "git pull && pnpm install && pnpm build && pnpm build:server", restart: true });
     for (const install of ["npm", "git", "docker", "podman", "unknown"] as const) {
       expect(UPDATE_COMMANDS[install]?.command ?? "").not.toMatch(/npm (install|i) -g/);

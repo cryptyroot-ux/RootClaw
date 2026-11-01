@@ -1,6 +1,6 @@
 // A self-hosted server cannot replace itself, so this only says whether a newer release exists and how this install is updated.
 import { existsSync } from "node:fs";
-import { join, sep } from "node:path";
+import { join, type posix, sep } from "node:path";
 
 export const LATEST_RELEASE_URL = "https://api.github.com/repos/cryptyroot-ux/RootClaw/releases/latest";
 const CACHE_MS = 60 * 60_000;
@@ -21,10 +21,11 @@ export const UPDATE_COMMANDS: Partial<Record<InstallKind, { command: string; res
   git: { command: CLONE_UPGRADE, restart: true },
 };
 
-/** The git clone a server runs from: the folder above its own (server/ or dist-server/) when that holds .git; null otherwise. */
-export function cloneRoot(serverRoot: string, exists: (path: string) => boolean = existsSync): string | null {
-  const root = join(serverRoot, "..");
-  return exists(join(root, ".git")) ? root : null;
+/** The git clone a server runs from: the folder above its own (server/ or dist-server/) when that holds .git; null otherwise.
+ * `path` is node:path's posix for the Linux-only fleet, whose paths stay POSIX even when its tests run on Windows. */
+export function cloneRoot(serverRoot: string, exists: (path: string) => boolean = existsSync, path: Pick<typeof posix, "join"> = { join }): string | null {
+  const root = path.join(serverRoot, "..");
+  return exists(path.join(root, ".git")) ? root : null;
 }
 
 export function installKind(input: {
