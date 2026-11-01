@@ -22,11 +22,11 @@ function fakeBrowser() {
     close: () => listeners.closed?.(),
   };
   const connect = vi.fn(async (_url: string, _timeoutMs?: number, given: CdpListeners = {}) => { listeners = given; return cdp; });
-  const attach = (sessionId: string, type: string, parent?: string) =>
-    listeners.event?.({ method: "Target.attachedToTarget", params: { sessionId, targetInfo: { type, url: "" }, waitingForDebugger: true }, ...(parent ? { sessionId: parent } : {}) });
+  const attach = (sessionId: string, type: string, parent?: string, waitingForDebugger = true) =>
+    listeners.event?.({ method: "Target.attachedToTarget", params: { sessionId, targetInfo: { type, url: "" }, waitingForDebugger }, ...(parent ? { sessionId: parent } : {}) });
   const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
   const on = (sessionId: string) => sent.filter((message) => message.sessionId === sessionId).map((message) => message.method);
-  return { sent, connect, attach, settle, on, drop: () => listeners.closed?.() };
+  return { sent, cdp, connect, attach, settle, on, drop: () => listeners.closed?.() };
 }
 
 describe("the identity sidecar", () => {
@@ -49,6 +49,26 @@ describe("the identity sidecar", () => {
     const override = browser.sent.find((message) => message.sessionId === "page-1" && message.method === "Emulation.setUserAgentOverride");
     expect(override?.params).toEqual({ userAgent: IDENTITY.userAgent, userAgentMetadata: IDENTITY.userAgentMetadata });
     expect(browser.sent.find((message) => message.sessionId === "page-1" && message.method === "Target.setAutoAttach")?.params).toEqual({ autoAttach: true, waitForDebuggerOnStart: true, flatten: true });
+  });
+
+  it("answers once the page already open has the identity, so the engine's first navigation there runs with it", async () => {
+    const browser = fakeBrowser();
+    let answer!: () => void;
+    const overridden = new Promise<Record<string, unknown>>((resolve) => { answer = () => resolve({}); });
+    const send = browser.cdp.send;
+    browser.cdp.send = async (method, params, sessionId) => {
+      if (method === "Target.setAutoAttach" && !sessionId) browser.attach("page-0", "page", undefined, false);
+      const sent = send(method, params, sessionId);
+      return method === "Emulation.setUserAgentOverride" && sessionId === "page-0" ? overridden : sent;
+    };
+    let ready = false;
+    const started = startIdentitySidecar("ws://127.0.0.1:9/devtools/browser/x", IDENTITY, browser.connect).then(() => { ready = true; });
+    await browser.settle();
+    expect(browser.on("page-0")).toEqual(["Emulation.setUserAgentOverride"]);
+    expect(ready).toBe(false);
+    answer();
+    await started;
+    expect(browser.on("page-0")).toEqual(["Emulation.setUserAgentOverride", "Target.setAutoAttach", "Runtime.runIfWaitingForDebugger"]);
   });
 
   it("gives a headless browser's pages an authenticator with no passkey before they run, so a passkey request ends at once", async () => {
