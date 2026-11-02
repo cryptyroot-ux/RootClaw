@@ -297,7 +297,8 @@ describe("per-bot thread capacity through an isolated HTTP fixture (native engin
     const { botId, threads: [first, second] } = await botWithThreads(2);
     expect((await api("PATCH", `/api/bots/${botId}/tasks/${first}`, { approvalMode: "ask" })).status).toBe(200);
     // This turn asks for a shell command at once; under Ask it waits on the person's card, holding its slot.
-    fixture.fakeChat.set({ routes: [{ match: "APPROVAL_HOLDS_SLOT", mode: "happy", toolCalls: [{ name: "shell", input: { command: "ls -la ./dist" } }] }] });
+    // Anchored to the person's words: other threads' prompts quote this message under "Your recent work".
+    fixture.fakeChat.set({ routes: [{ match: "APPROVAL_HOLDS_SLOT\\s*$", mode: "happy", toolCalls: [{ name: "shell", input: { command: "ls -la ./dist" } }] }] });
     expect((await send(botId, first!, "APPROVAL_HOLDS_SLOT")).body.queued).toBeUndefined();
     await expect.poll(async () => (await botState(botId)).tasks.find((task: any) => task.threadId === first).activity, { timeout: 15_000 }).toBe("waiting-on-you");
     expect(await busyThreads(botId)).toEqual([first]);
@@ -312,6 +313,8 @@ describe("per-bot thread capacity through an isolated HTTP fixture (native engin
     expect(await userTexts(second!)).toEqual([expect.objectContaining({ text: "FIFO_AFTER_APPROVAL", queueId: waiting.body.queueId })]);
     finish(second!);
     await expect.poll(() => busyThreads(botId)).toEqual([]);
+    // The queued turn held its slot on its own gate; it never ran the first turn's scripted tool call.
+    expect(fixture.fakeChat.requests.filter((request: any) => folderOf(request) === second && request.messages?.at(-1)?.role === "tool")).toEqual([]);
     expect(existsSync(join(fixture.info.dataDir, `${first}.gate`))).toBe(false);
   }, 45_000);
 });
