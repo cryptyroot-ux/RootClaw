@@ -62,13 +62,11 @@ export function GrokSignInCode({ prompt }: { prompt: GrokSignInPrompt }) {
 /** Connect an AI: an API key for any native provider, or an official sign-in (OpenRouter, Google) where one exists. */
 export function ProviderConnect({ className }: { className?: string }) {
   const { state, refreshInstances } = useStore();
-  const [busy, setBusy] = useState<OAuthProvider | "check" | "grok" | null>(null);
+  const [busy, setBusy] = useState<OAuthProvider | "check" | null>(null);
+  const [grokBusy, setGrokBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [opened, setOpened] = useState<OAuthProvider | null>(null);
-  const [grok, setGrok] = useState<{ state: GrokSignInState; prompt?: GrokSignInPrompt; error?: string }>({ state: "idle" });
-  const grokStatus = state.config?.xai?.subscription;
-  const grokSignedIn = grok.state === "signed-in" || (grok.state !== "pending" && grokStatus?.signedIn === true);
-  const grokReconnect = grok.state !== "pending" && grok.state !== "signed-in" && grokStatus?.reconnect === true;
+  const locked = busy !== null || grokBusy;
   const remote = typeof window !== "undefined" && window.ogb?.remoteClient?.active === true;
   const googleClient = state.config?.gemini?.oauth?.client === true;
   const googleSignedIn = state.config?.gemini?.oauth?.signedIn === true;
@@ -85,39 +83,6 @@ export function ProviderConnect({ className }: { className?: string }) {
       setBusy(null);
     }
   };
-  const connectGrok = async () => {
-    setBusy("grok");
-    try {
-      setGrok({ state: "pending", prompt: await startGrokSignIn() });
-    } catch (failure) {
-      setGrok({ state: "failed", error: failure instanceof Error ? failure.message : String(failure) });
-    } finally {
-      setBusy(null);
-    }
-  };
-  const disconnectGrok = async () => {
-    setBusy("grok");
-    try {
-      await disconnectGrokSignIn();
-      setGrok({ state: "idle" });
-      void refreshInstances();
-    } catch (failure) {
-      setGrok({ state: "failed", error: failure instanceof Error ? failure.message : String(failure) });
-    } finally {
-      setBusy(null);
-    }
-  };
-  useEffect(() => {
-    if (grok.state !== "pending") return;
-    const timer = setInterval(() => {
-      void api<{ state: GrokSignInState; error?: string }>("/api/oauth/xai/status").then((status) => {
-        if (status.state === "pending") return;
-        setGrok({ state: status.state, error: status.error });
-        if (status.state === "signed-in") void refreshInstances();
-      }).catch(() => {});
-    }, 2_000);
-    return () => clearInterval(timer);
-  }, [grok.state, refreshInstances]);
   const check = async () => {
     setBusy("check");
     try { await refreshInstances(); } finally { setBusy(null); }
@@ -126,7 +91,7 @@ export function ProviderConnect({ className }: { className?: string }) {
     <button
       type="button"
       data-oauth={provider}
-      disabled={busy !== null || disabled}
+      disabled={locked || disabled}
       title={title}
       onClick={() => void signIn(provider)}
       className="flex items-center justify-center gap-2 rounded-lg bg-raised px-3 py-2 text-[13px] font-medium text-ink hover:bg-raised-hover disabled:opacity-50"
@@ -151,28 +116,7 @@ export function ProviderConnect({ className }: { className?: string }) {
         {error && <p role="alert" className="mt-1.5 text-[12px] leading-relaxed text-danger">{error}</p>}
       </section>
 
-      <section aria-label={t("providerConnect.grokTitle")}>
-        <div className="text-[13px] font-semibold text-ink">{t("providerConnect.grokTitle")}</div>
-        <p className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">{t("providerConnect.grokHint")}</p>
-        <button
-          type="button"
-          data-grok-connect
-          disabled={busy !== null || grok.state === "pending"}
-          onClick={() => void connectGrok()}
-          className="mt-2 flex items-center justify-center gap-2 rounded-lg bg-raised px-3 py-2 text-[13px] font-medium text-ink hover:bg-raised-hover disabled:opacity-50"
-        >
-          <LogIn size={14} aria-hidden="true" />
-          {grokSignedIn ? t("providerConnect.grokSignedIn") : grokReconnect ? t("providerConnect.grokReconnect") : t("providerConnect.grok")}
-        </button>
-        {(grokSignedIn || grokReconnect) && (
-          <button type="button" data-grok-disconnect disabled={busy !== null} onClick={() => void disconnectGrok()}
-            className="mt-2 rounded-lg px-3 py-2 text-[13px] font-medium text-ink-secondary hover:bg-raised-hover disabled:opacity-50">
-            {t("providerConnect.grokDisconnect")}
-          </button>
-        )}
-        {grok.state === "pending" && grok.prompt && <GrokSignInCode prompt={grok.prompt} />}
-        {grok.error && <p role="alert" className="mt-1.5 text-[12px] leading-relaxed text-danger">{grok.error}</p>}
-      </section>
+      <SuperGrokConnect locked={busy !== null} onBusy={setGrokBusy} />
 
       <section aria-label={t("providerConnect.keysTitle")}>
         <div className="flex items-center gap-1.5 text-[13px] font-semibold text-ink">
@@ -188,12 +132,81 @@ export function ProviderConnect({ className }: { className?: string }) {
       <button
         type="button"
         onClick={() => void check()}
-        disabled={busy !== null}
+        disabled={locked}
         className="flex items-center gap-1.5 self-start rounded-md px-2 py-1 text-[13px] font-medium text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-60"
       >
         <RefreshCw size={12} aria-hidden="true" className={busy === "check" ? "animate-spin" : ""} />
         {busy === "check" ? t("common.checking") : t("common.checkAgain")}
       </button>
     </div>
+  );
+}
+
+/** The SuperGrok device sign-in card: first-run screens and Settings → Model providers. */
+export function SuperGrokConnect({ className, locked = false, onBusy }: { className?: string; locked?: boolean; onBusy?: (busy: boolean) => void }) {
+  const { state, refreshInstances } = useStore();
+  const [busy, setBusyState] = useState(false);
+  const setBusy = (next: boolean) => { setBusyState(next); onBusy?.(next); };
+  const [grok, setGrok] = useState<{ state: GrokSignInState; prompt?: GrokSignInPrompt; error?: string }>({ state: "idle" });
+  const grokStatus = state.config?.xai?.subscription;
+  const grokSignedIn = grok.state === "signed-in" || (grok.state !== "pending" && grokStatus?.signedIn === true);
+  const grokReconnect = grok.state !== "pending" && grok.state !== "signed-in" && grokStatus?.reconnect === true;
+  const connectGrok = async () => {
+    setBusy(true);
+    try {
+      setGrok({ state: "pending", prompt: await startGrokSignIn() });
+    } catch (failure) {
+      setGrok({ state: "failed", error: failure instanceof Error ? failure.message : String(failure) });
+    } finally {
+      setBusy(false);
+    }
+  };
+  const disconnectGrok = async () => {
+    setBusy(true);
+    try {
+      await disconnectGrokSignIn();
+      setGrok({ state: "idle" });
+      void refreshInstances();
+    } catch (failure) {
+      setGrok({ state: "failed", error: failure instanceof Error ? failure.message : String(failure) });
+    } finally {
+      setBusy(false);
+    }
+  };
+  useEffect(() => {
+    if (grok.state !== "pending") return;
+    const timer = setInterval(() => {
+      void api<{ state: GrokSignInState; error?: string }>("/api/oauth/xai/status").then((status) => {
+        if (status.state === "pending") return;
+        setGrok({ state: status.state, error: status.error });
+        if (status.state === "signed-in") void refreshInstances();
+      }).catch(() => {});
+    }, 2_000);
+    return () => clearInterval(timer);
+  }, [grok.state, refreshInstances]);
+
+  return (
+    <section aria-label={t("providerConnect.grokTitle")} className={className}>
+      <div className="text-[13px] font-semibold text-ink">{t("providerConnect.grokTitle")}</div>
+      <p className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">{t("providerConnect.grokHint")}</p>
+      <button
+        type="button"
+        data-grok-connect
+        disabled={locked || busy || grok.state === "pending"}
+        onClick={() => void connectGrok()}
+        className="mt-2 flex items-center justify-center gap-2 rounded-lg bg-raised px-3 py-2 text-[13px] font-medium text-ink hover:bg-raised-hover disabled:opacity-50"
+      >
+        <LogIn size={14} aria-hidden="true" />
+        {grokSignedIn ? t("providerConnect.grokSignedIn") : grokReconnect ? t("providerConnect.grokReconnect") : t("providerConnect.grok")}
+      </button>
+      {(grokSignedIn || grokReconnect) && (
+        <button type="button" data-grok-disconnect disabled={locked || busy} onClick={() => void disconnectGrok()}
+          className="mt-2 rounded-lg px-3 py-2 text-[13px] font-medium text-ink-secondary hover:bg-raised-hover disabled:opacity-50">
+          {t("providerConnect.grokDisconnect")}
+        </button>
+      )}
+      {grok.state === "pending" && grok.prompt && <GrokSignInCode prompt={grok.prompt} />}
+      {grok.error && <p role="alert" className="mt-1.5 text-[12px] leading-relaxed text-danger">{grok.error}</p>}
+    </section>
   );
 }
