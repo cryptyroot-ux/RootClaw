@@ -17,7 +17,7 @@ it("boots clean and runs bots, streaming, tools, channels and routines on the na
     // Only native engines are listed, and the default one is ready.
     const { instances } = await api("GET", "/api/instances");
     const kinds = new Set(instances.map((instance: any) => instance.driverKind));
-    for (const kind of kinds) expect(["openai-compat", "grok", "groq", "mistral", "cerebras", "meta", "minimax"]).toContain(kind);
+    for (const kind of kinds) expect(["openai-compat", "grok", "groq", "mistral", "cerebras", "meta", "minimax", "greenference", "anthropic", "gemini", "openai-responses", "ollama"]).toContain(kind);
     expect(instances.find((instance: any) => instance.instanceId === "openaiCompat")?.snapshot.state).toBe("available");
 
     // A new bot starts on the native engine, and its reply streams back.
