@@ -31,7 +31,7 @@ export const SHELL_TOOL = "shell";
 const WEB_TOOLS = new Set(["web_fetch", "web_search"]);
 const GIT_TOOLS = new Set<string>([...GIT_READ_TOOLS, GIT_COMMIT_TOOL]);
 const READ_ONLY = new Set<string>(["read_file", "grep", "glob", "list_dir", ...GIT_READ_TOOLS, ...WEB_TOOLS]);
-const MUTATING = new Set([SHELL_TOOL, "write_file", "edit_file", "apply_patch", GIT_COMMIT_TOOL]);
+const MUTATING = new Set([SHELL_TOOL, "write_file", "edit_file", "multi_edit", "apply_patch", GIT_COMMIT_TOOL]);
 export const WORKSPACE_TOOL_NAMES: readonly string[] = [...READ_ONLY, ...MUTATING];
 export const isWorkspaceTool = (name: string) => READ_ONLY.has(name) || MUTATING.has(name);
 /** Read-only tools may run concurrently with each other; everything else is mutating by default. */
@@ -83,6 +83,26 @@ export const WORKSPACE_TOOL_DEFINITIONS: readonly ChatToolDefinition[] = [
     new_string: str("Replacement text."),
     replace_all: { type: "boolean", description: "Replace every occurrence instead of requiring exactly one." },
   }, ["path", "old_string", "new_string"]),
+  fn("multi_edit", "Edit multiple files in one call. Each edit replaces old_string with new_string in the specified file. " +
+    "All edits are applied; if one fails, the others still succeed. Read files first.", {
+    edits: {
+      type: "array",
+      description: "List of edits to apply.",
+      items: {
+        type: "object",
+        properties: {
+          path: str("File path, relative to the workspace or absolute inside it."),
+          old_string: str("Exact text to replace (non-empty)."),
+          new_string: str("Replacement text."),
+          replace_all: { type: "boolean", description: "Replace every occurrence instead of requiring exactly one." },
+        },
+        required: ["path", "old_string", "new_string"],
+        additionalProperties: false,
+      },
+      minItems: 1,
+      maxItems: 20,
+    },
+  }, ["edits"]),
   fn("apply_patch", "Apply a unified diff (git diff / diff -u format) to one or more workspace files, all or nothing. " +
     "Use ---/+++ headers per file (a/ and b/ prefixes allowed, /dev/null to create or delete) and @@ hunks with a few context lines. " +
     "Hunk line numbers may be approximate; context must match exactly.", {
@@ -260,7 +280,10 @@ export function validateWorkspaceArgs(name: string, args: Record<string, unknown
     if (!spec) throw new Error(`${name} has no parameter "${key}"`);
     if (value === null || value === undefined) continue;
     if (spec.type === "array") {
-      if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) throw new Error(`${name}: "${key}" must be an array of strings`);
+      if (!Array.isArray(value)) throw new Error(`${name}: "${key}" must be an array`);
+      const itemType = (spec as { items?: { type?: string } }).items?.type;
+      if (itemType === "string" && value.some((entry) => typeof entry !== "string")) throw new Error(`${name}: "${key}" must be an array of strings`);
+      if (itemType === "object" && value.some((entry) => typeof entry !== "object" || entry === null || Array.isArray(entry))) throw new Error(`${name}: "${key}" must be an array of objects`);
       continue;
     }
     const type = spec.type === "integer" ? "number" : spec.type;
@@ -678,6 +701,40 @@ function editFileTool(args: Record<string, unknown>, paths: Paths): ChatToolResu
   return ok(`Edited ${paths.display(path)}: replaced ${args.replace_all === true ? count : 1} occurrence${count === 1 || args.replace_all !== true ? "" : "s"}.\n${changeEcho(next, changed)}`);
 }
 
+function multiEditTool(args: Record<string, unknown>, paths: Paths): ChatToolResult {
+  const edits = args.edits;
+  if (!Array.isArray(edits) || edits.length === 0) return fail("multi_edit needs a non-empty edits array.");
+  if (edits.length > 20) return fail("multi_edit allows at most 20 edits per call.");
+  const results: string[] = [];
+  const errors: string[] = [];
+  for (const [i, edit] of edits.entries()) {
+    if (!edit || typeof edit !== "object") { errors.push(`edit ${i + 1}: invalid edit object`); continue; }
+    const e = edit as Record<string, unknown>;
+    const path = e.path;
+    const oldString = String(e.old_string ?? "");
+    const newString = String(e.new_string ?? "");
+    if (typeof path !== "string" || !path.trim()) { errors.push(`edit ${i + 1}: path must be a string`); continue; }
+    if (!oldString) { errors.push(`edit ${i + 1}: old_string must not be empty`); continue; }
+    if (oldString === newString) { errors.push(`edit ${i + 1}: old_string and new_string are the same`); continue; }
+    try {
+      const resolved = paths.resolve(path, "write");
+      if (!existsSync(resolved)) { errors.push(`edit ${i + 1}: ${paths.display(resolved)} does not exist`); continue; }
+      const text = readText(resolved, paths);
+      const count = countOf(text, oldString);
+      if (count === 0) { errors.push(`edit ${i + 1}: old_string not found in ${paths.display(resolved)}`); continue; }
+      if (count > 1 && e.replace_all !== true) { errors.push(`edit ${i + 1}: old_string occurs ${count} times in ${paths.display(resolved)} (set replace_all)`); continue; }
+      const next = e.replace_all === true ? text.split(oldString).join(newString) : text.replace(oldString, () => newString);
+      writeAtomic(resolved, next, paths);
+      results.push(`Edited ${paths.display(resolved)}: replaced ${e.replace_all === true ? count : 1} occurrence${count === 1 || e.replace_all !== true ? "" : "s"}.`);
+    } catch (error) {
+      errors.push(`edit ${i + 1}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  const summary = results.length ? results.join("\n") : "(no edits applied)";
+  const errorSummary = errors.length ? `\nErrors:\n${errors.join("\n")}` : "";
+  return { ok: errors.length === 0, text: `${summary}${errorSummary}` };
+}
+
 // ---------- apply_patch ----------
 
 interface Hunk { oldStart: number; lines: string[] }
@@ -942,6 +999,7 @@ export async function executeWorkspaceTool(name: string, args: Record<string, un
       case "read_file": return readFileTool(args, paths);
       case "write_file": return writeFileTool(args, paths);
       case "edit_file": return editFileTool(args, paths);
+      case "multi_edit": return multiEditTool(args, paths);
       case "apply_patch": return applyPatchTool(args, paths);
       case "grep": return await grepTool(args, paths, signal);
       case "glob": return globTool(args, paths, signal);

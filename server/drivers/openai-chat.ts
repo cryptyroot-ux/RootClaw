@@ -42,6 +42,11 @@ import { deferTools, lazyToolsEnabled, LOAD_TOOLS_TOOL, loadToolsResult } from "
 import { chatCompletionRequest, refusedParallelToolCalls, rejectsParallelToolCalls, reuseOrRun, TOOL_LOOP_NOTE, TOOL_LOOP_NOTICE, ToolLoopGuard, UnsupportedParallelToolCallsError } from "./openai-chat-orchestration.ts";
 import { executeWorkspaceTool, skillReadRoots, validateWorkspaceArgs, WORKSPACE_TOOL_DEFINITIONS, WORKSPACE_TOOLS_PROMPT, workspaceToolReadOnly, workspaceToolView, shellCommandScope, SHELL_TOOL, stopBackgroundJobs, type WorkspaceToolsConfig } from "./workspace-tools.ts";
 import { COMPUTER_EXEC_TOOL, computerExecCommandScope, computerExecDefinitions, computerExecToolView, executeComputerExec, validateComputerExecArgs } from "./computer-exec-tools.ts";
+import { SYSTEM_INFO_TOOL, systemInfoDefinitions, systemInfoToolView, validateSystemInfoArgs, executeSystemInfo } from "./system-info-tools.ts";
+import { PROCESS_TOOL, processToolDefinitions, processToolView, validateProcessToolArgs, processToolCommandScope, executeProcessTool } from "./process-tools.ts";
+import { PACKAGE_TOOL, packageToolDefinitions, packageToolView, validatePackageToolArgs, packageToolCommandScope, executePackageTool } from "./package-tools.ts";
+import { NETWORK_TOOL, networkToolDefinitions, networkToolView, validateNetworkToolArgs, networkToolCommandScope, executeNetworkTool } from "./network-tools.ts";
+import { FILE_WATCH_TOOL, fileWatchToolDefinitions, fileWatchToolView, validateFileWatchToolArgs, fileWatchToolCommandScope, executeFileWatchTool } from "./file-watch-tools.ts";
 import { runToolBatch } from "./tool-batch.ts";
 import { requestTooLargeMessage } from "../../shared/request-too-large.ts";
 import { toolSchemaProfileFor } from "../tool-schema-profile.ts";
@@ -604,6 +609,24 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             tools.definitions.push(definition);
           }
         }
+        // Native system info tool (read-only, always available).
+        if (options.tools !== false) {
+          const taken = new Set(tools.definitions.map((definition) => definition.function.name));
+          for (const definition of systemInfoDefinitions()) {
+            const name = definition.function.name;
+            if (taken.has(name) || !allowsTool(scope, { kind: "native", name })) continue;
+            tools.definitions.push(definition);
+          }
+        }
+        // Native process/package/network/file-watch tools (mutating, require approval).
+        if (options.tools !== false) {
+          const taken = new Set(tools.definitions.map((definition) => definition.function.name));
+          for (const definition of [...processToolDefinitions(), ...packageToolDefinitions(), ...networkToolDefinitions(), ...fileWatchToolDefinitions()]) {
+            const name = definition.function.name;
+            if (taken.has(name) || !allowsTool(scope, { kind: "native", name })) continue;
+            tools.definitions.push(definition);
+          }
+        }
         // RootClaw's own tool schemas wait behind load_tools until the model needs them (server/drivers/tool-loading.ts).
         const lazy = options.tools !== false && lazyToolsEnabled() ? deferTools(tools.definitions, turn.threadId) : null;
         // Planner/verifier (engine.planVerify, docs/design/planner-verifier.md): gated per turn, off by default.
@@ -633,7 +656,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           if (plan) { startPlanning(PLAN_KEEP_HINT); emitPlan("carried"); }
           else if (shouldPlan(turn.text ?? "", { toolsEnabled: true, workspaceTools: workspaceNames.size > 0 })) startPlanning(PLAN_HINT);
         }
-        const readOnlyTool = (name: string) => name === LOAD_TOOLS_TOOL ? lazy !== null : name === UPDATE_PLAN_TOOL ? planning : name === READ_TOOL_OUTPUT_TOOL ? offloadOn : workspaceNames.has(name) && workspaceToolReadOnly(name);
+        const readOnlyTool = (name: string) => name === LOAD_TOOLS_TOOL ? lazy !== null : name === UPDATE_PLAN_TOOL ? planning : name === READ_TOOL_OUTPUT_TOOL ? offloadOn : name === SYSTEM_INFO_TOOL ? true : workspaceNames.has(name) && workspaceToolReadOnly(name);
         let window = contextWindowFor(model, options.models(), undefined, input.instanceId);
         let budget = turnInputBudget(window, ctx.compactAt);
         const calibration = new TokenCalibration(model, input.instanceId);
@@ -1154,6 +1177,82 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
                 });
                 started = true;
                 if (allowed) result = await executeComputerExec(args as Record<string, unknown>, computerExec, abort.signal);
+                else {
+                  loopGuard.deny(call.id);
+                  denials.push(shown.title);
+                  result = { ok: false, text: refusal(floored, (message) => emit({ ...base(turn.threadId, turnId), type: "runtime.notice", message })) };
+                }
+              } else if (call.function.name === SYSTEM_INFO_TOOL) {
+                validateSystemInfoArgs(args as Record<string, unknown>);
+                const shown = systemInfoToolView(call.function.name, args as Record<string, unknown>); title = shown.title;
+                emit({ ...base(turn.threadId, turnId), type: "item.started", itemType: "tool", itemId: call.id, ...commandSummary(),
+                  title: shown.title, ...(inputPreview ? { input: inputPreview } : {}),
+                });
+                started = true;
+                result = await executeSystemInfo(args as Record<string, unknown>, abort.signal);
+              } else if (call.function.name === PROCESS_TOOL) {
+                validateProcessToolArgs(args as Record<string, unknown>);
+                const shown = processToolView(call.function.name, args as Record<string, unknown>); title = shown.title;
+                const full = (turn.approvalModeNow?.() ?? turn.approvalMode) === "full";
+                const floored = approval.floored({ full, threadId: turn.threadId, botId: turn.botId, shown, summary: inputPreview });
+                const allowed = !floored && (full || !shown.ask || await approval.ask(shown.title, inputPreview ?? "This tool has no arguments.", shown.grant, processToolCommandScope(args as Record<string, unknown>)));
+                abort.signal.throwIfAborted();
+                emit({ ...base(turn.threadId, turnId), type: "item.started", itemType: "tool", itemId: call.id, ...commandSummary(),
+                  title: shown.title, ...(inputPreview ? { input: inputPreview } : {}),
+                });
+                started = true;
+                if (allowed) result = await executeProcessTool(args as Record<string, unknown>, computerExec, workspace?.root, abort.signal);
+                else {
+                  loopGuard.deny(call.id);
+                  denials.push(shown.title);
+                  result = { ok: false, text: refusal(floored, (message) => emit({ ...base(turn.threadId, turnId), type: "runtime.notice", message })) };
+                }
+              } else if (call.function.name === PACKAGE_TOOL) {
+                validatePackageToolArgs(args as Record<string, unknown>);
+                const shown = packageToolView(call.function.name, args as Record<string, unknown>); title = shown.title;
+                const full = (turn.approvalModeNow?.() ?? turn.approvalMode) === "full";
+                const floored = approval.floored({ full, threadId: turn.threadId, botId: turn.botId, shown, summary: inputPreview });
+                const allowed = !floored && (full || !shown.ask || await approval.ask(shown.title, inputPreview ?? "This tool has no arguments.", shown.grant, packageToolCommandScope(args as Record<string, unknown>)));
+                abort.signal.throwIfAborted();
+                emit({ ...base(turn.threadId, turnId), type: "item.started", itemType: "tool", itemId: call.id, ...commandSummary(),
+                  title: shown.title, ...(inputPreview ? { input: inputPreview } : {}),
+                });
+                started = true;
+                if (allowed) result = await executePackageTool(args as Record<string, unknown>, computerExec, workspace?.root, abort.signal);
+                else {
+                  loopGuard.deny(call.id);
+                  denials.push(shown.title);
+                  result = { ok: false, text: refusal(floored, (message) => emit({ ...base(turn.threadId, turnId), type: "runtime.notice", message })) };
+                }
+              } else if (call.function.name === NETWORK_TOOL) {
+                validateNetworkToolArgs(args as Record<string, unknown>);
+                const shown = networkToolView(call.function.name, args as Record<string, unknown>); title = shown.title;
+                const full = (turn.approvalModeNow?.() ?? turn.approvalMode) === "full";
+                const floored = approval.floored({ full, threadId: turn.threadId, botId: turn.botId, shown, summary: inputPreview });
+                const allowed = !floored && (full || !shown.ask || await approval.ask(shown.title, inputPreview ?? "This tool has no arguments.", shown.grant, networkToolCommandScope(args as Record<string, unknown>)));
+                abort.signal.throwIfAborted();
+                emit({ ...base(turn.threadId, turnId), type: "item.started", itemType: "tool", itemId: call.id, ...commandSummary(),
+                  title: shown.title, ...(inputPreview ? { input: inputPreview } : {}),
+                });
+                started = true;
+                if (allowed) result = await executeNetworkTool(args as Record<string, unknown>, computerExec, workspace?.root, abort.signal);
+                else {
+                  loopGuard.deny(call.id);
+                  denials.push(shown.title);
+                  result = { ok: false, text: refusal(floored, (message) => emit({ ...base(turn.threadId, turnId), type: "runtime.notice", message })) };
+                }
+              } else if (call.function.name === FILE_WATCH_TOOL) {
+                validateFileWatchToolArgs(args as Record<string, unknown>);
+                const shown = fileWatchToolView(call.function.name, args as Record<string, unknown>); title = shown.title;
+                const full = (turn.approvalModeNow?.() ?? turn.approvalMode) === "full";
+                const floored = approval.floored({ full, threadId: turn.threadId, botId: turn.botId, shown, summary: inputPreview });
+                const allowed = !floored && (full || !shown.ask || await approval.ask(shown.title, inputPreview ?? "This tool has no arguments.", shown.grant, fileWatchToolCommandScope(args as Record<string, unknown>)));
+                abort.signal.throwIfAborted();
+                emit({ ...base(turn.threadId, turnId), type: "item.started", itemType: "tool", itemId: call.id, ...commandSummary(),
+                  title: shown.title, ...(inputPreview ? { input: inputPreview } : {}),
+                });
+                started = true;
+                if (allowed) result = await executeFileWatchTool(args as Record<string, unknown>, computerExec, workspace?.root, abort.signal);
                 else {
                   loopGuard.deny(call.id);
                   denials.push(shown.title);
