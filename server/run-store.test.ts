@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, appendFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -30,7 +30,7 @@ describe("run store", () => {
       usage: { input: 30, output: 9, costUsd: 0.01 }, stopReason: "error", errors: ["boom"], startedAt: 1000, endedAt: 1160,
       firstOutputMs: 100, durationMs: 160 });
     expect(run.tools).toEqual([{ id: "c1", name: "read_file", status: "failed", startedAt: 1100, endedAt: 1150 }]);
-    // Durable: a fresh store reads the same run back.
+    // Durable: a fresh store reads the same run back from SQLite.
     expect(createRunStore({ dataDir: d, now: c.now }).get("r1")).toEqual(run);
   });
 
@@ -118,16 +118,45 @@ describe("run store", () => {
     expect(runs.list({ limit: 1 }).map(r => r.id)).toEqual(["5"]);
     const reopened = createRunStore({ dataDir: d, cap: 3 });
     expect(reopened.list().map(r => r.id)).toEqual(["5", "4", "3"]);
-    const lines = readFileSync(join(d, RUNS_FILE), "utf8").trim().split("\n");
-    expect(lines.every(line => ["3", "4", "5"].includes(JSON.parse(line).runId))).toBe(true);
   });
 
-  it("skips a torn last line and ignores events for runs it never began", () => {
+  it("ignores events for runs it never began", () => {
     const d = dir();
     const runs = createRunStore({ dataDir: d });
     runs.begin({ runId: "r", threadId: "t1", model: "m" });
     runs.observe(ev("other", "turn.completed", { ok: true }));
-    appendFileSync(join(d, RUNS_FILE), "{\"op\":\"end\",\"run");
     expect(createRunStore({ dataDir: d }).list().map(r => r.id)).toEqual(["r"]);
+  });
+
+  it("migrates JSONL runs to SQLite on first boot, then stops writing JSONL", () => {
+    const d = dir();
+    const { mkdirSync, appendFileSync } = require("node:fs");
+    mkdirSync(join(d, "runs"), { recursive: true });
+    const oldRun = {
+      id: "old-1", threadId: "t1", botId: "b1", model: "m1", chain: ["m1"], status: "completed",
+      rounds: 1, tools: [], errors: [], notices: 0, retries: 0, startedAt: 1000, endedAt: 1100, durationMs: 100,
+    };
+    appendFileSync(join(d, RUNS_FILE), `${JSON.stringify({ runId: "old-1", at: 1000, run: oldRun })}\n`);
+    appendFileSync(join(d, RUNS_FILE), "not valid json\n");
+    appendFileSync(join(d, RUNS_FILE), `${JSON.stringify({ runId: "old-2", at: 2000, run: { ...oldRun, id: "old-2", threadId: "t2", status: "running" } })}\n`);
+
+    const runs = createRunStore({ dataDir: d });
+    expect(runs.get("old-1")).toMatchObject({ id: "old-1", status: "completed" });
+    expect(runs.get("old-2")).toMatchObject({ id: "old-2", status: "interrupted", stopReason: "restart" });
+    // JSONL should have been renamed to .migrated
+    const migratedExists = (() => { try { require("node:fs").statSync(join(d, "runs", "runs.jsonl.migrated")); return true; } catch { return false; } })();
+    expect(migratedExists).toBe(true);
+  });
+
+  it("falls back to in-memory when SQLite database is corrupt", () => {
+    const d = dir();
+    // Create a corrupt SQLite file
+    writeFileSync(join(d, "runs.db"), "not a sqlite database");
+    const runs = createRunStore({ dataDir: d });
+    runs.begin({ runId: "r", threadId: "t1", model: "m" });
+    expect(runs.get("r")).toMatchObject({ id: "r", status: "running" });
+    // Turn still works despite corrupt DB
+    runs.observe(ev("r", "turn.completed", { ok: true, stopReason: "end_turn" }));
+    expect(runs.get("r")).toMatchObject({ status: "completed" });
   });
 });

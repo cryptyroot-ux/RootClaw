@@ -1,12 +1,14 @@
-// A durable record of each native engine run (one turn on one engine): append-only JSONL under the data dir, one full
-// snapshot per change, folded to the last snapshot per run on load. A run still "running" when the store loads was cut off
-// by a restart, so it is marked interrupted and may be retried once.
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+// A durable record of each native engine run (one turn on one engine): SQLite backend under the data dir,
+// one row per run, updated in place. A run still "running" when the store loads was cut off by a restart,
+// so it is marked interrupted and may be retried once. Falls back to in-memory-only if SQLite cannot open.
+import { existsSync, mkdirSync, readFileSync, renameSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { writeFileAtomic } from "./atomic.ts";
+import { DatabaseSync } from "node:sqlite";
 import { billableFor, type ModelPrice } from "./prices.ts";
 
 export const RUNS_FILE = join("runs", "runs.jsonl");
+const DB_FILE = "runs.db";
+const MIGRATED_FILE = join("runs", "runs.jsonl.migrated");
 const DEFAULT_CAP = 500;
 /** A failed run this recent on the same thread and bot is the one the chain failed over from. */
 const FAILOVER_WINDOW_MS = 120_000;
@@ -71,40 +73,211 @@ const numbers = (event: Record<string, unknown>) => {
   return out;
 };
 
+const SCHEMA = `
+CREATE TABLE IF NOT EXISTS runs (
+  id TEXT PRIMARY KEY,
+  thread_id TEXT NOT NULL,
+  bot_id TEXT,
+  instance_id TEXT,
+  driver TEXT,
+  model TEXT NOT NULL,
+  chain TEXT NOT NULL DEFAULT '[]',
+  failover_from TEXT,
+  status TEXT NOT NULL DEFAULT 'running',
+  rounds INTEGER NOT NULL DEFAULT 0,
+  tools TEXT NOT NULL DEFAULT '[]',
+  usage TEXT,
+  stop_reason TEXT,
+  errors TEXT NOT NULL DEFAULT '[]',
+  notices INTEGER NOT NULL DEFAULT 0,
+  retries INTEGER NOT NULL DEFAULT 0,
+  started_at INTEGER NOT NULL,
+  ended_at INTEGER,
+  duration_ms INTEGER,
+  first_output_ms INTEGER,
+  failover INTEGER NOT NULL DEFAULT 0,
+  retried_at INTEGER,
+  cost_source TEXT,
+  plan TEXT,
+  verify TEXT,
+  created_at INTEGER NOT NULL DEFAULT (unixepoch('now') * 1000)
+);
+CREATE INDEX IF NOT EXISTS idx_runs_thread ON runs(thread_id);
+CREATE INDEX IF NOT EXISTS idx_runs_bot ON runs(bot_id);
+CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
+CREATE INDEX IF NOT EXISTS idx_runs_started ON runs(started_at);
+`;
+
+type DbRunRow = {
+  id: string;
+  thread_id: string;
+  bot_id?: string;
+  instance_id?: string;
+  driver?: string;
+  model: string;
+  chain: string;
+  failover_from?: string;
+  status: string;
+  rounds: number;
+  tools: string;
+  usage?: string;
+  stop_reason?: string | null;
+  errors: string;
+  notices: number;
+  retries: number;
+  started_at: number;
+  ended_at?: number;
+  duration_ms?: number;
+  first_output_ms?: number;
+  failover?: number;
+  retried_at?: number;
+  cost_source?: string;
+  plan?: string;
+  verify?: string;
+};
+
+function rowToRecord(row: DbRunRow): RunRecord {
+  return {
+    id: row.id,
+    threadId: row.thread_id,
+    ...(row.bot_id != null ? { botId: row.bot_id } : {}),
+    ...(row.instance_id != null ? { instanceId: row.instance_id } : {}),
+    ...(row.driver != null ? { driver: row.driver } : {}),
+    model: row.model,
+    chain: (() => { try { return JSON.parse(row.chain) as string[]; } catch { return []; } })(),
+    ...(row.failover_from != null ? { failoverFrom: row.failover_from } : {}),
+    status: row.status as RunStatus,
+    rounds: row.rounds,
+    tools: (() => { try { return JSON.parse(row.tools) as RunTool[]; } catch { return []; } })(),
+    ...(row.usage != null ? { usage: JSON.parse(row.usage) as Record<string, number> } : {}),
+    ...(row.stop_reason != null ? { stopReason: row.stop_reason } : {}),
+    errors: (() => { try { return JSON.parse(row.errors) as string[]; } catch { return []; } })(),
+    notices: row.notices,
+    retries: row.retries,
+    startedAt: row.started_at,
+    ...(row.ended_at != null ? { endedAt: row.ended_at } : {}),
+    ...(row.duration_ms != null ? { durationMs: row.duration_ms } : {}),
+    ...(row.first_output_ms != null ? { firstOutputMs: row.first_output_ms } : {}),
+    ...(row.failover === 1 ? { failover: true } : {}),
+    ...(row.retried_at != null ? { retriedAt: row.retried_at } : {}),
+    ...(row.cost_source != null ? { costSource: row.cost_source as "reported" | "estimated" } : {}),
+    ...(row.plan != null ? { plan: JSON.parse(row.plan) } : {}),
+    ...(row.verify != null ? { verify: JSON.parse(row.verify) } : {}),
+  };
+}
+
+function recordToRow(run: RunRecord): Partial<DbRunRow> {
+  return {
+    id: run.id,
+    thread_id: run.threadId,
+    ...(run.botId !== undefined ? { bot_id: run.botId } : {}),
+    ...(run.instanceId !== undefined ? { instance_id: run.instanceId } : {}),
+    ...(run.driver !== undefined ? { driver: run.driver } : {}),
+    model: run.model,
+    chain: JSON.stringify(run.chain),
+    ...(run.failoverFrom !== undefined ? { failover_from: run.failoverFrom } : {}),
+    status: run.status,
+    rounds: run.rounds,
+    tools: JSON.stringify(run.tools),
+    ...(run.usage !== undefined ? { usage: JSON.stringify(run.usage) } : {}),
+    ...(run.stopReason !== undefined ? { stop_reason: run.stopReason } : {}),
+    errors: JSON.stringify(run.errors),
+    notices: run.notices,
+    retries: run.retries,
+    started_at: run.startedAt,
+    ...(run.endedAt !== undefined ? { ended_at: run.endedAt } : {}),
+    ...(run.durationMs !== undefined ? { duration_ms: run.durationMs } : {}),
+    ...(run.firstOutputMs !== undefined ? { first_output_ms: run.firstOutputMs } : {}),
+    ...(run.failover !== undefined ? { failover: run.failover ? 1 : 0 } : {}),
+    ...(run.retriedAt !== undefined ? { retried_at: run.retriedAt } : {}),
+    ...(run.costSource !== undefined ? { cost_source: run.costSource } : {}),
+    ...(run.plan !== undefined ? { plan: JSON.stringify(run.plan) } : {}),
+    ...(run.verify !== undefined ? { verify: JSON.stringify(run.verify) } : {}),
+  };
+}
+
 export function createRunStore(options: { dataDir: string; cap?: number; now?: () => number; priceFor?: (driver: string, model: string) => ModelPrice | null }): RunStore {
-  const file = join(options.dataDir, RUNS_FILE);
   const cap = Math.max(1, options.cap ?? DEFAULT_CAP);
   const now = options.now ?? Date.now;
-  const runs = new Map<string, RunRecord>();
-  let lines = 0;
+  const dbPath = join(options.dataDir, DB_FILE);
+  const jsonlPath = join(options.dataDir, RUNS_FILE);
 
-  if (existsSync(file)) {
-    for (const line of readFileSync(file, "utf8").split("\n")) {
-      if (!line.trim()) continue;
+  let db: DatabaseSync | null = null;
+  let inMemoryFallback = false;
+  const runs = new Map<string, RunRecord>();
+
+  // --- Open SQLite, migrate JSONL if present ---
+  try {
+    mkdirSync(dirname(dbPath), { recursive: true });
+    db = new DatabaseSync(dbPath);
+    db.exec("PRAGMA journal_mode = WAL;");
+    db.exec(SCHEMA);
+
+    // One-time migration: JSONL -> SQLite
+    if (existsSync(jsonlPath)) {
+      const migratedPath = join(options.dataDir, MIGRATED_FILE);
+      const latestByRun = new Map<string, RunRecord>();
       try {
-        const row = JSON.parse(line) as { runId?: unknown; run?: RunRecord };
-        if (typeof row.runId !== "string" || !row.run) continue;
-        runs.delete(row.runId);
-        runs.set(row.runId, row.run);
-        lines++;
-      } catch { /* a torn last line from a crash */ }
+        for (const line of readFileSync(jsonlPath, "utf8").split("\n")) {
+          if (!line.trim()) continue;
+          try {
+            const row = JSON.parse(line) as { runId?: unknown; run?: RunRecord };
+            if (typeof row.runId !== "string" || !row.run) continue;
+            latestByRun.set(row.runId, row.run);
+          } catch { /* skip corrupt JSONL line */ }
+        }
+      } catch { /* JSONL unreadable; proceed with empty migration */ }
+
+      const insert = db.prepare(
+        `INSERT OR REPLACE INTO runs (id, thread_id, bot_id, instance_id, driver, model, chain, failover_from, status, rounds, tools, usage, stop_reason, errors, notices, retries, started_at, ended_at, duration_ms, first_output_ms, failover, retried_at, cost_source, plan, verify)
+         VALUES (@id, @thread_id, @bot_id, @instance_id, @driver, @model, @chain, @failover_from, @status, @rounds, @tools, @usage, @stop_reason, @errors, @notices, @retries, @started_at, @ended_at, @duration_ms, @first_output_ms, @failover, @retried_at, @cost_source, @plan, @verify)`
+      );
+      db.exec("BEGIN;");
+      for (const run of latestByRun.values()) insert.run(recordToRow(run));
+      db.exec("COMMIT;");
+
+      try { renameSync(jsonlPath, migratedPath); } catch { /* backup rename best-effort */ }
     }
+
+    // Load all runs from SQLite into memory cache
+    const rows = db.prepare("SELECT * FROM runs").all() as DbRunRow[];
+    for (const row of rows) runs.set(row.id, rowToRecord(row));
+  } catch (error) {
+    console.error(`[run-store] SQLite unavailable, falling back to in-memory: ${error instanceof Error ? error.message : String(error)}`);
+    db = null;
+    inMemoryFallback = true;
   }
 
-  const write = (run: RunRecord) => {
+  const save = (run: RunRecord) => {
+    if (inMemoryFallback) { runs.set(run.id, run); return; }
     try {
-      mkdirSync(dirname(file), { recursive: true });
-      appendFileSync(file, `${JSON.stringify({ runId: run.id, at: now(), run })}\n`);
-      lines++;
-    } catch { /* recording must never break a turn */ }
+      const insert = db!.prepare(
+        `INSERT OR REPLACE INTO runs (id, thread_id, bot_id, instance_id, driver, model, chain, failover_from, status, rounds, tools, usage, stop_reason, errors, notices, retries, started_at, ended_at, duration_ms, first_output_ms, failover, retried_at, cost_source, plan, verify)
+         VALUES (@id, @thread_id, @bot_id, @instance_id, @driver, @model, @chain, @failover_from, @status, @rounds, @tools, @usage, @stop_reason, @errors, @notices, @retries, @started_at, @ended_at, @duration_ms, @first_output_ms, @failover, @retried_at, @cost_source, @plan, @verify)`
+      );
+      insert.run(recordToRow(run));
+      runs.set(run.id, run);
+    } catch (error) {
+      console.error(`[run-store] Write failed, keeping in memory only: ${error instanceof Error ? error.message : String(error)}`);
+      runs.set(run.id, run);
+    }
   };
+
   const compact = () => {
-    while (runs.size > cap) runs.delete(runs.keys().next().value!);
+    if (inMemoryFallback) {
+      while (runs.size > cap) runs.delete(runs.keys().next().value!);
+      return;
+    }
     try {
-      mkdirSync(dirname(file), { recursive: true });
-      writeFileAtomic(file, [...runs.values()].map((run) => `${JSON.stringify({ runId: run.id, at: now(), run })}\n`).join(""), { durable: false });
-      lines = runs.size;
-    } catch { /* kept in memory; the next compaction tries again */ }
+      const toDelete = [...runs.keys()].slice(0, Math.max(0, runs.size - cap));
+      if (toDelete.length) {
+        const del = db!.prepare("DELETE FROM runs WHERE id = ?");
+        db!.exec("BEGIN;");
+        for (const id of toDelete) del.run(id);
+        db!.exec("COMMIT;");
+        for (const id of toDelete) runs.delete(id);
+      }
+    } catch { try { db!.exec("ROLLBACK;"); } catch { /* ignore */ } /* kept in memory; next compaction tries again */ }
   };
 
   const priceRun = (run: RunRecord) => {
@@ -119,6 +292,7 @@ export function createRunStore(options: { dataDir: string; cap?: number; now?: (
     if (cost === null) return;
     run.usage.costUsd = cost;
     run.costSource = "estimated";
+    save(run);
   };
 
   const interruptedAtBoot: string[] = [];
@@ -131,13 +305,9 @@ export function createRunStore(options: { dataDir: string; cap?: number; now?: (
     run.durationMs = at - run.startedAt;
     for (const tool of run.tools) if (tool.status === "running") { tool.status = "interrupted"; tool.endedAt = at; }
     interruptedAtBoot.push(run.id);
+    save(run);
   }
-  if (interruptedAtBoot.length || runs.size > cap || lines > runs.size * 4) compact();
-
-  const save = (run: RunRecord) => {
-    write(run);
-    if (lines > cap * 8) compact();
-  };
+  if (runs.size > cap && !inMemoryFallback) compact();
 
   return {
     interruptedAtBoot,
@@ -155,7 +325,7 @@ export function createRunStore(options: { dataDir: string; cap?: number; now?: (
       runs.delete(run.id);
       runs.set(run.id, run);
       if (runs.size > cap) compact();
-      else save(run);
+      save(run);
     },
     observe(event) {
       const run = typeof event.turnId === "string" ? runs.get(event.turnId) : undefined;
