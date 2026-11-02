@@ -2,6 +2,7 @@
 import type { ProviderDriver } from "../contracts.ts";
 import { ensureGrokSubscriptionFresh, grokStoreFile, grokSubscriptionToken, renewGrokSignIn } from "../grok-subscription.ts";
 import { keyRejected, noteKeyRejected } from "../key-rejections.ts";
+import { visionInput } from "./model-vision.ts";
 import { createOpenAIChatRuntime } from "./openai-chat.ts";
 
 const DRIVER_KIND = "grok";
@@ -71,6 +72,8 @@ export const GrokDriver: ProviderDriver<GrokConfig> = {
       },
       apiUrl: config.url,
       tools: config.tools,
+      computerUse: true,
+      imageInput: (model) => visionInput("xai", model),
       models: () => MODELS,
       requestBody: (model, messages, stream) => ({ model, messages, stream }),
       httpErrorLabel: "xAI",

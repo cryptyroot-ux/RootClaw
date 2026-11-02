@@ -1,5 +1,6 @@
 // The API driver rides fetch, so the fake is a stubbed globalThis.fetch scripting HTTP failures and SSE bodies.
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -17,6 +18,8 @@ const SSE_BODY = (text: string) =>
     "data: [DONE]",
     "",
   ].join("\n");
+
+const FIXTURE = join(import.meta.dirname, "../../evals/fixtures/multimodal/rootclaw-04.png");
 
 const sseResponse = (body: string) =>
   new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
@@ -207,6 +210,31 @@ describe("GrokDriver turns (fake fetch)", () => {
     script = [];
     await create();
     await expect(instance.adapter.respondToRequest("t-x", "r", { behavior: "allow" })).resolves.toBe("unavailable");
+  });
+
+  it("can drive a desktop: computer, local computer and browser tools, unless tools are off", async () => {
+    await create();
+    expect(instance.adapter.capabilities).toMatchObject({ computerMcp: true, localComputerMcp: true, browserMcp: true, nativeImageInput: true });
+    await instance.dispose();
+    instance = await GrokDriver.create({
+      instanceId: "grok-tools-off", displayName: "Grok Off", environment: { XAI_API_KEY: "xai-fake" }, enabled: true,
+      config: { url: "https://fake.xai.invalid/v1", apiKeyEnv: "XAI_API_KEY", tools: false },
+    });
+    expect(instance.adapter.capabilities).toMatchObject({ computerMcp: false, localComputerMcp: false, browserMcp: false });
+  });
+
+  it("sends an attached image to grok-4.7 as an image part", async () => {
+    const bodies: string[] = [];
+    globalThis.fetch = (async (_url, init) => {
+      bodies.push(String(init?.body));
+      return sseResponse(SSE_BODY("done from fake grok"));
+    }) as typeof fetch;
+    await create();
+    await instance.adapter.sendTurn({ threadId: "t-image", text: "What does the image say?", model: "grok-4.7", approvalMode: "full",
+      cwd: mkdtempSync(join(tmpdir(), "rootclaw-grok-")), images: [{ path: FIXTURE, mime: "image/png", bytes: readFileSync(FIXTURE).length }] });
+    await recorder.until((e) => e.type === "turn.completed");
+    const content = (JSON.parse(bodies[0]!) as { messages: Array<{ content: unknown }> }).messages.at(-1)!.content as Array<{ type: string; image_url?: { url: string } }>;
+    expect(content.filter((part) => part.type === "image_url")).toEqual([{ type: "image_url", image_url: { url: `data:image/png;base64,${readFileSync(FIXTURE).toString("base64")}` } }]);
   });
 });
 
