@@ -70,6 +70,36 @@ export function packageToolCommandScope(args: Record<string, unknown>): { comman
   return undefined;
 }
 
+/** Capability provider for native package_tool. */
+export function createPackageProvider(
+  computerExec: { kind: "vps" | "local-vm"; sshAlias?: string; containerName: string; runtime?: "docker" | "podman" | "container" } | undefined,
+  workspaceRoot: string | undefined,
+): import("./capability-provider.ts").CapabilityProvider {
+  const toolNameSet = new Set<string>([PACKAGE_TOOL]);
+  return {
+    id: "native-package",
+    toolNames: toolNameSet,
+    mount(_scope) {
+      return packageToolDefinitions();
+    },
+    validate(_name, args) {
+      validatePackageToolArgs(args as Record<string, unknown>);
+    },
+    view(_name, args) {
+      return packageToolView(_name, args as Record<string, unknown>);
+    },
+    commandScope(_name, args) {
+      return packageToolCommandScope(args as Record<string, unknown>);
+    },
+    execute(_name, args, signal) {
+      return executePackageTool(args as Record<string, unknown>, computerExec, workspaceRoot, signal);
+    },
+    async close() {
+      // no cleanup needed
+    },
+  };
+}
+
 export async function executePackageTool(
   args: Record<string, unknown>,
   computerExec: { kind: "vps" | "local-vm"; sshAlias?: string; containerName: string; runtime?: "docker" | "podman" | "container" } | undefined,

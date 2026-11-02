@@ -35,6 +35,33 @@ export function validateSystemInfoArgs(_args: Record<string, unknown>): void {
   // No arguments needed
 }
 
+/** Capability provider for native system_info tool. */
+export function createSystemInfoProvider(): import("./capability-provider.ts").CapabilityProvider {
+  const toolNameSet = new Set<string>([SYSTEM_INFO_TOOL]);
+  return {
+    id: "native-system-info",
+    toolNames: toolNameSet,
+    mount(_scope) {
+      return systemInfoDefinitions();
+    },
+    validate(_name, args) {
+      validateSystemInfoArgs(args as Record<string, unknown>);
+    },
+    view(_name, args) {
+      return systemInfoToolView(_name, args as Record<string, unknown>);
+    },
+    commandScope(_name, _args) {
+      return undefined;
+    },
+    execute(_name, args, signal) {
+      return executeSystemInfo(args as Record<string, unknown>, signal);
+    },
+    async close() {
+      // no cleanup needed
+    },
+  };
+}
+
 export async function executeSystemInfo(
   _args: Record<string, unknown>,
   _signal: AbortSignal,

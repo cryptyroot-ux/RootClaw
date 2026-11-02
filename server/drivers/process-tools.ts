@@ -75,6 +75,36 @@ export function processToolCommandScope(args: Record<string, unknown>): { comman
   return undefined;
 }
 
+/** Capability provider for native process_tool. */
+export function createProcessProvider(
+  computerExec: { kind: "vps" | "local-vm"; sshAlias?: string; containerName: string; runtime?: "docker" | "podman" | "container" } | undefined,
+  workspaceRoot: string | undefined,
+): import("./capability-provider.ts").CapabilityProvider {
+  const toolNameSet = new Set<string>([PROCESS_TOOL]);
+  return {
+    id: "native-process",
+    toolNames: toolNameSet,
+    mount(_scope) {
+      return processToolDefinitions();
+    },
+    validate(_name, args) {
+      validateProcessToolArgs(args as Record<string, unknown>);
+    },
+    view(_name, args) {
+      return processToolView(_name, args as Record<string, unknown>);
+    },
+    commandScope(_name, args) {
+      return processToolCommandScope(args as Record<string, unknown>);
+    },
+    execute(_name, args, signal) {
+      return executeProcessTool(args as Record<string, unknown>, computerExec, workspaceRoot, signal);
+    },
+    async close() {
+      // no cleanup needed
+    },
+  };
+}
+
 export async function executeProcessTool(
   args: Record<string, unknown>,
   computerExec: { kind: "vps" | "local-vm"; sshAlias?: string; containerName: string; runtime?: "docker" | "podman" | "container" } | undefined,

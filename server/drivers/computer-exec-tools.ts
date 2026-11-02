@@ -211,6 +211,35 @@ function buildExecArgs(
   return { cmd: runtime, args: ["exec", ...execArgs], env: { ...process.env, PATH: envPaths } };
 }
 
+/** Capability provider for native computer_exec tool. */
+export function createComputerExecProvider(
+  connection: { kind: "vps" | "local-vm"; sshAlias?: string; containerName: string; runtime?: "docker" | "podman" | "container" },
+): import("./capability-provider.ts").CapabilityProvider {
+  const toolNameSet = new Set<string>([COMPUTER_EXEC_TOOL]);
+  return {
+    id: "native-computer-exec",
+    toolNames: toolNameSet,
+    mount(_scope) {
+      return computerExecDefinitions();
+    },
+    validate(_name, args) {
+      validateComputerExecArgs(args as Record<string, unknown>);
+    },
+    view(_name, args) {
+      return computerExecToolView(_name, args as Record<string, unknown>);
+    },
+    commandScope(_name, args) {
+      return computerExecCommandScope(args as Record<string, unknown>);
+    },
+    execute(_name, args, signal) {
+      return executeComputerExec(args as Record<string, unknown>, connection, signal);
+    },
+    async close() {
+      // no cleanup needed
+    },
+  };
+}
+
 export async function executeComputerExec(
   args: Record<string, unknown>,
   connection: { kind: "vps" | "local-vm"; sshAlias?: string; containerName: string; runtime?: "docker" | "podman" | "container" },

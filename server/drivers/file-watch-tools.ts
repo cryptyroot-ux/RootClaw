@@ -80,6 +80,36 @@ export function fileWatchToolCommandScope(args: Record<string, unknown>): { comm
   return undefined;
 }
 
+/** Capability provider for native file_watch_tool. */
+export function createFileWatchProvider(
+  computerExec: { kind: "vps" | "local-vm"; sshAlias?: string; containerName: string; runtime?: "docker" | "podman" | "container" } | undefined,
+  workspaceRoot: string | undefined,
+): import("./capability-provider.ts").CapabilityProvider {
+  const toolNameSet = new Set<string>([FILE_WATCH_TOOL]);
+  return {
+    id: "native-file-watch",
+    toolNames: toolNameSet,
+    mount(_scope) {
+      return fileWatchToolDefinitions();
+    },
+    validate(_name, args) {
+      validateFileWatchToolArgs(args as Record<string, unknown>);
+    },
+    view(_name, args) {
+      return fileWatchToolView(_name, args as Record<string, unknown>);
+    },
+    commandScope(_name, args) {
+      return fileWatchToolCommandScope(args as Record<string, unknown>);
+    },
+    execute(_name, args, signal) {
+      return executeFileWatchTool(args as Record<string, unknown>, computerExec, workspaceRoot, signal);
+    },
+    async close() {
+      // no cleanup needed
+    },
+  };
+}
+
 export async function executeFileWatchTool(
   args: Record<string, unknown>,
   computerExec: { kind: "vps" | "local-vm"; sshAlias?: string; containerName: string; runtime?: "docker" | "podman" | "container" } | undefined,

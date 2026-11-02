@@ -34,6 +34,41 @@ const READ_ONLY = new Set<string>(["read_file", "grep", "glob", "list_dir", ...G
 const MUTATING = new Set([SHELL_TOOL, "write_file", "edit_file", "multi_edit", "apply_patch", GIT_COMMIT_TOOL]);
 export const WORKSPACE_TOOL_NAMES: readonly string[] = [...READ_ONLY, ...MUTATING];
 export const isWorkspaceTool = (name: string) => READ_ONLY.has(name) || MUTATING.has(name);
+
+/** Capability provider for native workspace tools (shell, read_file, write_file, etc.). */
+export function createWorkspaceProvider(config: WorkspaceToolsConfig, _scope: import("../../shared/tool-scope.ts").ToolScope | undefined): import("./capability-provider.ts").CapabilityProvider {
+  const toolNameSet = new Set<string>(WORKSPACE_TOOL_NAMES);
+  return {
+    id: "native-workspace",
+    toolNames: toolNameSet,
+    mount(_s) {
+      const taken = new Set<string>();
+      const defs: import("./chat-mcp-tools.ts").ChatToolDefinition[] = [];
+      for (const def of WORKSPACE_TOOL_DEFINITIONS) {
+        const name = def.function.name;
+        if (taken.has(name)) continue;
+        defs.push(def);
+      }
+      return defs;
+    },
+    validate(name, args) {
+      validateWorkspaceArgs(name, args as Record<string, unknown>);
+    },
+    view(name, args) {
+      return workspaceToolView(name, args as Record<string, unknown>);
+    },
+    commandScope(name, args) {
+      if (name === SHELL_TOOL) return shellCommandScope(args as Record<string, unknown>, config);
+      return undefined;
+    },
+    execute(name, args, signal) {
+      return executeWorkspaceTool(name, args as Record<string, unknown>, config, signal);
+    },
+    async close() {
+      stopBackgroundJobs(config.jobScope ?? "default");
+    },
+  };
+}
 /** Read-only tools may run concurrently with each other; everything else is mutating by default. */
 export const workspaceToolReadOnly = (name: string) => READ_ONLY.has(name);
 

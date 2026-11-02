@@ -40,13 +40,14 @@ import { contextWindowFor, learnContextWindow, noteAcceptedRequest, windowBelowR
 import { fingerprint, replayDelivered, type DeliveredUserMessage } from "./delivered-replay.ts";
 import { deferTools, lazyToolsEnabled, LOAD_TOOLS_TOOL, loadToolsResult } from "./tool-loading.ts";
 import { chatCompletionRequest, refusedParallelToolCalls, rejectsParallelToolCalls, reuseOrRun, TOOL_LOOP_NOTE, TOOL_LOOP_NOTICE, ToolLoopGuard, UnsupportedParallelToolCallsError } from "./openai-chat-orchestration.ts";
-import { executeWorkspaceTool, skillReadRoots, validateWorkspaceArgs, WORKSPACE_TOOL_DEFINITIONS, WORKSPACE_TOOLS_PROMPT, workspaceToolReadOnly, workspaceToolView, shellCommandScope, SHELL_TOOL, stopBackgroundJobs, type WorkspaceToolsConfig } from "./workspace-tools.ts";
-import { COMPUTER_EXEC_TOOL, computerExecCommandScope, computerExecDefinitions, computerExecToolView, executeComputerExec, validateComputerExecArgs } from "./computer-exec-tools.ts";
-import { SYSTEM_INFO_TOOL, systemInfoDefinitions, systemInfoToolView, validateSystemInfoArgs, executeSystemInfo } from "./system-info-tools.ts";
-import { PROCESS_TOOL, processToolDefinitions, processToolView, validateProcessToolArgs, processToolCommandScope, executeProcessTool } from "./process-tools.ts";
-import { PACKAGE_TOOL, packageToolDefinitions, packageToolView, validatePackageToolArgs, packageToolCommandScope, executePackageTool } from "./package-tools.ts";
-import { NETWORK_TOOL, networkToolDefinitions, networkToolView, validateNetworkToolArgs, networkToolCommandScope, executeNetworkTool } from "./network-tools.ts";
-import { FILE_WATCH_TOOL, fileWatchToolDefinitions, fileWatchToolView, validateFileWatchToolArgs, fileWatchToolCommandScope, executeFileWatchTool } from "./file-watch-tools.ts";
+import { skillReadRoots, WORKSPACE_TOOL_DEFINITIONS, WORKSPACE_TOOLS_PROMPT, workspaceToolReadOnly, stopBackgroundJobs, type WorkspaceToolsConfig, createWorkspaceProvider } from "./workspace-tools.ts";
+import { computerExecDefinitions, createComputerExecProvider } from "./computer-exec-tools.ts";
+import { SYSTEM_INFO_TOOL, systemInfoDefinitions, createSystemInfoProvider } from "./system-info-tools.ts";
+import { processToolDefinitions, createProcessProvider } from "./process-tools.ts";
+import { packageToolDefinitions, createPackageProvider } from "./package-tools.ts";
+import { networkToolDefinitions, createNetworkProvider } from "./network-tools.ts";
+import { fileWatchToolDefinitions, createFileWatchProvider } from "./file-watch-tools.ts";
+import { findProvider, type CapabilityProvider } from "./capability-provider.ts";
 import { runToolBatch } from "./tool-batch.ts";
 import { requestTooLargeMessage } from "../../shared/request-too-large.ts";
 import { toolSchemaProfileFor } from "../tool-schema-profile.ts";
@@ -618,6 +619,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             tools.definitions.push(definition);
           }
         }
+
         // Native process/package/network/file-watch tools (mutating, require approval).
         if (options.tools !== false) {
           const taken = new Set(tools.definitions.map((definition) => definition.function.name));
@@ -627,6 +629,23 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             tools.definitions.push(definition);
           }
         }
+
+        // Capability providers for native tools (incremental: native tools only, MCP stays if/else).
+        const nativeProviders: CapabilityProvider[] = [];
+        if (workspace) {
+          nativeProviders.push(createWorkspaceProvider(workspace, scope));
+        }
+        if (computerExec) {
+          nativeProviders.push(createComputerExecProvider(computerExec));
+        }
+        if (options.tools !== false) {
+          nativeProviders.push(createSystemInfoProvider());
+          nativeProviders.push(createProcessProvider(computerExec, workspace?.root));
+          nativeProviders.push(createPackageProvider(computerExec, workspace?.root));
+          nativeProviders.push(createNetworkProvider(computerExec, workspace?.root));
+          nativeProviders.push(createFileWatchProvider(computerExec, workspace?.root));
+        }
+
         // RootClaw's own tool schemas wait behind load_tools until the model needs them (server/drivers/tool-loading.ts).
         const lazy = options.tools !== false && lazyToolsEnabled() ? deferTools(tools.definitions, turn.threadId) : null;
         // Planner/verifier (engine.planVerify, docs/design/planner-verifier.md): gated per turn, off by default.
@@ -1113,6 +1132,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
               if (typeof named === "string" && named.trim()) command = safeText(named.trim()).slice(0, 1_000);
               if (!object(args)) throw new ChatProtocolError("tool arguments must be a JSON object");
               const inputPreview = preview(args);
+              const nativeProvider = findProvider(nativeProviders, call.function.name);
               if (call.function.name === INVALID_TOOL_NAME) {
                 throw new Error("That tool call had an empty or invalid tool name. Call one of the offered tools by its exact name.");
               }
@@ -1144,115 +1164,20 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
                     result = { ok: true, text: answer };
                   }
                 }
-              } else if (workspace && workspaceNames.has(call.function.name)) {
-                validateWorkspaceArgs(call.function.name, args as Record<string, unknown>);
-                const shown = workspaceToolView(call.function.name, args as Record<string, unknown>); title = shown.title;
+              } else if (nativeProvider) {
+                nativeProvider.validate(call.function.name, args);
+                const shown = nativeProvider.view(call.function.name, args as Record<string, unknown>); title = shown.title;
                 const full = (turn.approvalModeNow?.() ?? turn.approvalMode) === "full";
                 const floored = approval.floored({ full, threadId: turn.threadId, botId: turn.botId, shown, summary: inputPreview });
                 const allowed = !floored && (full || !shown.ask
                   || await approval.ask(shown.title, inputPreview ?? "This tool has no arguments.", shown.grant,
-                    call.function.name === SHELL_TOOL ? shellCommandScope(args as Record<string, unknown>, workspace) : undefined));
+                    nativeProvider.commandScope(call.function.name, args as Record<string, unknown>)));
                 abort.signal.throwIfAborted();
                 emit({ ...base(turn.threadId, turnId), type: "item.started", itemType: "tool", itemId: call.id, ...commandSummary(),
                   title: shown.title, ...(inputPreview ? { input: inputPreview } : {}),
                 });
                 started = true;
-                if (allowed) result = await executeWorkspaceTool(call.function.name, args as Record<string, unknown>, workspace, abort.signal);
-                else {
-                  loopGuard.deny(call.id);
-                  denials.push(shown.title);
-                  result = { ok: false, text: refusal(floored, (message) => emit({ ...base(turn.threadId, turnId), type: "runtime.notice", message })) };
-                }
-              } else if (computerExec && call.function.name === COMPUTER_EXEC_TOOL) {
-                validateComputerExecArgs(args as Record<string, unknown>);
-                const shown = computerExecToolView(call.function.name, args as Record<string, unknown>); title = shown.title;
-                const full = (turn.approvalModeNow?.() ?? turn.approvalMode) === "full";
-                const floored = approval.floored({ full, threadId: turn.threadId, botId: turn.botId, shown, summary: inputPreview });
-                const allowed = !floored && (full || !shown.ask
-                  || await approval.ask(shown.title, inputPreview ?? "This tool has no arguments.", shown.grant,
-                    computerExecCommandScope(args as Record<string, unknown>)));
-                abort.signal.throwIfAborted();
-                emit({ ...base(turn.threadId, turnId), type: "item.started", itemType: "tool", itemId: call.id, ...commandSummary(),
-                  title: shown.title, ...(inputPreview ? { input: inputPreview } : {}),
-                });
-                started = true;
-                if (allowed) result = await executeComputerExec(args as Record<string, unknown>, computerExec, abort.signal);
-                else {
-                  loopGuard.deny(call.id);
-                  denials.push(shown.title);
-                  result = { ok: false, text: refusal(floored, (message) => emit({ ...base(turn.threadId, turnId), type: "runtime.notice", message })) };
-                }
-              } else if (call.function.name === SYSTEM_INFO_TOOL) {
-                validateSystemInfoArgs(args as Record<string, unknown>);
-                const shown = systemInfoToolView(call.function.name, args as Record<string, unknown>); title = shown.title;
-                emit({ ...base(turn.threadId, turnId), type: "item.started", itemType: "tool", itemId: call.id, ...commandSummary(),
-                  title: shown.title, ...(inputPreview ? { input: inputPreview } : {}),
-                });
-                started = true;
-                result = await executeSystemInfo(args as Record<string, unknown>, abort.signal);
-              } else if (call.function.name === PROCESS_TOOL) {
-                validateProcessToolArgs(args as Record<string, unknown>);
-                const shown = processToolView(call.function.name, args as Record<string, unknown>); title = shown.title;
-                const full = (turn.approvalModeNow?.() ?? turn.approvalMode) === "full";
-                const floored = approval.floored({ full, threadId: turn.threadId, botId: turn.botId, shown, summary: inputPreview });
-                const allowed = !floored && (full || !shown.ask || await approval.ask(shown.title, inputPreview ?? "This tool has no arguments.", shown.grant, processToolCommandScope(args as Record<string, unknown>)));
-                abort.signal.throwIfAborted();
-                emit({ ...base(turn.threadId, turnId), type: "item.started", itemType: "tool", itemId: call.id, ...commandSummary(),
-                  title: shown.title, ...(inputPreview ? { input: inputPreview } : {}),
-                });
-                started = true;
-                if (allowed) result = await executeProcessTool(args as Record<string, unknown>, computerExec, workspace?.root, abort.signal);
-                else {
-                  loopGuard.deny(call.id);
-                  denials.push(shown.title);
-                  result = { ok: false, text: refusal(floored, (message) => emit({ ...base(turn.threadId, turnId), type: "runtime.notice", message })) };
-                }
-              } else if (call.function.name === PACKAGE_TOOL) {
-                validatePackageToolArgs(args as Record<string, unknown>);
-                const shown = packageToolView(call.function.name, args as Record<string, unknown>); title = shown.title;
-                const full = (turn.approvalModeNow?.() ?? turn.approvalMode) === "full";
-                const floored = approval.floored({ full, threadId: turn.threadId, botId: turn.botId, shown, summary: inputPreview });
-                const allowed = !floored && (full || !shown.ask || await approval.ask(shown.title, inputPreview ?? "This tool has no arguments.", shown.grant, packageToolCommandScope(args as Record<string, unknown>)));
-                abort.signal.throwIfAborted();
-                emit({ ...base(turn.threadId, turnId), type: "item.started", itemType: "tool", itemId: call.id, ...commandSummary(),
-                  title: shown.title, ...(inputPreview ? { input: inputPreview } : {}),
-                });
-                started = true;
-                if (allowed) result = await executePackageTool(args as Record<string, unknown>, computerExec, workspace?.root, abort.signal);
-                else {
-                  loopGuard.deny(call.id);
-                  denials.push(shown.title);
-                  result = { ok: false, text: refusal(floored, (message) => emit({ ...base(turn.threadId, turnId), type: "runtime.notice", message })) };
-                }
-              } else if (call.function.name === NETWORK_TOOL) {
-                validateNetworkToolArgs(args as Record<string, unknown>);
-                const shown = networkToolView(call.function.name, args as Record<string, unknown>); title = shown.title;
-                const full = (turn.approvalModeNow?.() ?? turn.approvalMode) === "full";
-                const floored = approval.floored({ full, threadId: turn.threadId, botId: turn.botId, shown, summary: inputPreview });
-                const allowed = !floored && (full || !shown.ask || await approval.ask(shown.title, inputPreview ?? "This tool has no arguments.", shown.grant, networkToolCommandScope(args as Record<string, unknown>)));
-                abort.signal.throwIfAborted();
-                emit({ ...base(turn.threadId, turnId), type: "item.started", itemType: "tool", itemId: call.id, ...commandSummary(),
-                  title: shown.title, ...(inputPreview ? { input: inputPreview } : {}),
-                });
-                started = true;
-                if (allowed) result = await executeNetworkTool(args as Record<string, unknown>, computerExec, workspace?.root, abort.signal);
-                else {
-                  loopGuard.deny(call.id);
-                  denials.push(shown.title);
-                  result = { ok: false, text: refusal(floored, (message) => emit({ ...base(turn.threadId, turnId), type: "runtime.notice", message })) };
-                }
-              } else if (call.function.name === FILE_WATCH_TOOL) {
-                validateFileWatchToolArgs(args as Record<string, unknown>);
-                const shown = fileWatchToolView(call.function.name, args as Record<string, unknown>); title = shown.title;
-                const full = (turn.approvalModeNow?.() ?? turn.approvalMode) === "full";
-                const floored = approval.floored({ full, threadId: turn.threadId, botId: turn.botId, shown, summary: inputPreview });
-                const allowed = !floored && (full || !shown.ask || await approval.ask(shown.title, inputPreview ?? "This tool has no arguments.", shown.grant, fileWatchToolCommandScope(args as Record<string, unknown>)));
-                abort.signal.throwIfAborted();
-                emit({ ...base(turn.threadId, turnId), type: "item.started", itemType: "tool", itemId: call.id, ...commandSummary(),
-                  title: shown.title, ...(inputPreview ? { input: inputPreview } : {}),
-                });
-                started = true;
-                if (allowed) result = await executeFileWatchTool(args as Record<string, unknown>, computerExec, workspace?.root, abort.signal);
+                if (allowed) result = await nativeProvider.execute(call.function.name, args as Record<string, unknown>, abort.signal);
                 else {
                   loopGuard.deny(call.id);
                   denials.push(shown.title);
