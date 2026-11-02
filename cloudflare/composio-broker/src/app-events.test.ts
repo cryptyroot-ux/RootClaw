@@ -93,6 +93,8 @@ describe("Composio webhook signature", () => {
   });
 
   it("refuses a timestamp more than 300 s old or ahead, so a captured delivery cannot be replayed later", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-17T10:00:00Z"));
     const { owner, triggerId } = await withTrigger();
     const now = Math.floor(Date.now() / 1000);
     expect((await h.deliver(message(triggerId, owner.userId), { timestamp: now - 301 })).status).toBe(401);
@@ -100,6 +102,16 @@ describe("Composio webhook signature", () => {
     expect(h.queued()).toEqual([]);
     expect((await h.deliver(message(triggerId, owner.userId), { timestamp: now - 290 })).status).toBe(200);
     expect(h.queued(owner.id)).toHaveLength(1);
+  });
+
+  it("accepts a timestamp exactly 300 s old or ahead", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-17T10:00:00Z"));
+    const { owner, triggerId } = await withTrigger();
+    const now = Math.floor(Date.now() / 1000);
+    expect((await h.deliver(message(triggerId, owner.userId), { timestamp: now - 300 })).status).toBe(200);
+    expect((await h.deliver(message(triggerId, owner.userId), { timestamp: now + 300 })).status).toBe(200);
+    expect(h.queued(owner.id)).toHaveLength(2);
   });
 
   it("accepts a header with several signatures when one of them is valid", async () => {
