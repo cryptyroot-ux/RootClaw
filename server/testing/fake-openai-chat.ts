@@ -107,6 +107,7 @@ export async function startFakeOpenAiChat(env: NodeJS.ProcessEnv = {}): Promise<
   let replyIndex = 0;
   let streamedCount = 0;
   const unfinished = new Set<string>();
+  const claims = new Map<string, string>();
   let evidenceChain = Promise.resolve();
   const writeEvidence = (path: string, row: unknown): Promise<void> => {
     const run = evidenceChain.then(() => { appendFileSync(path, `${JSON.stringify(row)}\n`); });
@@ -166,7 +167,7 @@ export async function startFakeOpenAiChat(env: NodeJS.ProcessEnv = {}): Promise<
       messages, tools: body.tools ?? [], mcpConfig: { mcpServers: mountedServers(Array.isArray(body.tools) ? body.tools : []) } }, null, 2));
     if (newTurn && script.prompts && body.stream === true) appendFileSync(script.prompts, `${JSON.stringify(prompt)}\n`);
     const system = messages.filter((message) => message.role === "system").map((message) => textOf(message.content)).join("\n");
-    if (await replayRoomPlan({ env, res, body, messages, model, prompt, system, unfinished, writeEvidence })) return;
+    if (await replayRoomPlan({ env, res, body, messages, model, prompt, system, unfinished, claims, writeEvidence })) return;
     const route = script.routes?.find((entry) => { try { return new RegExp(entry.match).test(prompt); } catch { return false; } });
     const mode = route?.mode ?? script.mode ?? "happy";
     if (mode === "error") {
@@ -266,7 +267,10 @@ interface PlanTurn {
   delayMs?: number;
   fail?: boolean;
   turns?: PlanTurn[];
+  script?: ScriptEntry[];
 }
+/** A `script` entry runs on the turn whose own words hold every `match` string, once or, with `repeat`, every time. */
+interface ScriptEntry extends PlanTurn { key: string; match: string[]; repeat?: boolean }
 interface ToolDef { name: string; parameters: { properties?: Record<string, unknown>; additionalProperties?: boolean } }
 type ChatMessage = Message & { tool_call_id?: string; tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: string } }> };
 
@@ -304,18 +308,32 @@ function pathTail(path: string | undefined): string | undefined {
 
 function readPlan(path: string): Record<string, PlanTurn> | undefined {
   if (!existsSync(path)) return undefined;
-  try {
-    const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
-    return parsed as Record<string, PlanTurn>;
-  } catch { return undefined; }
+  let parsed: unknown;
+  try { parsed = JSON.parse(readFileSync(path, "utf8")); } catch { return undefined; }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+  const both = Object.entries(parsed).find(([, bot]) => bot?.script && bot.turns);
+  if (both) throw new Error(`Room plan ${path}: ${both[0]} has both script and turns`);
+  return parsed as Record<string, PlanTurn>;
 }
 
-function countTurns(path: string, botId: string): number {
-  if (!existsSync(path)) return 0;
-  return readFileSync(path, "utf8").trim().split("\n").filter(Boolean).filter((line) => {
-    try { return (JSON.parse(line) as { botId?: string }).botId === botId; } catch { return false; }
-  }).length;
+interface EvidenceRow { botId?: string; turnIndex?: number; threadId?: string; planKey?: string; unplanned?: boolean; prompt?: string }
+function evidenceRows(path: string): EvidenceRow[] {
+  if (!existsSync(path)) return [];
+  return readFileSync(path, "utf8").trim().split("\n").filter(Boolean).flatMap((line) => {
+    try { return [JSON.parse(line) as EvidenceRow]; } catch { return []; }
+  });
+}
+
+/** The turns a room plan's scripts did not plan for, as their evidence rows. */
+export function unplannedTurns(planPath: string): EvidenceRow[] {
+  return evidenceRows(`${planPath}.evidence.jsonl`).filter((row) => row.unplanned);
+}
+
+const HISTORY_END = /\[(?:End of those messages\. )?Now reply to the user's latest message:\]/;
+const RECALLED = /Recalled for this message[\s\S]*?\[end of recalled passages[^\]]*\]/g;
+/** A turn's own words: replayed history and recalled passages can quote other conversations. */
+function ownWords(prompt: string): string {
+  return prompt.split(HISTORY_END).at(-1)!.replace(RECALLED, "");
 }
 
 function listedTools(body: Record<string, unknown>): ToolDef[] {
@@ -386,23 +404,50 @@ function answeredCalls(messages: Message[]): Array<{ name: string; content: stri
  * reply is recorded, so a teammate's reply cannot land first. Returns false when this request is not a planned turn. */
 async function replayRoomPlan(input: {
   env: NodeJS.ProcessEnv; res: ServerResponse; body: Record<string, unknown>; messages: Message[];
-  model: string; prompt: string; system: string; unfinished: Set<string>;
+  model: string; prompt: string; system: string; unfinished: Set<string>; claims: Map<string, string>;
   writeEvidence: (path: string, row: unknown) => Promise<void>;
 }): Promise<boolean> {
   const planPath = input.env.FAKE_CHAT_ROOM_PLAN || input.env.FAKE_CLAUDE_ROOM_PLAN;
   if (!planPath) return false;
-  const plan = readPlan(planPath);
+  let plan: Record<string, PlanTurn> | undefined;
+  try { plan = readPlan(planPath); } catch (error) {
+    input.res.writeHead(422, { "content-type": "application/json" });
+    input.res.end(JSON.stringify({ error: { message: (error as Error).message } }));
+    return true;
+  }
   if (!plan) return false;
   const locations = fileLocations(input.system);
   const botId = pathTail(locations?.sharedBotFolder);
   const botPlan = botId ? plan[botId] : undefined;
   if (!botId || !botPlan || typeof botPlan !== "object") return false;
-  const { res, model, prompt, system, unfinished, writeEvidence } = input;
+  const { res, model, prompt, system, unfinished, claims, writeEvidence } = input;
   const gone = () => res.destroyed || res.socket?.destroyed === true;
   const evidencePath = `${planPath}.evidence.jsonl`;
-  const turnIndex = countTurns(evidencePath, botId);
-  const indexed = Array.isArray(botPlan.turns);
-  const turn = indexed ? botPlan.turns![turnIndex] : botPlan;
+  const previous = evidenceRows(evidencePath).filter((row) => row.botId === botId);
+  const turnIndex = previous.length;
+  const threadId = pathTail(locations?.currentWorkingFolder) ?? "";
+  // One-shot entries win over `repeat` ones and are claimed on selection, so a parallel turn cannot take one too;
+  // a claim holds until the turn's evidence is written or it is abandoned. A turn no entry matches fails loudly with a
+  // non-retryable 422.
+  const own = ownWords(prompt);
+  const used = new Set(previous.map((row) => row.planKey));
+  const claimOf = (entry: ScriptEntry) => `${evidencePath}\n${botId}\n${entry.key}`;
+  const continuing = answeredCalls(input.messages).length > 0;
+  const free = (entry: ScriptEntry) => !used.has(entry.key) && (!claims.has(claimOf(entry)) || (continuing && claims.get(claimOf(entry)) === threadId));
+  const matches = (entry: ScriptEntry) => entry.match.every((text) => own.includes(text));
+  const entry = botPlan.script && (botPlan.script.find((e) => !e.repeat && free(e) && matches(e)) ?? botPlan.script.find((e) => e.repeat && matches(e)));
+  if (entry && !entry.repeat) claims.set(claimOf(entry), threadId);
+  const release = () => { if (entry && !entry.repeat) claims.delete(claimOf(entry)); };
+  if (botPlan.script && !entry) {
+    await writeEvidence(evidencePath, { botId, turnIndex, threadId, unplanned: true, system, prompt });
+    if (!gone()) {
+      res.writeHead(422, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: { message: `Unplanned fixture turn for ${botId}: ${own.slice(0, 300)}` } }));
+    }
+    return true;
+  }
+  const indexed = Boolean(entry) || Array.isArray(botPlan.turns);
+  const turn = entry ?? (Array.isArray(botPlan.turns) ? botPlan.turns[turnIndex] : botPlan);
   if (!turn) {
     if (!gone()) {
       res.writeHead(500, { "content-type": "application/json" });
@@ -415,9 +460,8 @@ async function replayRoomPlan(input: {
   const reply = indexed ? turn.reply ?? `Result from ${botId}`
     : resumed ? turn.resumeReply ?? `Summary from ${botId}`
     : turn.reply ?? `Result from ${botId}`;
-  const threadId = pathTail(locations?.currentWorkingFolder) ?? "";
   const evidence: Array<{ step: PlanStep; response: { error?: { message: string }; result: { isError: boolean } } }> = [];
-  const row = () => ({ botId, turnIndex, threadId, system, prompt, evidence });
+  const row = () => ({ botId, turnIndex, threadId, system, prompt, evidence, ...(entry ? { planKey: entry.key } : {}) });
   for (const call of answeredCalls(input.messages)) {
     if (call.name === "load_tools") continue;
     const step = steps[evidence.length];
@@ -426,6 +470,7 @@ async function replayRoomPlan(input: {
     evidence.push({ step, response: failed ? { error: { message: "tool failed" }, result: { isError: true } } : { result: { isError: false } } });
     if (Boolean(step.expectError) !== failed) {
       await writeEvidence(evidencePath, row());
+      release();
       unfinished.delete(botId);
       if (!gone()) {
         res.writeHead(500, { "content-type": "application/json" });
@@ -472,21 +517,24 @@ async function replayRoomPlan(input: {
     return !gone();
   };
   if (!(await waitUntil(() => ![...unfinished].some((id) => id !== botId), 20_000))) {
+    release();
     unfinished.delete(botId);
     return true;
   }
   if (turn.gateFile && !(await waitUntil(() => existsSync(turn.gateFile!)))) {
+    release();
     unfinished.delete(botId);
     return true;
   }
   if (typeof turn.delayMs === "number" && turn.delayMs > 0) {
     const end = Date.now() + turn.delayMs;
     while (Date.now() < end) {
-      if (gone()) { unfinished.delete(botId); return true; }
+      if (gone()) { release(); unfinished.delete(botId); return true; }
       await pause(Math.min(20, end - Date.now()));
     }
   }
   await writeEvidence(evidencePath, row());
+  release();
   unfinished.delete(botId);
   if (Boolean(turn.fail) && (indexed || !resumed)) {
     if (!gone()) {

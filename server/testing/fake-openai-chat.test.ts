@@ -2,7 +2,10 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { scriptFromEnv, startFakeOpenAiChat, type FakeOpenAiChat } from "./fake-openai-chat.ts";
+import { randomUUID } from "node:crypto";
+import { OpenAICompatDriver } from "../drivers/openai-compat.ts";
+import { recordEvents } from "./events.ts";
+import { scriptFromEnv, startFakeOpenAiChat, unplannedTurns, type FakeOpenAiChat } from "./fake-openai-chat.ts";
 
 let fake: FakeOpenAiChat | undefined;
 afterEach(async () => { await fake?.stop(); fake = undefined; });
@@ -206,5 +209,104 @@ describe("the scriptable native fake", () => {
     expect(JSON.parse(readFileSync(evidence, "utf8")).evidence[0].response.result.isError).toBe(true);
     expect((await turn([{ role: "system", content: system }, { role: "user", content: "again" }])).status).toBe(500);
     expect(readFileSync(evidence, "utf8").trim().split("\n")).toHaveLength(1);
+  });
+  it("replays a keyed script by the user's own words, once per key unless it repeats, and fails an unplanned turn loudly", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fake-chat-"));
+    const planPath = join(dir, "room-plan.json");
+    const id = "bot-s";
+    writeFileSync(planPath, JSON.stringify({
+      [id]: { script: [
+        { key: "open", match: ["OPEN the job."], steps: [{ tool: "shell", arguments: { command: "open" } }], reply: "Opened." },
+        { key: "ping", match: ["PING"], repeat: true, reply: "Pong." },
+        { key: "review", match: ["Your downstream room requests have settled."], reply: "Reviewed." },
+      ] },
+    }));
+    fake = await startFakeOpenAiChat({ FAKE_CHAT_ROOM_PLAN: planPath });
+    const system = { role: "system", content: "File locations for this bot (absolute paths): " + JSON.stringify({ sharedBotFolder: "/tmp/workspaces/" + id, currentWorkingFolder: "/tmp/task-workspaces/" + id + "/thread-s" }) };
+    const tools = [{ type: "function", function: { name: "shell", parameters: { type: "object", properties: { command: {} }, additionalProperties: false } } }];
+    const opening = [system, { role: "user", content: "OPEN the job." }];
+    expect((await turn(opening, undefined, { tools })).calls).toEqual([["shell", { command: "open" }]]);
+    expect((await turn([...opening,
+      { role: "assistant", tool_calls: [{ id: "c", type: "function", function: { name: "shell", arguments: JSON.stringify({ command: "open" }) } }] },
+      { role: "tool", tool_call_id: "c", content: JSON.stringify({ ok: true, result: "done" }) },
+    ], undefined, { tools })).text).toBe("Opened.");
+    expect((await turn([system, { role: "user", content: "PING" }])).text).toBe("Pong.");
+    expect((await turn([system, { role: "user", content: "PING" }])).text).toBe("Pong.");
+    const quoted = "Earlier: you said \"OPEN the job.\"\n[Now reply to the user's latest message:]\nYour downstream room requests have settled. Review.";
+    expect((await turn([system, { role: "user", content: quoted }])).text).toBe("Reviewed.");
+    const again = await turn([system, { role: "user", content: "OPEN the job." }]);
+    expect(again.status).toBe(422);
+    const unplanned = await turn([system, { role: "user", content: "Something nobody planned." }]);
+    expect(unplanned.status).toBe(422);
+    expect(await (await post({ messages: [system, { role: "user", content: "Something nobody planned." }] })).text()).toContain("Unplanned fixture turn for bot-s");
+    const rows = readFileSync(planPath + ".evidence.jsonl", "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    expect(rows.map((row) => row.planKey ?? (row.unplanned ? "unplanned" : undefined))).toEqual(["open", "ping", "ping", "review", "unplanned", "unplanned", "unplanned"]);
+    expect(rows[0]).toMatchObject({ botId: id, threadId: "thread-s", evidence: [{ step: { tool: "shell" } }] });
+    expect(unplannedTurns(planPath).map((row) => [row.botId, row.turnIndex, row.prompt])).toEqual([
+      [id, 4, "OPEN the job."], [id, 5, "Something nobody planned."], [id, 6, "Something nobody planned."]]);
+  });
+
+  it("lists a plan's unplanned turns from its evidence", () => {
+    const planPath = join(mkdtempSync(join(tmpdir(), "fake-chat-")), "room-plan.json");
+    expect(unplannedTurns(planPath)).toEqual([]);
+    writeFileSync(planPath + ".evidence.jsonl", [{ botId: "a", turnIndex: 0, planKey: "k" }, { botId: "b", turnIndex: 0, unplanned: true, prompt: "huh" }]
+      .map((row) => JSON.stringify(row)).join("\n") + "\n");
+    expect(unplannedTurns(planPath)).toEqual([{ botId: "b", turnIndex: 0, unplanned: true, prompt: "huh" }]);
+  });
+
+  it("hands a once-only key to just one of two parallel turns", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fake-chat-"));
+    const planPath = join(dir, "room-plan.json");
+    writeFileSync(planPath, JSON.stringify({ "bot-p": { script: [{ key: "k", match: ["GO"], delayMs: 100, reply: "went" }] } }));
+    fake = await startFakeOpenAiChat({ FAKE_CHAT_ROOM_PLAN: planPath });
+    const system = (thread: string) => ({ role: "system", content: "File locations for this bot (absolute paths): " + JSON.stringify({ sharedBotFolder: "/tmp/workspaces/bot-p", currentWorkingFolder: "/tmp/task-workspaces/bot-p/" + thread }) });
+    const both = await Promise.all([turn([system("a"), { role: "user", content: "GO" }]), turn([system("b"), { role: "user", content: "GO" }])]);
+    expect(both.map((answer) => answer.status).sort()).toEqual([200, 422]);
+    expect(unplannedTurns(planPath)).toHaveLength(1);
+    const rows = readFileSync(planPath + ".evidence.jsonl", "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    expect(rows.map((row) => row.planKey ?? (row.unplanned ? "unplanned" : undefined)).sort()).toEqual(["k", "unplanned"]);
+  });
+
+  it("fails an unplanned turn once through the engine, without retrying it", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fake-chat-"));
+    const planPath = join(dir, "room-plan.json");
+    writeFileSync(planPath, JSON.stringify({ "bot-e": { script: [{ key: "k", match: ["never said"], reply: "x" }] } }));
+    fake = await startFakeOpenAiChat({ FAKE_CHAT_ROOM_PLAN: planPath });
+    const instance = await OpenAICompatDriver.create({ instanceId: randomUUID(), displayName: "plan", enabled: true,
+      config: { url: fake.url, apiKeyEnv: "FIXTURE_PLAN_KEY" }, environment: { FIXTURE_PLAN_KEY: "fixture-plan-credential-7e" } });
+    const recorder = recordEvents(instance.adapter);
+    try {
+      const system = "File locations for this bot (absolute paths): " + JSON.stringify({ sharedBotFolder: "/tmp/workspaces/bot-e", currentWorkingFolder: "/tmp/task-workspaces/bot-e/t" });
+      await instance.adapter.sendTurn({ threadId: randomUUID(), text: "hi", model: "fixture-model", approvalMode: "full", system });
+      expect(await recorder.until((event) => event.type === "turn.completed")).toMatchObject({ ok: false });
+      expect(unplannedTurns(planPath)).toHaveLength(1);
+      expect(fake.requests.filter((body) => body.stream === true)).toHaveLength(1);
+    } finally { recorder.stop(); await instance.dispose(); }
+  }, 30_000);
+
+  it("refuses a plan that gives one bot both a script and indexed turns", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fake-chat-"));
+    const planPath = join(dir, "room-plan.json");
+    writeFileSync(planPath, JSON.stringify({ "bot-x": { turns: [{ reply: "a" }], script: [{ key: "k", match: ["GO"] }] } }));
+    fake = await startFakeOpenAiChat({ FAKE_CHAT_ROOM_PLAN: planPath });
+    const system = { role: "system", content: "File locations for this bot (absolute paths): " + JSON.stringify({ sharedBotFolder: "/tmp/workspaces/bot-x", currentWorkingFolder: "/tmp/task-workspaces/bot-x/t" }) };
+    const response = await post({ messages: [system, { role: "user", content: "GO" }] });
+    expect(response.status).toBe(422);
+    expect(await response.text()).toContain(`Room plan ${planPath}: bot-x has both script and turns`);
+  });
+
+  it("keeps an indexed plan's turns in order beside a scripted bot", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fake-chat-"));
+    const planPath = join(dir, "room-plan.json");
+    writeFileSync(planPath, JSON.stringify({
+      "bot-i": { turns: [{ reply: "first" }, { reply: "second" }] },
+      "bot-s": { script: [{ key: "only", match: ["GO"], reply: "went" }] },
+    }));
+    fake = await startFakeOpenAiChat({ FAKE_CHAT_ROOM_PLAN: planPath });
+    const system = (id: string) => ({ role: "system", content: "File locations for this bot (absolute paths): " + JSON.stringify({ sharedBotFolder: "/tmp/workspaces/" + id, currentWorkingFolder: "/tmp/task-workspaces/" + id + "/t" }) });
+    expect((await turn([system("bot-i"), { role: "user", content: "GO" }])).text).toBe("first");
+    expect((await turn([system("bot-s"), { role: "user", content: "GO" }])).text).toBe("went");
+    expect((await turn([system("bot-i"), { role: "user", content: "anything" }])).text).toBe("second");
+    expect((await turn([system("bot-i"), { role: "user", content: "more" }])).status).toBe(500);
   });
 });
