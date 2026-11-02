@@ -172,6 +172,19 @@ export interface SendTurnInput {
       generation?: string;
       scope?: "local-computer";
     };
+    /** Direct terminal execution inside the bot's Cua container (VPS or Local VM). Returns exit code, stdout, and stderr as text. */
+    computerExec?: {
+      /** "vps" for Docker-over-SSH VPS, "local-vm" for Local VM container. */
+      kind: "vps" | "local-vm";
+      /** SSH alias (kind === "vps"); the host must already be reachable via `docker -H ssh://<alias>`. */
+      sshAlias?: string;
+      /** Name of the Cua container. */
+      containerName: string;
+      /** Container runtime (kind === "local-vm"): "docker", "podman", or "container". */
+      runtime?: "docker" | "podman" | "container";
+      /** Cua Driver socket inside the container (kind === "local-vm"). */
+      socket?: string;
+    };
     /** Loopback URL and turn-scoped bearer for the engine's hook helper; hooks observe and inject context, never decide state. */
     hooks?: { url: string; token: string };
     /** Peer-agent MCP proxy (list_bots / coordinate_bots); the harness owns turns, permissions and recursion limits. */

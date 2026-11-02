@@ -41,6 +41,7 @@ import { fingerprint, replayDelivered, type DeliveredUserMessage } from "./deliv
 import { deferTools, lazyToolsEnabled, LOAD_TOOLS_TOOL, loadToolsResult } from "./tool-loading.ts";
 import { chatCompletionRequest, refusedParallelToolCalls, rejectsParallelToolCalls, reuseOrRun, TOOL_LOOP_NOTE, TOOL_LOOP_NOTICE, ToolLoopGuard, UnsupportedParallelToolCallsError } from "./openai-chat-orchestration.ts";
 import { executeWorkspaceTool, skillReadRoots, validateWorkspaceArgs, WORKSPACE_TOOL_DEFINITIONS, WORKSPACE_TOOLS_PROMPT, workspaceToolReadOnly, workspaceToolView, shellCommandScope, SHELL_TOOL, stopBackgroundJobs, type WorkspaceToolsConfig } from "./workspace-tools.ts";
+import { COMPUTER_EXEC_TOOL, computerExecCommandScope, computerExecDefinitions, computerExecToolView, executeComputerExec, validateComputerExecArgs } from "./computer-exec-tools.ts";
 import { runToolBatch } from "./tool-batch.ts";
 import { requestTooLargeMessage } from "../../shared/request-too-large.ts";
 import { toolSchemaProfileFor } from "../tool-schema-profile.ts";
@@ -579,6 +580,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           jobScope: turn.threadId,
         } : undefined;
         const workspaceNames = new Set<string>();
+        const computerExec = turn.integrations?.computerExec;
         if (workspace) {
           const taken = new Set(tools.definitions.map((definition) => definition.function.name));
           for (const definition of WORKSPACE_TOOL_DEFINITIONS) {
@@ -591,6 +593,15 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             const head = messages[0];
             if (head?.role === "system" && typeof head.content === "string") head.content += WORKSPACE_TOOLS_PROMPT;
             else messages.unshift({ role: "system", content: WORKSPACE_TOOLS_PROMPT.trimStart() });
+          }
+        }
+        // Native terminal execution inside the bot's Cua container (VPS or Local VM).
+        if (computerExec && options.tools !== false) {
+          const taken = new Set(tools.definitions.map((definition) => definition.function.name));
+          for (const definition of computerExecDefinitions()) {
+            const name = definition.function.name;
+            if (taken.has(name) || !allowsTool(scope, { kind: "native", name })) continue;
+            tools.definitions.push(definition);
           }
         }
         // RootClaw's own tool schemas wait behind load_tools until the model needs them (server/drivers/tool-loading.ts).
@@ -1124,6 +1135,25 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
                 });
                 started = true;
                 if (allowed) result = await executeWorkspaceTool(call.function.name, args as Record<string, unknown>, workspace, abort.signal);
+                else {
+                  loopGuard.deny(call.id);
+                  denials.push(shown.title);
+                  result = { ok: false, text: refusal(floored, (message) => emit({ ...base(turn.threadId, turnId), type: "runtime.notice", message })) };
+                }
+              } else if (computerExec && call.function.name === COMPUTER_EXEC_TOOL) {
+                validateComputerExecArgs(args as Record<string, unknown>);
+                const shown = computerExecToolView(call.function.name, args as Record<string, unknown>); title = shown.title;
+                const full = (turn.approvalModeNow?.() ?? turn.approvalMode) === "full";
+                const floored = approval.floored({ full, threadId: turn.threadId, botId: turn.botId, shown, summary: inputPreview });
+                const allowed = !floored && (full || !shown.ask
+                  || await approval.ask(shown.title, inputPreview ?? "This tool has no arguments.", shown.grant,
+                    computerExecCommandScope(args as Record<string, unknown>)));
+                abort.signal.throwIfAborted();
+                emit({ ...base(turn.threadId, turnId), type: "item.started", itemType: "tool", itemId: call.id, ...commandSummary(),
+                  title: shown.title, ...(inputPreview ? { input: inputPreview } : {}),
+                });
+                started = true;
+                if (allowed) result = await executeComputerExec(args as Record<string, unknown>, computerExec, abort.signal);
                 else {
                   loopGuard.deny(call.id);
                   denials.push(shown.title);

@@ -140,6 +140,7 @@ import {
   type LocalVmTarget,
   type Runtime,
 } from "./container-computer.ts";
+import { CUA_SOCKET } from "./container-computer.ts";
 import { attachForTurn, saveBotAttachment } from "./bot-attachment.ts";
 import {
   cacheUntilConfigChanges,
@@ -8133,6 +8134,12 @@ async function startTurn(
               controlIntegration(bot.id, threadId, dispatchClaimId),
               localVmTarget,
             );
+            integrations.computerExec = {
+              kind: "local-vm",
+              runtime: lazyReadyVm.runtime,
+              containerName: localVmTarget.containerName,
+              socket: CUA_SOCKET,
+            };
             autoVmClaims.set(threadId, {
               owner: resourceOwner,
               lazy: true,
@@ -8162,6 +8169,12 @@ async function startTurn(
             controlIntegration(bot.id, threadId, dispatchClaimId),
             claimed.target,
           );
+          integrations.computerExec = {
+            kind: "local-vm",
+            runtime: claimed.runtime,
+            containerName: claimed.target.containerName,
+            socket: CUA_SOCKET,
+          };
           autoVmClaims.set(threadId, {
             owner: resourceOwner,
             label: "the Local VM",
@@ -8200,6 +8213,11 @@ async function startTurn(
           });
           if ("integration" in mounted) {
             integrations.localComputer = mounted.integration;
+            integrations.computerExec = {
+              kind: "vps",
+              sshAlias: vpsSshAliasForBot(cfg, bot) ?? undefined,
+              containerName: vps.vpsContainerName(bot.id),
+            };
             computerKind = "vps";
           } else {
             vpsThreadEnded(bot.id, threadId);
@@ -10144,6 +10162,12 @@ async function runClaimedGroupMemberTurn(
         controlIntegration(readyBot.id, threadId, internalGeneration, { localVmTarget: target }),
         target,
       );
+      integrations.computerExec = {
+        kind: "local-vm",
+        runtime: vm.runtime,
+        containerName: target.containerName,
+        socket: CUA_SOCKET,
+      };
     }
   } catch (error) {
     const place = roomPlan.computer;
