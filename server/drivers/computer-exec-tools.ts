@@ -4,6 +4,7 @@
 // VPS: `docker -H ssh://<alias> exec ...`; Local VM: `<runtime> exec ...`.
 // Output is capped at 64 KiB per stream (128 KiB total); default timeout 60s, max 120s.
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { DATA_DIR } from "../config.ts";
 import { augmentedPath } from "../env-path.ts";
 import { prepareVpsSsh } from "../vps-ssh.ts";
@@ -190,18 +191,24 @@ function buildExecArgs(
     command,
   ];
 
+  // Ensure /usr/bin and /usr/local/bin are on PATH so `docker` (and `podman`) are found
+  // even when augmentedPath() doesn't carry them in a sealed/service environment.
+  const basePaths = ["/usr/bin", "/usr/local/bin", "/bin"];
+  const augmented = augmentedPath();
+  const envPaths = basePaths.filter((p) => !augmented.includes(p)).concat(augmented).join(":");
+
   if (connection.kind === "vps") {
     if (!connection.sshAlias) throw new Error("computer_exec VPS requires an sshAlias.");
     const ssh = prepareVpsSsh(DATA_DIR, augmentedPath());
     return {
       cmd: "docker",
       args: vpsDockerArgs(connection.sshAlias, ["exec", ...execArgs]),
-      env: { ...process.env, PATH: ssh.path },
+      env: { ...process.env, PATH: envPaths, ...(ssh.path ? { PATH: ssh.path + ":" + envPaths } : {}) },
     };
   }
 
   const runtime = connection.runtime ?? "docker";
-  return { cmd: runtime, args: ["exec", ...execArgs], env: { ...process.env, PATH: augmentedPath() } };
+  return { cmd: runtime, args: ["exec", ...execArgs], env: { ...process.env, PATH: envPaths } };
 }
 
 export async function executeComputerExec(
@@ -222,10 +229,13 @@ export async function executeComputerExec(
   const timeoutSecs = Math.max(1, Math.min(120, Math.round(timeoutMs / 1000)));
 
   const { cmd, args: spawnArgs, env } = buildExecArgs(connection, command, cwd, timeoutSecs);
+  // `cwd` is the folder inside the container (passed via `docker exec -w`); the host-side
+  // spawn cwd must be a folder that exists on this machine.
+  const hostCwd = existsSync(cwd) ? cwd : "/tmp";
 
   let result: ExecResult;
   try {
-    result = await runExec(cmd, spawnArgs, env, cwd, nodeTimeoutMs, signal);
+    result = await runExec(cmd, spawnArgs, env, hostCwd, nodeTimeoutMs, signal);
   } catch (error) {
     return { ok: false, text: `computer_exec failed: ${error instanceof Error ? error.message : String(error)}` };
   }
