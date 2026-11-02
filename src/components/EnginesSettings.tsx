@@ -7,6 +7,7 @@ import { ApiKeyEngineManage, EngineSetup, EngineUpdateNotice, EngineWarningNotic
 import { CacheKeepWarmSettings } from "./CacheKeepWarmSettings";
 import { SettingsDisclosureRow, SettingsGroup, SettingsRows } from "./SettingsPrimitives";
 import { InstanceProviderMark } from "./ProviderIcons";
+import { SuperGrokConnect } from "./ProviderConnect";
 
 
 
@@ -77,6 +78,7 @@ function SimpleEngines({ rows, isReady, renderEngine, more }: {
           })}
         </SettingsRows>
       </SettingsGroup>
+      <SuperGrokConnect className="px-4" />
       {others.length > 0 && (
         <SettingsDisclosureRow
           title={t("settings.simple.ai.more", { count: String(others.length) })}
@@ -113,6 +115,7 @@ export function EnginesSettings({ simple = false, more }: { simple?: boolean; mo
         <RefreshEngines />
       </div>
       <EngineSections instances={rows} isReady={isReady} renderEngine={renderEngine} />
+      <SuperGrokConnect className="px-4" />
       <CacheKeepWarmSettings />
     </div>
   );
