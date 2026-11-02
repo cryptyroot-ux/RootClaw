@@ -54,6 +54,8 @@ import { toolSchemaProfileFor } from "../tool-schema-profile.ts";
 import { classifyContinuable, writeTurnHandoff } from "../turn-continuation.ts";
 import { KEY_REJECTED_REASON, keyRejected, noteKeyAccepted, noteKeyRejected, rejectsKey } from "../key-rejections.ts";
 import { fenceUntrustedToolOutput } from "./fence-markers.ts";
+import { appendCompaction } from "./compaction-journal.ts";
+import { DATA_DIR } from "../config.ts";
 import { Agent, fetch as fetchWithoutLimits } from "undici";
 
 export type { OpenAIChatMessage } from "./model-adapter.ts";
@@ -696,6 +698,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         const ratioNow = () => Math.max(1, calibration.apply(1_000_000) / 1_000_000);
         const sizeNow = () => calibration.apply(estimateRequestTokens(messages, tools!.definitions, model, adapter.protocol));
         const modelLabel = () => options.models().options.find((option) => option.id === model)?.label ?? model;
+        let currentRound = 0;
         const compact = async (reason: "budget" | "overflow", keepExchanges: number, targetTokens?: number, minSavedTokens?: number, fitWithinTokens?: number, tailWithinTokens?: number) => {
           // Overflow recovery pays for at most two summaries a turn (one, then one retry); after that it only offloads or fails.
           if (reason === "overflow" && overflowCompactions >= MAX_OVERFLOW_COMPACTIONS) return false;
@@ -733,6 +736,25 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           const line = { compacted: reason, n: compactions, folded: result.folded, beforeTokens: result.beforeTokens, afterTokens: result.afterTokens, window, budget, summarizer: result.summarizer };
           native("out", line);
           console.info(`${options.driverKind}: [context] compaction #${compactions} (${reason}) folded ${result.folded} messages, ~${result.beforeTokens} → ~${result.afterTokens} tokens (window ${window}, budget ${budget}, ${result.summarizer})`);
+          // Journal the compaction decision (non-blocking).
+          try {
+            appendCompaction(DATA_DIR, {
+              id: syntheticToolCallId(),
+              runId: turnId,
+              threadId: turn.threadId,
+              botId: turn.botId,
+              round: currentRound,
+              reason: reason === "overflow" ? "overflow" : "budget",
+              messagesBefore: result.folded + messages.length,
+              messagesAfter: messages.length,
+              tokensBefore: result.beforeTokens,
+              tokensAfter: result.afterTokens,
+              tokensSaved: result.beforeTokens - result.afterTokens,
+              timestamp: Date.now(),
+            });
+          } catch (err) {
+            console.error(`[compaction-journal] Failed to journal: ${err instanceof Error ? err.message : String(err)}`);
+          }
           return true;
         };
         // The smallest request the window can still answer, in raw (uncalibrated) tokens.
@@ -767,6 +789,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           return offloaded.length > 0;
         };
         for (let round = 0; round < MAX_CHAT_ROUNDS; round++) {
+          currentRound = round;
           abort.signal.throwIfAborted();
             // Between rounds, never inside a tool batch.
           unread = turnEntry.asides.splice(0);
