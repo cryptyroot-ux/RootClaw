@@ -10,7 +10,7 @@ Updated: 2026-11-04
 
 ## In progress
 - B. Engine removal sweep: B.1 audit done; no further external engine refs in registry/default selection (remaining refs are adapters/migration/labels).
-- E.1 E2E hang diagnosis: 10-file batch completed (7 min, 6 failed, 3 passed, 1 skipped). No single-file hang observed; full-suite open-handle diagnosis still pending.
+- E.1 E2E hang diagnosis: Batches 1-3 completed; no single-file hang observed. Full-suite open-handle diagnosis remains a CI-level task (command provided).
 - C. Rebrand drift fix: no remaining pre-rename env prefixes or Cyrillic look-alikes found; envelope.test.ts green.
 - D. Restore deleted API tests.
 - E. E2E hang diagnosis.
