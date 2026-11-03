@@ -10,6 +10,7 @@ Updated: 2026-11-04
 
 ## In progress
 - B. Engine removal sweep (clustered; requires manual classification).
+- E.1 E2E hang diagnosis: requires full `vitest run --reporter=hanging-process`; heavy/long-running in this environment.
 - C. Rebrand drift fix.
 - D. Restore deleted API tests.
 - E. E2E hang diagnosis.
