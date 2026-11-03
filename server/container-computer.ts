@@ -50,7 +50,7 @@ export type Runtime = (typeof RUNTIMES)[number];
 export type LifecycleAction = "pull" | "run" | "start" | "stop" | "remove";
 
 const INTERNAL_VIEWER_PORT = 6901;
-const HOST_VIEWER_PORT = 6080;
+const HOST_VIEWER_PORT = 6081;
 const MEMORY_BYTES = 4 * 1024 * 1024 * 1024;
 
 export interface LocalVmTarget {
@@ -911,7 +911,7 @@ export function containerRunArgs(
 
 async function ensureVmWorkspace(platform: NodeJS.Platform, target: LocalVmTarget): Promise<void> {
   await mkdir(target.workspaceDir, { recursive: true, mode: 0o700 });
-  if (platform !== "win32") await chmod(target.workspaceDir, 0o700);
+  if (platform !== "win32") { try { await chmod(target.workspaceDir, 0o700); } catch {} }
 }
 
 function baseImagePullArgs(runtime: Runtime): string[] {
