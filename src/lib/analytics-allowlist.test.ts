@@ -7,7 +7,7 @@ import { CURATED_CONNECTOR_SLUGS } from "../../shared/connector-curated";
 import { CREDENTIAL_TARGETS } from "../../shared/credential-request";
 import { TOOL_SCOPE_SUPPORT } from "../../shared/tool-scope-support";
 import {
-  allow, APP, BOT_TEMPLATE, credentialProvider, ENGINE, engineForDriver, engineSlug, KEY_PROVIDER,
+  allow, APP, BOT_TEMPLATE, credentialProvider, ENGINE, engineForDriver, engineSlug, KEY_PROVIDER, SIGN_IN_ENGINE,
 } from "./analytics-allowlist";
 
 const HOSTILE = [
@@ -90,5 +90,13 @@ describe("app, role and key lists", () => {
     expect(Object.keys(expected).sort()).toEqual(Object.keys(CREDENTIAL_TARGETS).sort());
     for (const [target, provider] of Object.entries(expected)) expect(credentialProvider(target)).toBe(provider);
     for (const value of HOSTILE) expect(credentialProvider(value)).toBe("other");
+  });
+});
+
+describe("sign-in engine allowlist", () => {
+  it("contains no removed external engine ids", () => {
+    expect(SIGN_IN_ENGINE).not.toContain("claude");
+    expect(SIGN_IN_ENGINE).not.toContain("codex");
+    expect([...SIGN_IN_ENGINE]).toEqual(["grok"]);
   });
 });
