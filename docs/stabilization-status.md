@@ -13,6 +13,7 @@ Updated: 2026-11-04
 - E.1 E2E hang diagnosis: Batches 1-3 completed; no single-file hang observed. Full-suite open-handle diagnosis remains a CI-level task (command provided).
 - E.1 finding: `server/delta-context.e2e.test.ts` hangs (timeout 60s) and is a primary open-handle candidate.
 - E.1 batches 4-5 executed; no new hang identified beyond delta-context.
+- E.1 finding: `server/context-compaction.e2e.test.ts` also hangs (timeout 60s).
 - C. Rebrand drift fix: completed (no remaining drift; envelope.test.ts green).
 - D. Restore deleted API tests.
 - E. E2E hang diagnosis.
