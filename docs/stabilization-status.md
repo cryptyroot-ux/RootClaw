@@ -11,6 +11,7 @@ Updated: 2026-11-04
 ## In progress
 - B. Engine removal sweep: B.1 audit done; no further external engine refs in registry/default selection (remaining refs are adapters/migration/labels).
 - E.1 E2E hang diagnosis: Batches 1-3 completed; no single-file hang observed. Full-suite open-handle diagnosis remains a CI-level task (command provided).
+- E.1 finding: `server/delta-context.e2e.test.ts` hangs (timeout 60s) and is a primary open-handle candidate.
 - C. Rebrand drift fix: no remaining pre-rename env prefixes or Cyrillic look-alikes found; envelope.test.ts green.
 - D. Restore deleted API tests.
 - E. E2E hang diagnosis.
