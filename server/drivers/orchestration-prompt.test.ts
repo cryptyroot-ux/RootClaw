@@ -11,9 +11,12 @@ process.env.ROOTCLAW_RETRY_SCALE ??= "0.001";
 const executed = vi.hoisted(() => [] as string[]);
 vi.mock("./workspace-tools.ts", async (importOriginal) => {
   const original = await importOriginal<typeof import("./workspace-tools.ts")>();
-  return { ...original, executeWorkspaceTool: (...args: Parameters<typeof original.executeWorkspaceTool>) => {
-    executed.push(`${args[0]} ${String(args[1].path)}`);
-    return original.executeWorkspaceTool(...args);
+  return { ...original, createWorkspaceProvider: (...args: Parameters<typeof original.createWorkspaceProvider>) => {
+    const provider = original.createWorkspaceProvider(...args);
+    return { ...provider, execute: async (...executeArgs: Parameters<typeof provider.execute>) => {
+      executed.push(`${executeArgs[0]} ${String(executeArgs[1].path)}`);
+      return provider.execute(...executeArgs);
+    } };
   } };
 });
 

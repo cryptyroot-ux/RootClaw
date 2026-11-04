@@ -46,6 +46,7 @@ export interface ChatContextDeps {
   plan: TurnPlan | null;
   planHint: string;
   requestsLeft: () => number;
+  consumeRequest: () => void;
   driverKind: string;
   currentRound?: number;
 }
@@ -87,6 +88,7 @@ export class ChatContext {
   private get plan() { return this.deps.plan; }
   private get planHint() { return this.deps.planHint; }
   private get requestsLeft() { return this.deps.requestsLeft; }
+  private get consumeRequest() { return this.deps.consumeRequest; }
 
   sizeNow(): number {
     return this.calibration.apply(estimateRequestTokens(this.messages, this.tools.definitions, this.model, this.adapter.protocol));
@@ -131,6 +133,7 @@ export class ChatContext {
           const maxTokens = Math.min(outputReserve(this.window), room ?? DEFAULT_OUTPUT_TOKENS);
           if (maxTokens < minOutputTokens(this.window)) throw new Error("no room left for a summary");
           if (this.requestsLeft() <= 1) throw new Error("no request left for a summary");
+          this.consumeRequest();
           const { text, reasoning } = await this.adapter.complete({
             messages: [{ role: "user", content: prompt }],
             model: summaryModel,

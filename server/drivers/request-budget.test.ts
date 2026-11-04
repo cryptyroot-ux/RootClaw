@@ -63,8 +63,8 @@ const done = (events: Event[]) => events.find((event) => event.type === "turn.co
 
 describe("per-turn request budget (engine.maxTurnRequests)", () => {
   it("stops a tool-calling model at exactly 5 requests, a compaction summary included, with a final answer that may not call tools", async () => {
-    const files = { "a.log": log(1, 70), "b.log": log(2, 70), "c.log": log(3, 70) };
-    const { bodies, lines, events } = await runTurn("budget-5", files, { compactAt: 8_000, keepExchanges: 1, maxTurnRequests: 5 });
+    const files = { "a.log": log(1, 150), "b.log": log(2, 150), "c.log": log(3, 150) };
+    const { bodies, lines, events } = await runTurn("budget-5", files, { compactAt: 14_000, keepExchanges: 1, maxTurnRequests: 5 });
     expect(bodies).toHaveLength(5);
     expect(bodies.filter((body) => !body.stream)).toHaveLength(1);
     expect(bodies.slice(0, 4).filter((body) => body.stream).every((body) => body.tools?.length)).toBe(true);

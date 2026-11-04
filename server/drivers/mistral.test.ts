@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ASK_USER_TOOL_DEFINITION } from "../../shared/ask-question.ts";
 import { recordEvents } from "../testing/events.ts";
 import { MistralDriver } from "./mistral.ts";
+import { systemInfoDefinitions } from "./system-info-tools.ts";
 
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
@@ -76,7 +77,7 @@ describe("Mistral provider", () => {
     expect(completed).toMatchObject({ ok: true, usage: { input: 15, output: 2 } });
     expect(JSON.parse(String(request?.body))).toEqual({ model: "mistral-large-latest", stream: true,
       messages: [{ role: "user", content: "hello" }],
-      ...(tools === false ? {} : { tools: [ASK_USER_TOOL_DEFINITION], parallel_tool_calls: true }) });
+      ...(tools === false ? {} : { tools: [ASK_USER_TOOL_DEFINITION, ...systemInfoDefinitions()], parallel_tool_calls: true }) });
     recorder.stop(); await instance.dispose();
   });
 

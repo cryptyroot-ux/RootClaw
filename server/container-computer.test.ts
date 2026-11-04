@@ -1053,7 +1053,7 @@ describe("setupCommands", () => {
 
   it("publishes only the password-protected viewer and only on loopback", () => {
     const command = setupCommands("podman", "linux").run!;
-    expect(command).toContain("-p 127.0.0.1:6080:6901");
+    expect(command).toContain(`-p 127.0.0.1:${SHARED_LOCAL_VM_TARGET.viewerPort}:6901`);
     expect(command).not.toContain(" -p 6080:6901");
     expect(command).not.toContain("5900");
     expect(command).toContain("VNC_PW=CHANGE_ME");

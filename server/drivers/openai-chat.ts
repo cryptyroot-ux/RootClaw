@@ -710,7 +710,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           planning,
           plan,
           planHint,
-          requestsLeft,
+          requestsLeft, consumeRequest: () => { requests++; },
           driverKind: options.driverKind,
         });
         for (let round = 0; round < MAX_CHAT_ROUNDS; round++) {
@@ -1234,7 +1234,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           if (planOnly) {
             planOnlyRounds++;
             // With nothing real to batch a status update with, or after a second status-only round, withdraw the tool.
-            const realTools = tools.definitions.some((definition) => ![UPDATE_PLAN_TOOL, ASK_USER_TOOL, READ_TOOL_OUTPUT_TOOL, LOAD_TOOLS_TOOL].includes(definition.function.name));
+            const realTools = tools.definitions.some((definition) => ![UPDATE_PLAN_TOOL, ASK_USER_TOOL, READ_TOOL_OUTPUT_TOOL, LOAD_TOOLS_TOOL, SYSTEM_INFO_TOOL].includes(definition.function.name));
             if (!realTools || planOnlyRounds >= 2) dropPlanTool();
           }
         }

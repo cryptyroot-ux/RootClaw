@@ -3,6 +3,7 @@ import { ASK_USER_TOOL_DEFINITION } from "../../shared/ask-question.ts";
 import { recordEvents } from "../testing/events.ts";
 import { compactBudget, contextWindowFor, shouldCompact } from "../context-budget.ts";
 import { CerebrasDriver } from "./cerebras.ts";
+import { systemInfoDefinitions } from "./system-info-tools.ts";
 
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
@@ -74,7 +75,7 @@ describe("Cerebras provider", () => {
     expect(completed).toMatchObject({ ok: true, usage: { input: 12, output: 3 } });
     expect(JSON.parse(String(request?.body))).toEqual({ model: "gpt-oss-120b", stream: true,
       stream_options: { include_usage: true },
-      messages: [{ role: "user", content: "hello" }], tools: [ASK_USER_TOOL_DEFINITION], parallel_tool_calls: true });
+      messages: [{ role: "user", content: "hello" }], tools: [ASK_USER_TOOL_DEFINITION, ...systemInfoDefinitions()], parallel_tool_calls: true });
     recorder.stop(); await instance.dispose();
   });
 

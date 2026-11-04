@@ -13,7 +13,7 @@ import type { OpenAIChatMessage } from "./openai-chat.ts";
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 const MODEL = "plan-local";
-const WINDOW = 8_192;
+const WINDOW = 16_384;
 const log = (lines: number) => Array.from({ length: lines }, (_, i) => `2026-10-31T01:${String(i % 60).padStart(2, "0")}:00Z INFO worker-${i % 13} handled req-${String(i).padStart(5, "0")} in ${(i * 37) % 900}ms`).join("\n");
 // Eight dense step titles (the most a plan holds): about a thousand tokens once pinned.
 const STEPS = Array.from({ length: 8 }, (_, i) => ({ id: `s${i + 1}`, title: `s${i}${"a1b2c3".repeat(20)}`.slice(0, 120), status: i === 0 ? "doing" as const : "pending" as const }));

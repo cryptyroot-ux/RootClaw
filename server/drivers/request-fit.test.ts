@@ -46,7 +46,7 @@ async function send(text: string, window: number, opts: { workspace?: boolean } 
 
 describe("a pasted message that fits", () => {
   it("is sent whole even when it is over half the budget", async () => {
-    const window = 16_384;
+    const window = 32_768;
     const paste = words(Math.floor(turnInputBudget(window) * 0.6));
     const { sent, ok } = await send(paste, window, { workspace: true });
     expect(ok).toBe(true);

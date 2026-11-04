@@ -101,20 +101,22 @@ describe("native engine features (fake provider)", () => {
       [{ name: "read_file", input: { path: "one.txt" } }],
       [{ name: "read_file", input: { path: "two.txt" } }],
       [{ name: "read_file", input: { path: "three.txt" } }],
+      [{ name: "read_file", input: { path: "four.txt" } }],
     ]);
     writeFileSync(join(f.cwd, "one.txt"), big("alpha"));
     writeFileSync(join(f.cwd, "two.txt"), big("bravo"));
-    writeFileSync(join(f.cwd, "three.txt"), "small\n");
+    writeFileSync(join(f.cwd, "three.txt"), big("charlie"));
+    writeFileSync(join(f.cwd, "four.txt"), big("delta"));
     const summaryFile = join(f.cwd, "..", "summary.txt");
-    writeFileSync(summaryFile, "## Goal\n- read the three files\n## Facts\n- one.txt and two.txt were read");
+    writeFileSync(summaryFile, "## Goal\n- read the four files\n## Facts\n- one.txt, two.txt, three.txt and four.txt were read");
     f.fake.set({ textFile: summaryFile });
-    await f.start({ approvalMode: "full", turnContext: { compactAt: 4_500 } } as Partial<SendTurnInput>);
+    await f.start({ approvalMode: "full", turnContext: { compactAt: 8_000, keepExchanges: 1 } } as Partial<SendTurnInput>);
     const done = await f.completed();
     expect(done).toMatchObject({ type: "turn.completed" });
     expect(f.fake.requests.some((body) => body.stream === false && JSON.stringify(body.messages).includes("You compact"))).toBe(true);
     const last = JSON.stringify(f.streamed().at(-1)?.messages);
     expect(last).not.toContain("alpha alpha alpha alpha");
-    expect(f.streamed().length).toBe(4);
+    expect(f.streamed().length).toBe(5);
   });
 
   it("cards web_fetch and web_search in Ask mode, and a denied fetch never reaches the network", async () => {
@@ -246,10 +248,10 @@ describe("compaction far over budget", () => {
     // folding one small batch per pass left the request stuck over budget round after round.
     const f = await fixture([], files.map((k) => [{ name: "read_file", input: { path: `${k}.log` } }]));
     for (const k of files) writeFileSync(join(f.cwd, `${k}.log`), Array.from({ length: 120 }, (_, i) => `${k} line ${i} INFO worker handled request req-${i} ok`).join("\n"));
-    // Above the floor compaction cannot go under: the tool definitions (~3.3k estimated tokens) plus the one kept
-    // exchange (a ~2.3k-token log read).
-    const budget = 7_000;
-    await f.start({ approvalMode: "full", turnContext: { compactAt: budget } } as Partial<SendTurnInput>);
+    // The smallest tail includes the fixed system/tool prompt and one kept read. Leave room above that floor for the
+    // 25% regrowth guard, so the test checks the post-compaction request rather than an impossible budget.
+    const budget = 12_500;
+    await f.start({ approvalMode: "full", turnContext: { compactAt: budget, keepExchanges: 1 } } as Partial<SendTurnInput>);
     await f.completed();
     const all = f.fake.requests;
     const firstSummary = all.findIndex((body) => body.stream === false && JSON.stringify(body.messages).includes("You compact"));
