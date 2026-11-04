@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { RuntimeEvent } from "./contracts.ts";
+import { outwardCommandActionsForToolCall } from "../shared/outbound.ts";
 import { classifyError } from "./drivers/retry.ts";
 import type { Message } from "./store.ts";
 import { toolDetailPreview } from "./tool-summary.ts";
@@ -163,6 +164,22 @@ describe("outwardActions", () => {
     const input = toolDetailPreview({ computer_id: "computer-1", action: "run_command", command: `${"x".repeat(6_500)} && git push origin release` });
     expect(input).toContain("preview shortened");
     expect(outwardActions([call("agents_shared_computer", true, { input, summary: "git push origin release" })])).toEqual(["git push"]);
+  });
+
+  it("uses structured action evidence when the command and its action are both beyond display limits", () => {
+    const args = { computer_id: "computer-1", command: `${"x".repeat(6_500)} && git push origin release`, action: "run_command" };
+    const input = toolDetailPreview(args);
+    const actionEvidence = outwardCommandActionsForToolCall("agents_shared_computer", args);
+    const storedTool = {
+      ...call("agents_shared_computer", true, { input, summary: args.command.slice(0, 1_000) }).tool,
+      outwardActions: actionEvidence,
+    } as unknown as NonNullable<Message["tool"]>;
+
+    expect(input).toContain("preview shortened");
+    expect(args.command.slice(0, 1_000)).not.toContain("git push");
+    expect(actionEvidence).toEqual(["git push"]);
+    expect(outwardActions([row(storedTool)])).toEqual(["git push"]);
+    expect(outwardCommandActionsForToolCall("agents_shared_computer", { ...args, action: "read_file" })).toEqual([]);
   });
 
   it("counts nothing that failed, and nothing but a bot's tool rows", () => {

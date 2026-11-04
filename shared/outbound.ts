@@ -101,6 +101,38 @@ export function isOutboundTool(name: string): boolean {
   return tokens.some((token) => CREATE_VERBS.has(token)) && tokens.some((token) => SENT_NOUNS.has(token));
 }
 
+export type OutwardCommandAction = "git commit" | "git push" | "pay" | "payment" | "charge" | "refund" | "transfer";
+
+const OUTWARD_COMMAND_ACTIONS: ReadonlySet<string> = new Set(["git commit", "git push", "pay", "payment", "charge", "refund", "transfer"]);
+const COMMAND_SHELL_TOOL = /^(?:(?:mcp__[\w-]+?__|agents__|agents_))?(?:bash|shell|exec|run_command|execute_command|run_shell_command|run_terminal_cmd|terminal|vm_exec|COMPOSIO_REMOTE_BASH_TOOL)$/i;
+const COMMAND_SHARED_COMPUTER_TOOL = /^(?:(?:mcp__[\w-]+?__|agents__|agents_))?shared_computer$/i;
+const GIT_OUTWARD = /\bgit\s+(commit|push)\b/gi;
+const MONEY_OUTWARD = /\b(pay|payment|charge|refund|transfer)\b/gi;
+
+export const isShellCommandToolName = (name: string): boolean => COMMAND_SHELL_TOOL.test(name);
+export const isSharedComputerToolName = (name: string): boolean => COMMAND_SHARED_COMPUTER_TOOL.test(name);
+
+export function isOutwardCommandAction(value: unknown): value is OutwardCommandAction {
+  return typeof value === "string" && OUTWARD_COMMAND_ACTIONS.has(value);
+}
+
+export function outwardCommandActionsFromText(command: string): OutwardCommandAction[] {
+  const actions = new Set<OutwardCommandAction>();
+  for (const git of command.matchAll(GIT_OUTWARD)) actions.add(`git ${git[1]!.toLowerCase()}` as OutwardCommandAction);
+  for (const money of command.matchAll(MONEY_OUTWARD)) actions.add(money[1]!.toLowerCase() as OutwardCommandAction);
+  return [...actions];
+}
+
+/** Classify from the complete tool arguments, before the display preview cuts long commands. */
+export function outwardCommandActionsForToolCall(name: string, args: unknown): OutwardCommandAction[] {
+  if (!isRecord(args)) return [];
+  const input = isRecord(args.arguments) ? { ...args.arguments, ...args } : args;
+  if (isSharedComputerToolName(name)) {
+    if (input.action !== "run_command") return [];
+  } else if (!isShellCommandToolName(name)) return [];
+  return typeof input.command === "string" ? outwardCommandActionsFromText(input.command) : [];
+}
+
 /** The stored shape, or null when the value is not one. */
 export function normalizeOutboundPolicy(value: unknown): OutboundPolicy | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;

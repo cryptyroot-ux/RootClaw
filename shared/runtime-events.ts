@@ -1,7 +1,9 @@
 /** Canonical runtime-event shapes, as they ride the live wire and the
  * inspector log. */
 import type { AskQuestion } from "./ask-question.ts";
+import type { OutwardCommandAction } from "./outbound.ts";
 import type { LiveStep, TurnProgressFields } from "./turn-progress.ts";
+export type { OutwardCommandAction } from "./outbound.ts";
 
 export type DriverKind = string;
 export type InstanceId = string;
@@ -110,6 +112,8 @@ export type RuntimeEvent = RuntimeEventBase &
          * 200 characters, for the chip and the Verify card. Absent for calls
          * that run no command (a Read, a fetch). */
         summary?: string;
+        /** Normalized outward actions from the complete command, before the display preview is truncated. */
+        outwardActions?: OutwardCommandAction[];
         /** Bounded, redacted display preview; never raw tool arguments. */
         input?: string;
         /** What the call works on, read from `summary` and `input` as the event passes the bus. */

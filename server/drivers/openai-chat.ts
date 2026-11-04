@@ -12,7 +12,7 @@ import { newEventId, newId } from "../contracts.ts";
 import { ASK_USER_TOOL, ASK_USER_TOOL_DEFINITION, askQuestionSummary, parseAskQuestions, questionChoices } from "../../shared/ask-question.ts";
 import { allowsTool, parseToolScope } from "../../shared/tool-scope.ts";
 import { redactSecretsInText } from "../redact.ts";
-import { toolDetailPreview } from "../tool-summary.ts";
+import { toolActionEvidence, toolDetailPreview, type OutwardCommandAction } from "../tool-summary.ts";
 import { ChatToolSessionError, mountChatTools, trimmedToolsNotice, type ChatToolDefinition, type ChatToolSession, type ChatToolResult } from "./chat-mcp-tools.ts";
 import { assertImageTransport, chatImageBudget, chatToolImages, chatUserContent, pruneScreenshots, type ChatContentPart } from "./chat-images.ts";
 import { promptHalves, volatileContextNote, withContextNote } from "./prompt-split.ts";
@@ -1070,13 +1070,13 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             let started = false;
             let fatal: Error | undefined, title = call.function.name;
             // A call that runs a command carries it as the activity's summary, so the run card can list its steps.
-            let command: string | undefined;
-            const commandSummary = () => command ? { summary: command } : {};
+            let command: string | undefined, outwardActions: OutwardCommandAction[] = [];
+            const commandSummary = () => ({ ...(command ? { summary: command } : {}), ...(outwardActions.length ? { outwardActions } : {}) });
             try {
               let args: unknown;
               try { args = JSON.parse(call.function.arguments); }
               catch { throw new ChatProtocolError("tool arguments are not complete JSON"); }
-              const named = object(args)?.command;
+              const named = object(args)?.command; outwardActions = toolActionEvidence(call.function.name, args);
               if (typeof named === "string" && named.trim()) command = safeText(named.trim()).slice(0, 1_000);
               if (!object(args)) throw new ChatProtocolError("tool arguments must be a JSON object");
               const inputPreview = preview(args);

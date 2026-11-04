@@ -1,5 +1,5 @@
 import { errorTranscript } from "../shared/client-cancel.ts";
-import { isOutboundTool } from "../shared/outbound.ts";
+import { isOutboundTool, isOutwardCommandAction, isSharedComputerToolName, isShellCommandToolName, outwardCommandActionsFromText } from "../shared/outbound.ts";
 import type { RuntimeEvent } from "./contracts.ts";
 import { buildTurnDigest, digestTools } from "./digest.ts";
 import { stopCause } from "./drivers/engine-errors.ts";
@@ -87,10 +87,6 @@ export function stoppedTurnOutcome(input: {
   return said ? `${parts.join(" ")}\nIts last message, quoted: ${JSON.stringify(said)}` : parts.join(" ");
 }
 
-const SHELL_TOOL = /^(?:(?:mcp__[\w-]+?__|agents__|agents_))?(?:bash|shell|exec|run_command|execute_command|run_shell_command|run_terminal_cmd|terminal|vm_exec|COMPOSIO_REMOTE_BASH_TOOL)$/i;
-const SHARED_COMPUTER_TOOL = /^(?:(?:mcp__[\w-]+?__|agents__|agents_))?shared_computer$/i;
-const GIT_OUTWARD = /\bgit\s+(commit|push)\b/g;
-const MONEY_OUTWARD = /\b(pay|payment|charge|refund|transfer)\b/gi;
 const ERROR_CHARS = 200;
 const ERRORS_KEPT = 3;
 
@@ -177,18 +173,18 @@ export function outwardActions(rows: readonly Message[]): string[] {
     const tool = row.tool!;
     if (tool.ok === false) continue;
     if (isOutboundTool(tool.name)) { add(tool.name); continue; }
+    for (const action of tool.outwardActions ?? []) if (isOutwardCommandAction(action)) add(action);
     let command: string;
-    if (SHELL_TOOL.test(tool.name)) {
+    if (isShellCommandToolName(tool.name)) {
       command = [tool.input, tool.summary].filter((text): text is string => typeof text === "string").join("\n");
-    } else if (SHARED_COMPUTER_TOOL.test(tool.name)) {
+    } else if (isSharedComputerToolName(tool.name)) {
       const input = parsedToolInput(tool.input);
       const action = input?.action ?? partialTopLevelStringField(tool.input, "action");
       if (action !== "run_command") continue;
       command = [typeof input?.command === "string" ? input.command : undefined, tool.summary]
         .filter((text): text is string => typeof text === "string").join("\n");
     } else continue;
-    for (const git of command.matchAll(GIT_OUTWARD)) add(`git ${git[1]}`);
-    for (const money of command.matchAll(MONEY_OUTWARD)) add(money[1]!.toLowerCase());
+    for (const action of outwardCommandActionsFromText(command)) add(action);
   }
   return labels;
 }
