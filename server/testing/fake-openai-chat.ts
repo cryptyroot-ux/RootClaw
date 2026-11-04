@@ -34,6 +34,7 @@
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type Server, type ServerResponse } from "node:http";
 import { basename, join } from "node:path";
+import { ownTurnText } from "./room-handoff-agent.ts";
 
 export const FAKE_OPENAI_MODEL = "fixture-model";
 
@@ -46,7 +47,7 @@ export interface FakeScript {
   models?: string[]; dump?: string; prompts?: string; cost?: number;
   errorStatus?: number; errorMessage?: string;
   release?: string; finishGate?: string; setupFile?: string; setupDump?: string; textFile?: string; textDump?: string;
-  textRoutes?: Record<string, string>; textUsage?: Record<string, unknown> | null;
+  textRoutes?: Record<string, string>; textRoutesFile?: string; textUsage?: Record<string, unknown> | null;
 }
 
 export interface FakeOpenAiChat {
@@ -54,6 +55,8 @@ export interface FakeOpenAiChat {
   requests: Array<Record<string, unknown>>;
   /** Merge script fields for every later request. */
   set(script: FakeScript): void;
+  /** Override one bot's provider response mode without affecting other room members. */
+  setBotMode(botId: string, mode: FakeMode | undefined): void;
   stop(): Promise<void>;
 }
 
@@ -88,8 +91,11 @@ export function scriptFromEnv(env: NodeJS.ProcessEnv): FakeScript {
   const cost = Number(pick("COST"));
   if (pick("COST") && Number.isFinite(cost) && cost >= 0) script.cost = cost;
   const textRoutesRaw = pick("TEXT_ROUTES", "TEXT_ROUTES");
-  const textRoutes = json<unknown>(textRoutesRaw) ?? (textRoutesRaw && existsSync(textRoutesRaw) ? json<unknown>(readFileSync(textRoutesRaw, "utf8")) : undefined);
+  const inlineTextRoutes = json<unknown>(textRoutesRaw);
+  const textRoutesFile = inlineTextRoutes === undefined && textRoutesRaw && existsSync(textRoutesRaw) ? textRoutesRaw : undefined;
+  const textRoutes = inlineTextRoutes ?? (textRoutesFile ? json<unknown>(readFileSync(textRoutesFile, "utf8")) : undefined);
   if (textRoutes && typeof textRoutes === "object" && !Array.isArray(textRoutes)) script.textRoutes = textRoutes as Record<string, string>;
+  if (textRoutesFile) script.textRoutesFile = textRoutesFile;
   const textUsage = pick("TEXT_USAGE") ? json<Record<string, unknown> | null>(pick("TEXT_USAGE")) : undefined;
   if (textUsage !== undefined) script.textUsage = textUsage;
   for (const [key, name] of [["release", "RELEASE"], ["finishGate", "FINISH_GATE"], ["setupFile", "SETUP_FILE"], ["setupDump", "SETUP_DUMP"],
@@ -107,6 +113,9 @@ export async function startFakeOpenAiChat(env: NodeJS.ProcessEnv = {}): Promise<
   let replyIndex = 0;
   let streamedCount = 0;
   const unfinished = new Set<string>();
+  const activeRoomTurnIndexes = new Map<string, number>();
+  const nextRoomTurnIndexes = new Map<string, number>();
+  const botModes = new Map<string, FakeMode>();
   let evidenceChain = Promise.resolve();
   const writeEvidence = (path: string, row: unknown): Promise<void> => {
     const run = evidenceChain.then(() => { appendFileSync(path, `${JSON.stringify(row)}\n`); });
@@ -115,7 +124,15 @@ export async function startFakeOpenAiChat(env: NodeJS.ProcessEnv = {}): Promise<
   };
   const current = (): FakeScript => {
     const file = env.FAKE_CHAT_SCRIPT && existsSync(env.FAKE_CHAT_SCRIPT) ? json<FakeScript>(readFileSync(env.FAKE_CHAT_SCRIPT, "utf8")) ?? {} : {};
-    return { ...base, ...file, ...live };
+    const textRoutes = base.textRoutesFile
+      ? json<unknown>(existsSync(base.textRoutesFile) ? readFileSync(base.textRoutesFile, "utf8") : "")
+      : undefined;
+    return {
+      ...base,
+      ...(base.textRoutesFile ? { textRoutes: textRoutes && typeof textRoutes === "object" && !Array.isArray(textRoutes) ? textRoutes as Record<string, string> : {} } : {}),
+      ...file,
+      ...live,
+    };
   };
   const server: Server = createServer(async (req, res) => {
     let raw = "";
@@ -138,6 +155,7 @@ export async function startFakeOpenAiChat(env: NodeJS.ProcessEnv = {}): Promise<
     const last = messages.at(-1);
     const lastUser = [...messages].reverse().find((message) => message.role === "user");
     const prompt = textOf(lastUser?.content);
+    const currentTurnText = ownTurnText({ message: { content: prompt } });
     // The engine prefixes context to a user turn; the person's words are its last line.
     const userText = prompt.trim().split("\n").at(-1)?.trim() ?? "";
     const model = typeof body.model === "string" ? body.model : FAKE_OPENAI_MODEL;
@@ -166,9 +184,12 @@ export async function startFakeOpenAiChat(env: NodeJS.ProcessEnv = {}): Promise<
       messages, tools: body.tools ?? [], mcpConfig: { mcpServers: mountedServers(Array.isArray(body.tools) ? body.tools : []) } }, null, 2));
     if (newTurn && script.prompts && body.stream === true) appendFileSync(script.prompts, `${JSON.stringify(prompt)}\n`);
     const system = messages.filter((message) => message.role === "system").map((message) => textOf(message.content)).join("\n");
-    if (await replayRoomPlan({ env, res, body, messages, model, prompt, system, unfinished, writeEvidence })) return;
-    const route = script.routes?.find((entry) => { try { return new RegExp(entry.match).test(prompt); } catch { return false; } });
-    const mode = route?.mode ?? script.mode ?? "happy";
+    const botId = pathTail(fileLocations(system)?.sharedBotFolder);
+    const botMode = botId ? botModes.get(botId) : undefined;
+    if (await replayRoomPlan({ env, res, body, messages, model, prompt, currentTurnText, system, newTurn, botMode, unfinished,
+      activeTurnIndexes: activeRoomTurnIndexes, nextTurnIndexes: nextRoomTurnIndexes, writeEvidence })) return;
+    const route = script.routes?.find((entry) => { try { return new RegExp(entry.match).test(currentTurnText); } catch { return false; } });
+    const mode = botMode ?? route?.mode ?? script.mode ?? "happy";
     if (mode === "error") {
       res.writeHead(script.errorStatus ?? 500, { "content-type": "application/json" });
       res.end(JSON.stringify({ error: { message: script.errorMessage ?? "fixture provider error" } }));
@@ -230,6 +251,7 @@ export async function startFakeOpenAiChat(env: NodeJS.ProcessEnv = {}): Promise<
     url: `http://127.0.0.1:${address.port}/v1`,
     requests,
     set: (script) => { live = { ...live, ...script }; },
+    setBotMode: (botId, mode) => { if (mode) botModes.set(botId, mode); else botModes.delete(botId); },
     stop: () => new Promise<void>((resolve) => { server.closeAllConnections(); server.close(() => resolve()); }),
   };
 }
@@ -262,12 +284,18 @@ interface PlanTurn {
   resumeSteps?: PlanStep[];
   reply?: string;
   resumeReply?: string;
+  progress?: string;
+  progressAfterGate?: string;
   gateFile?: string;
   readyFile?: string;
   delayMs?: number;
   fail?: boolean;
+  failResumed?: boolean;
+  script?: ScriptEntry[];
+  byPrompt?: Array<{ promptIncludes: string; plan: PlanTurn }>;
   turns?: PlanTurn[];
 }
+interface ScriptEntry extends PlanTurn { key: string; match: string[]; repeat?: boolean }
 interface ToolDef { name: string; parameters: { properties?: Record<string, unknown>; additionalProperties?: boolean } }
 type ChatMessage = Message & { tool_call_id?: string; tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: string } }> };
 
@@ -315,7 +343,10 @@ function readPlan(path: string): Record<string, PlanTurn> | undefined {
 function countTurns(path: string, botId: string): number {
   if (!existsSync(path)) return 0;
   return readFileSync(path, "utf8").trim().split("\n").filter(Boolean).filter((line) => {
-    try { return (JSON.parse(line) as { botId?: string }).botId === botId; } catch { return false; }
+    try {
+      const row = JSON.parse(line) as { botId?: string; providerError?: boolean };
+      return row.botId === botId && row.providerError !== true;
+    } catch { return false; }
   }).length;
 }
 
@@ -387,7 +418,8 @@ function answeredCalls(messages: Message[]): Array<{ name: string; content: stri
  * reply is recorded, so a teammate's reply cannot land first. Returns false when this request is not a planned turn. */
 async function replayRoomPlan(input: {
   env: NodeJS.ProcessEnv; res: ServerResponse; body: Record<string, unknown>; messages: Message[];
-  model: string; prompt: string; system: string; unfinished: Set<string>;
+  model: string; prompt: string; currentTurnText: string; system: string; newTurn: boolean; botMode?: FakeMode; unfinished: Set<string>;
+  activeTurnIndexes: Map<string, number>; nextTurnIndexes: Map<string, number>;
   writeEvidence: (path: string, row: unknown) => Promise<void>;
 }): Promise<boolean> {
   const planPath = input.env.FAKE_CHAT_ROOM_PLAN || input.env.FAKE_CLAUDE_ROOM_PLAN;
@@ -398,27 +430,77 @@ async function replayRoomPlan(input: {
   const botId = pathTail(locations?.sharedBotFolder);
   const botPlan = botId ? plan[botId] : undefined;
   if (!botId || !botPlan || typeof botPlan !== "object") return false;
-  const { res, model, prompt, system, unfinished, writeEvidence } = input;
+  const promptBranch = botPlan.byPrompt?.find(({ promptIncludes }) => input.currentTurnText.includes(promptIncludes));
+  const selectedPlan = promptBranch?.plan ?? botPlan;
+  const { res, model, prompt, currentTurnText, system, newTurn, botMode, unfinished, activeTurnIndexes, nextTurnIndexes, writeEvidence } = input;
   const gone = () => res.destroyed || res.socket?.destroyed === true;
   const evidencePath = `${planPath}.evidence.jsonl`;
-  const turnIndex = countTurns(evidencePath, botId);
-  const indexed = Array.isArray(botPlan.turns);
-  const turn = indexed ? botPlan.turns![turnIndex] : botPlan;
+  const requestsPath = `${planPath}.requests.jsonl`;
+  const threadId = pathTail(locations?.currentWorkingFolder) ?? "";
+  const turnKey = `${botId}:${threadId}`;
+  const requestRows = existsSync(requestsPath) ? readFileSync(requestsPath, "utf8").trim().split("\n").filter(Boolean).flatMap((line) => {
+    try { return [JSON.parse(line) as { botId?: string; threadId?: string; turnIndex?: number; consumesPlan?: boolean }]; } catch { return []; }
+  }) : [];
+  const latestRequest = requestRows.findLast((row) => row.botId === botId && row.threadId === threadId);
+  let turnIndex: number;
+  if (newTurn) {
+    const next = nextTurnIndexes.get(botId) ?? Math.max(
+      requestRows.filter((row) => row.botId === botId && row.consumesPlan !== false).length,
+      countTurns(evidencePath, botId),
+    );
+    turnIndex = next;
+    const consumesPlan = botMode !== "error";
+    nextTurnIndexes.set(botId, next + (consumesPlan ? 1 : 0));
+    activeTurnIndexes.set(turnKey, turnIndex);
+    await writeEvidence(requestsPath, { botId, threadId, turnIndex, model, prompt, system, consumesPlan,
+      resumed: system.includes(SETTLED) || prompt.includes(SETTLED) });
+  } else {
+    turnIndex = activeTurnIndexes.get(turnKey) ?? latestRequest?.turnIndex ?? countTurns(evidencePath, botId);
+  }
+  if (botMode === "error") {
+    const resumed = system.includes(SETTLED) || prompt.includes(SETTLED);
+    await writeEvidence(evidencePath, { botId, turnIndex, threadId, model, prompt, system, evidence: [], resumed, providerError: true });
+    activeTurnIndexes.delete(turnKey);
+    if (!gone()) {
+      res.writeHead(500, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: { message: "Scripted API provider error" } }));
+    }
+    return true;
+  }
+  const previous = existsSync(evidencePath) ? readFileSync(evidencePath, "utf8").trim().split("\n").filter(Boolean).flatMap((line) => {
+    try { return [JSON.parse(line) as { botId?: string; planKey?: string }]; } catch { return []; }
+  }) : [];
+  const script = Array.isArray(selectedPlan.script) ? selectedPlan.script : undefined;
+  const used = new Set(previous.filter((row) => row.botId === botId && row.planKey).map((row) => row.planKey!));
+  const matches = (entry: ScriptEntry) => Array.isArray(entry.match) && entry.match.every((marker) => currentTurnText.includes(marker));
+  const entry = script?.find((candidate) => !candidate.repeat && !used.has(candidate.key) && matches(candidate))
+    ?? script?.find((candidate) => candidate.repeat && matches(candidate));
+  const indexed = Boolean(entry) || Array.isArray(selectedPlan.turns);
+  const turn = entry ?? (Array.isArray(selectedPlan.turns) ? selectedPlan.turns[turnIndex] : selectedPlan);
+  const resumed = system.includes(SETTLED) || prompt.includes(SETTLED);
+  if (script && !entry) {
+    await writeEvidence(evidencePath, { botId, turnIndex, threadId, system, prompt, evidence: [], resumed, unplanned: true });
+    activeTurnIndexes.delete(turnKey);
+    if (!gone()) {
+      res.writeHead(500, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: { message: `Unplanned fixture turn for ${botId}: ${prompt.slice(-300)}` } }));
+    }
+    return true;
+  }
   if (!turn) {
+    activeTurnIndexes.delete(turnKey);
     if (!gone()) {
       res.writeHead(500, { "content-type": "application/json" });
       res.end(JSON.stringify({ error: { message: `Unexpected extra fixture turn ${turnIndex} for ${botId}` } }));
     }
     return true;
   }
-  const resumed = system.includes(SETTLED) || prompt.includes(SETTLED);
   const steps = indexed ? turn.steps ?? [] : resumed ? turn.resumeSteps ?? [] : turn.steps ?? [];
   const reply = indexed ? turn.reply ?? `Result from ${botId}`
     : resumed ? turn.resumeReply ?? `Summary from ${botId}`
     : turn.reply ?? `Result from ${botId}`;
-  const threadId = pathTail(locations?.currentWorkingFolder) ?? "";
   const evidence: Array<{ step: PlanStep; response: { error?: { message: string }; result: { isError: boolean } } }> = [];
-  const row = () => ({ botId, turnIndex, threadId, system, prompt, evidence, resumed });
+  const row = () => ({ botId, turnIndex, threadId, ...(entry ? { planKey: entry.key } : {}), system, prompt, evidence, resumed });
   for (const call of answeredCalls(input.messages)) {
     if (call.name === "load_tools") continue;
     const step = steps[evidence.length];
@@ -428,6 +510,7 @@ async function replayRoomPlan(input: {
     if (Boolean(step.expectError) !== failed) {
       await writeEvidence(evidencePath, row());
       unfinished.delete(botId);
+        activeTurnIndexes.delete(turnKey);
       if (!gone()) {
         res.writeHead(500, { "content-type": "application/json" });
         res.end(JSON.stringify({ error: { message: "Unexpected tool outcome" } }));
@@ -437,6 +520,16 @@ async function replayRoomPlan(input: {
   }
   const frame = (delta: Record<string, unknown>, finish: string | null = null) =>
     `data: ${JSON.stringify({ id: "fixture", object: "chat.completion.chunk", model, choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`;
+  let streamStarted = false;
+  const startStream = () => {
+    if (streamStarted) return;
+    res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
+    streamStarted = true;
+  };
+  const writeText = (text: string) => {
+    startStream();
+    for (const piece of text.match(/.{1,12}/gs) ?? [text]) res.write(frame({ content: piece }));
+  };
   const sendCalls = (calls: Array<{ name: string; arguments: string }>, hold: boolean) => {
     if (hold) {
       unfinished.add(botId);
@@ -472,33 +565,40 @@ async function replayRoomPlan(input: {
     }
     return !gone();
   };
-  if (!(await waitUntil(() => ![...unfinished].some((id) => id !== botId), 20_000))) {
-    unfinished.delete(botId);
-    return true;
-  }
   if (turn.readyFile) writeFileSync(turn.readyFile, "ready");
+  if (turn.progress) writeText(turn.progress);
   if (turn.gateFile && !(await waitUntil(() => existsSync(turn.gateFile!)))) {
     unfinished.delete(botId);
+    activeTurnIndexes.delete(turnKey);
+    if (streamStarted && !gone()) res.end();
     return true;
   }
+  if (turn.progressAfterGate) writeText(turn.progressAfterGate);
   if (typeof turn.delayMs === "number" && turn.delayMs > 0) {
     const end = Date.now() + turn.delayMs;
     while (Date.now() < end) {
-      if (gone()) { unfinished.delete(botId); return true; }
+        if (gone()) { unfinished.delete(botId); activeTurnIndexes.delete(turnKey); return true; }
       await pause(Math.min(20, end - Date.now()));
     }
   }
   await writeEvidence(evidencePath, row());
   unfinished.delete(botId);
-  if (Boolean(turn.fail) && (indexed || !resumed)) {
+  activeTurnIndexes.delete(turnKey);
+  const fail = (Boolean(turn.fail) && (indexed || !resumed)) || (Boolean(turn.failResumed) && resumed);
+  if (fail) {
     if (!gone()) {
-      res.writeHead(500, { "content-type": "application/json" });
-      res.end(JSON.stringify({ error: { message: "Scripted addressed agent failure" } }));
+      if (streamStarted) res.end();
+      else {
+        res.writeHead(500, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: { message: turn.failResumed && resumed
+          ? "Scripted failure of a resumed turn"
+          : "Scripted addressed agent failure" } }));
+      }
     }
     return true;
   }
   if (gone()) return true;
-  res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
+  startStream();
   for (const piece of reply.match(/.{1,12}/gs) ?? [reply]) res.write(frame({ content: piece }));
   res.write(`data: ${JSON.stringify({ id: "fixture", object: "chat.completion.chunk", model, choices: [{ index: 0, delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } })}\n\n`);
   res.end("data: [DONE]\n\n");

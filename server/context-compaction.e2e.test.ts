@@ -76,7 +76,6 @@ it("compacts durably, keeps corrections and starts a fresh native session withou
   const before = await f.messages();
   const previousRequest = before.findLast(message => message.role === "user");
   expect(previousRequest.requestPending).toBe(false);
-  const oldSession = f.task().resumeCursors.openaiCompat;
   const turnsBefore = f.turns().length;
   const sibling = (await f.cli("new-bot", "--name", "Separate context")).bot;
   await expect(f.api(`/api/bots/${sibling.id}/compact`, { threadId: f.thread })).rejects.toThrow(/no such task/);

@@ -116,6 +116,10 @@ it("recalls, captures, suggests, forgets and tidies a bot's memory", async () =>
     expect(captured).not.toContain("Irani cafes");
     const journal = await api<{ entries: Array<{ actor: string; via: string }> }>(`/api/bots/${bot.id}/memory/journal`);
     expect(journal.entries.some((row) => row.actor === "upkeep" && row.via === "capture")).toBe(true);
+    await expect.poll(async () => {
+      const rows = await api<{ entries: Array<{ actor: string; via: string; path: string }> }>(`/api/bots/${bot.id}/memory/journal`);
+      return rows.entries.some((row) => row.actor === "bot" && row.via === "turn" && row.path.startsWith("memory/log/"));
+    }, { timeout: 10_000 }).toBe(true);
 
     writeFileSync(routes, JSON.stringify({
       [CAPTURE_MARKER]: JSON.stringify([

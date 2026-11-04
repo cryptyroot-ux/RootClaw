@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { RuntimeEvent } from "./contracts.ts";
 import { classifyError } from "./drivers/retry.ts";
 import type { Message } from "./store.ts";
+import { toolDetailPreview } from "./tool-summary.ts";
 import { TurnStops, outwardActions, stoppedTurnOutcome, turnEvidence } from "./turn-outcome.ts";
 
 const event = (fields: Record<string, unknown>): RuntimeEvent =>
@@ -140,6 +141,28 @@ describe("outwardActions", () => {
     expect(outwardActions([call("Bash", true, { input: "git log --oneline | grep pushed" })])).toEqual([]);
     expect(outwardActions([call("Read", true, { input: "docs/git push.md" })])).toEqual([]);
     expect(outwardActions([call("Bash", true, { input: "echo hi" })])).toEqual([]);
+  });
+
+  it("recognizes shell actions through native agent tools and shared-computer commands", () => {
+    expect(outwardActions([
+      call("agents_vm_exec", true, { input: JSON.stringify({ command: "git push origin release" }) }),
+      call("mcp__agents__vm_exec", true, { input: JSON.stringify({ command: "git commit -m release" }) }),
+      call("agents_shared_computer", true, { input: JSON.stringify({ action: "run_command", command: "git push origin release" }) }),
+      call("agents_shared_computer", true, { input: JSON.stringify({ action: "read_file", path: "git push.md" }) }),
+      call("agents_shared_computer", true, { input: JSON.stringify({ action: "read_file", path: "plan.md" }), summary: "git push origin release" }),
+    ])).toEqual(["git push", "git commit"]);
+  });
+
+  it("keeps top-level shared-computer fields beside an empty arguments object", () => {
+    expect(outwardActions([call("agents_shared_computer", true, { input: JSON.stringify({
+      computer_id: "computer-1", action: "run_command", command: "git push origin release", arguments: {},
+    }) })])).toEqual(["git push"]);
+  });
+
+  it("uses a run-command summary when the stored tool preview was shortened", () => {
+    const input = toolDetailPreview({ computer_id: "computer-1", action: "run_command", command: `${"x".repeat(6_500)} && git push origin release` });
+    expect(input).toContain("preview shortened");
+    expect(outwardActions([call("agents_shared_computer", true, { input, summary: "git push origin release" })])).toEqual(["git push"]);
   });
 
   it("counts nothing that failed, and nothing but a bot's tool rows", () => {

@@ -2,7 +2,7 @@
 // Extracted from server/drivers/openai-chat.ts to keep that file under the ratchet cap.
 import type { ChatToolSession } from "./chat-mcp-tools.ts";
 import type { ModelAdapter, OpenAIChatMessage } from "./model-adapter.ts";
-import type { TokenCalibration, TurnContextSettings, TurnPlan } from "./turn-context.ts";
+import type { TokenCalibration, TurnContextSettings } from "./turn-context.ts";
 import {
   compactTurnMessages,
   DEFAULT_OUTPUT_TOKENS,
@@ -15,7 +15,7 @@ import {
   outputReserve,
   windowMargin,
 } from "./turn-context.ts";
-import { pinPlan, unpinPlan } from "./plan-verify.ts";
+import { pinPlan, unpinPlan, type TurnPlan } from "./plan-verify.ts";
 import { appendCompaction } from "./compaction-journal.ts";
 import { syntheticToolCallId } from "./openai-chat-protocol.ts";
 import { DATA_DIR } from "../config.ts";

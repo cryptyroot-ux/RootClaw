@@ -129,7 +129,49 @@ Run: `pnpm typecheck && pnpm lint && pnpm test`
 
 Expected: all commands pass. Report any pre-existing or environment-related failures by command and test name; do not treat a partial test run as a green suite.
 
-Verification note: the changed-file lint passed. `pnpm typecheck` reported unchanged baseline errors in `chat-context.ts`, `context-compaction.e2e.test.ts`, `delta-context.e2e.test.ts`, and `workspace-tools.test.ts`; `pnpm lint` reported the unchanged unused `oldSession` in `context-compaction.e2e.test.ts`. `pnpm test` produced no output after about ten minutes and was interrupted (exit 130), so the full suite is inconclusive. The affected driver tests passed separately.
+Initial verification note (resolved in Task 3): changed-file lint passed, while `pnpm typecheck` and `pnpm lint` reported existing import/unused-binding errors. The first default-reporter `pnpm test` run showed no progress for about ten minutes and was interrupted (exit 130).
+
+---
+
+### Task 3: Close verification gaps and clear static-check blockers
+
+**User-approved follow-up:** explain the silent full-suite run, fix the existing project-wide typecheck/lint errors, add permanent invalid-input and unavailable-backend tests, and rerun verification.
+
+**Files:**
+- Modify: `server/drivers/chat-context.ts`, `server/drivers/openai-chat.ts`
+- Modify: `server/context-compaction.e2e.test.ts`, `server/delta-context.e2e.test.ts`, `server/drivers/workspace-tools.test.ts`
+- Test: `server/drivers/native-diagnostic-tools.test.ts`
+
+- [x] Add permanent invalid-argument tests for both diagnostic tools and assert no executable runs.
+- [x] Add direct no-backend tests for both diagnostic tools and assert no host executable runs.
+- [x] Correct `TurnPlan`/`RuntimeOptions` imports and export the internal runtime options type used by `ChatContext`.
+- [x] Remove the unused compaction session variable and dead delta-context wrapper; import `globToRegExp` from its owning module.
+- [x] Verify `pnpm typecheck` and `pnpm lint` both pass.
+- [x] Verify native driver/workspace tests: 162 passed, 1 skipped; diagnostic tests include the two new regressions.
+- [x] Verify representative compaction and delta-context cases, broker tests (103 passed), Electron relaunch test in isolation, and packaged-server smoke.
+- [x] Run Vitest with the verbose reporter. It progressed through 2,581 passing tests and 154 failing tests before interruption; representative `runtime-roots`, `delta-context`, `direct-coordination`, `group-local-vm`, and `cloud-lending-memory` failures were reproduced at base commit `a505e65`.
+- [x] Repair a race in the runtime-roots stall fixture: wait for the credential/sign-in tool activity to complete before advancing its synthetic clock. `server/runtime-roots.e2e.test.ts` now passes (14 passed, 1 skipped).
+- [x] Re-verify the directly changed driver, diagnostic, fake-chat, workspace, and turn-outcome tests: 6 files, 198 passed, 1 skipped; `pnpm typecheck` and `pnpm lint` both exit 0.
+- [ ] Full project test suite green. The current full Vitest result is not green; `pnpm test:electron` also had one 45-second timeout among 1,255 passing tests, while that Electron test passed alone in 0.85 seconds. Broker and packaged-server checks passed separately.
+
+**Full-suite diagnosis:** default Vitest reporting does not print individual test progress. Verbose reporting showed that the runner was progressing through long integration tests (including 30–90 second waits), not hanging. The suite also exposes baseline failures outside this safety change; the sampled controls at `a505e65` failed in the same way. Do not claim `pnpm test` passes.
+
+The latest full-project run remains non-green; the representative failures listed above were reproduced at the base commit. Do not claim `pnpm test` passes.
+
+---
+
+### Task 4: Incorporate final review findings and rerun affected coverage
+
+**Review follow-up:** two shared-computer action-evidence gaps and one fake-provider routing mismatch were reproduced with regression tests. The owner-capture positive control was retained in the native memory fixture because this checkout no longer registers the legacy `claudeAgent` provider used by the old Cloud `done` fixture.
+
+- [x] Preserve outer shared-computer `action`/`command` fields when the input also has `arguments`, and recover a complete action plus command summary when the persisted preview is truncated.
+- [x] Gate shared-computer command classification on `action: run_command`; cover `read_file` summaries that mention `git push` as a false-positive control.
+- [x] Match fake-provider room-plan and error routes against the current turn after removing recalled or replayed passages.
+- [x] Re-read file-backed one-shot text routes on every request; the memory-layer regression exposed stale capture candidates after a route file changed.
+- [x] Keep owner capture and turn-log journal assertions in the active native `memory-layer.e2e.test.ts` fixture; remove the impossible poll for the unregistered legacy `done` instance.
+- [x] Verify six focused suites: 198 passed, 1 skipped; memory-layer e2e: 1 passed; selected Cloud reopen-refusal e2e: 1 passed, 31 skipped.
+- [x] Re-run `pnpm typecheck`, `pnpm lint`, and `git diff --check`; all exit 0.
+- [ ] Full project suite green. Known sampled baseline failures remain outside this change.
 
 ---
 

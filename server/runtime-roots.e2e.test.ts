@@ -71,12 +71,17 @@ async function loopbackModel() {
     const lastUserAt = sent.messages.map((message) => message.role).lastIndexOf("user");
     const request = { lastUser: lastUserAt < 0 ? "" : text(sent.messages[lastUserAt]!), toolsSinceUser: sent.messages.slice(lastUserAt + 1).filter((message) => message.role === "tool").length };
     requests.push(request);
-    const tool = sent.tools?.find((candidate) => candidate.function.name.endsWith("list_bots"))?.function.name ?? "missing_tool";
+    const tool = sent.tools?.find((candidate) => candidate.function.name.endsWith("list_dir"))?.function.name ?? "missing_tool";
     const frame = (delta: unknown, finish: string | null) => `data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`;
     const reply = (out: ServerResponse, given: ModelAnswer) => {
       out.writeHead(200, { "content-type": "text/event-stream" });
-      out.end("say" in given ? frame({ content: given.say }, "stop") + "data: [DONE]\n\n"
-        : frame({ tool_calls: [{ index: 0, id: `call_${++callSerial}`, type: "function", function: { name: tool, arguments: "{}" } }] }, "tool_calls") + "data: [DONE]\n\n");
+      if ("say" in given) {
+        out.end(frame({ content: given.say }, "stop") + "data: [DONE]\n\n");
+        return;
+      }
+      const serial = ++callSerial;
+      const args = tool.endsWith("list_dir") ? { path: Array(serial).fill(".").join("/") } : {};
+      out.end(frame({ tool_calls: [{ index: 0, id: `call_${serial}`, type: "function", function: { name: tool, arguments: JSON.stringify(args) } }] }, "tool_calls") + "data: [DONE]\n\n");
     };
     reply(res, answer(request));
   });
@@ -96,12 +101,26 @@ async function composioStub() {
     let raw = "";
     for await (const chunk of req) raw += chunk;
     const reply = (status: number, body: unknown) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(body)); };
-    if (url.startsWith("/api/v3.1/connected_accounts") || url.startsWith("/api/v3/toolkits")) return reply(200, { items: [] });
+    if (url === "/mcp") {
+      const message = raw ? JSON.parse(raw) as { id?: unknown; method?: string } : {};
+      if (message.method === "notifications/initialized") { res.writeHead(202); res.end(); return; }
+      if (message.method === "initialize") return reply(200, { jsonrpc: "2.0", id: message.id, result: {
+        protocolVersion: "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "fixture-composio", version: "1" },
+      } });
+      if (message.method === "tools/list") return reply(200, { jsonrpc: "2.0", id: message.id, result: { tools: [] } });
+      return reply(200, { jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "unknown fixture method" } });
+    }
+    if (url.startsWith("/api/v3.1/connected_accounts")) return reply(200, { items: [...connected].map((slug) => ({
+      id: `ca_${slug}`, status: "ACTIVE", toolkit: { slug },
+    })) });
+    if (url.startsWith("/api/v3/toolkits")) return reply(200, { items: [...connected].map((slug) => ({
+      slug, is_no_auth: true, connected_account: { id: `ca_${slug}`, status: "ACTIVE" },
+    })) });
     if (url.startsWith("/api/v3.1/tool_router/session")) {
       if (req.headers["x-api-key"] !== "ak_good") return reply(401, { error: { message: "invalid project key" } });
       if (url.includes("/toolkits")) return reply(200, { items: [...connected].map((slug) => ({ slug, connected_account: { id: `ca_${slug}`, status: "ACTIVE" } })) });
       const body = raw ? JSON.parse(raw) : {};
-      return reply(201, { session_id: "trs_roots_test", mcp: { type: "http", url: "https://app.composio.dev/tool_router/v3/trs_roots_test/mcp" }, config: { user_id: body.user_id } });
+      return reply(201, { session_id: "trs_roots_test", mcp: { type: "http", url: `${origin}/mcp` }, config: { user_id: body.user_id } });
     }
     return reply(404, { error: "unknown" });
   });
@@ -110,7 +129,54 @@ async function composioStub() {
   return {
     env: { ROOTCLAW_COMPOSIO_API: `${origin}/api/v3.1`, ROOTCLAW_COMPOSIO_TOOLKITS_API: `${origin}/api/v3` },
     connect: (slug: string) => connected.add(slug),
-    close: async () => { stub.closeAllConnections(); await new Promise<void>((resolve) => stub.close(() => resolve())); },
+    close: async () => {
+      stub.closeAllConnections();
+      await new Promise<void>((resolve) => stub.close(() => resolve()));
+    },
+  };
+}
+
+async function outwardActionMcpStub() {
+  const sent: unknown[] = [];
+  let waiting = false;
+  const stub = createServer(async (req, res) => {
+    let raw = "";
+    for await (const chunk of req) raw += chunk;
+    const frame = raw ? JSON.parse(raw) as { id?: unknown; method?: string; params?: { name?: string; arguments?: unknown } } : {};
+    const reply = (body: unknown) => { res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify(body)); };
+    if (frame.method === "notifications/initialized") { res.writeHead(202); res.end(); return; }
+    if (frame.method === "initialize") return reply({ jsonrpc: "2.0", id: frame.id, result: {
+      protocolVersion: "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "fixture-outbound", version: "1" },
+    } });
+    if (frame.method === "tools/list") return reply({ jsonrpc: "2.0", id: frame.id, result: { tools: [
+      { name: "GMAIL_SEND_EMAIL", inputSchema: { type: "object", properties: { to: { type: "string" }, body: { type: "string" } }, required: ["to", "body"], additionalProperties: false } },
+      { name: "GMAIL_WAIT_FOR_GATE", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
+    ] } });
+    if (frame.method === "tools/call") {
+      if (frame.params?.name === "GMAIL_SEND_EMAIL") {
+        sent.push(frame.params.arguments ?? {});
+        return reply({ jsonrpc: "2.0", id: frame.id, result: { content: [{ type: "text", text: "fixture email sent" }], isError: false } });
+      }
+      if (frame.params?.name === "GMAIL_WAIT_FOR_GATE") {
+        waiting = true;
+        await new Promise<void>((resolve) => {
+          if (res.destroyed) return resolve();
+          res.once("close", resolve);
+        });
+        if (res.destroyed) return;
+        return reply({ jsonrpc: "2.0", id: frame.id, result: { content: [{ type: "text", text: "fixture gate opened" }] } });
+      }
+    }
+    return reply({ jsonrpc: "2.0", id: frame.id, error: { code: -32601, message: "unknown fixture method" } });
+  });
+  await new Promise<void>((resolve) => stub.listen(0, "127.0.0.1", resolve));
+  const url = `http://127.0.0.1:${(stub.address() as AddressInfo).port}/mcp`;
+  return {
+    url, sent: () => [...sent], waiting: () => waiting,
+    close: async () => {
+      stub.closeAllConnections();
+      await new Promise<void>((resolve) => stub.close(() => resolve()));
+    },
   };
 }
 
@@ -164,7 +230,13 @@ async function scenario(test: (f: any) => Promise<void>, options: { env?: Record
     const eventsOf = (id: string) => db().events.filter((event) => event.assignmentId === id).map((event) => event.kind);
     const turns = (botId?: string): any[] => jsonl(`${planPath}.evidence.jsonl`).filter((turn) => !botId || turn.botId === botId);
     const turn = (key: string) => turns().find((candidate) => candidate.planKey === key);
-    const own = (record: any): string => ownTurnText(record?.prompt);
+    const own = (record: any): string => {
+      const text = typeof record?.prompt === "string"
+        ? ownTurnText({ message: { content: record.prompt } })
+        : ownTurnText(record?.prompt);
+      const clock = text.lastIndexOf("Current time when this message was sent:");
+      return clock < 0 ? text : text.slice(clock);
+    };
     const body = (record: any): string => own(record).replace(/^\s*Current time when this message was sent:[^\n]*\n+/, "");
     const messages = async (threadId: string): Promise<any[]> => (await api("GET", `/api/threads/${threadId}/messages?limit=300`)).body.messages ?? [];
     const chips = async (threadId: string, text: string) => (await messages(threadId)).filter((message) => chipText(message).includes(text));
@@ -191,9 +263,17 @@ async function scenario(test: (f: any) => Promise<void>, options: { env?: Record
         body: JSON.stringify(body), signal: AbortSignal.timeout(20_000) });
       return { status: response.status, body: await response.json() as any };
     };
+    const testCapability = async (botId: string, threadId: string, kind: "connectors" | "memory" = "connectors") => {
+      const response = await fetch(`${url}/api/testing/internal-capability`, { method: "POST",
+        headers: { "content-type": "application/json", "x-rootclaw-test-capability": parentEnv.ROOTCLAW_TEST_INTERNAL_CAPABILITY_KEY ?? "" },
+        body: JSON.stringify({ botId, threadId, kind }), signal: AbortSignal.timeout(20_000) });
+      const result = await response.json() as { token?: string; error?: string };
+      expect(response.status, JSON.stringify(result)).toBe(201);
+      return result.token!;
+    };
     try {
       await test({ api, cli, clive, dataDir, script, say, db, roots, eventsOf, turns, turn, own, body, messages, chips, said, final, task,
-        gate, open, ready, settle, restart, token, internal });
+        gate, open, ready, settle, restart, token, internal, testCapability });
     } catch (error) {
       const summary = {
         turns: turns().map((record) => ({ planKey: record.planKey, unplanned: record.unplanned, threadId: record.threadId, own: own(record).slice(0, 700) })),
@@ -281,16 +361,19 @@ it("T2 parks the root on a credential card and runs it again with the provided l
 
 it("T3 parks the root on connector cards and runs it again once when both connect", async () => {
   const composio = await composioStub();
+  const testKey = "runtime-roots-connector-capability";
   try {
     await scenario(async (f) => {
-      expect((await f.api("PUT", "/api/config", { composio: { apiKey: "ak_good" } })).status).toBe(200);
+      const configured = await f.api("PUT", "/api/config", { composio: { apiKey: "ak_good" } });
+      expect(configured.status, JSON.stringify(configured.body)).toBe(200);
       f.script(f.clive.id,
         { key: "C1", match: [CONNECTED, "Gmail", "Slack"], reply: "T3-DONE: mail and chat are wired." },
         { key: "C0", match: ["T3-JOB"], readyFile: f.ready("c0"), gateFile: f.gate("c0"), reply: "T3-ASKED: connect the apps." });
       const job = f.clive.activeTaskId;
       await f.say(f.clive.id, job, "T3-JOB: wire up my mail and chat.");
       await expect.poll(() => existsSync(f.ready("c0")), { timeout: 30_000 }).toBe(true);
-      const requested = await f.internal("/api/internal/connectors/request", { botId: f.clive.id, threadId: job, resumeKey: "t3-resume-key-0001", items: ["gmail", "slack"] }, f.token("composio"));
+      const capability = await f.testCapability(f.clive.id, job, "connectors");
+      const requested = await f.internal("/api/internal/connectors/request", { botId: f.clive.id, threadId: job, resumeKey: "t3-resume-key-0001", items: ["gmail", "slack"] }, capability);
       expect(requested.status, JSON.stringify(requested.body)).toBe(200);
       const [gmail, slack] = requested.body.messageIds as string[];
       f.open("c0");
@@ -320,7 +403,7 @@ it("T3 parks the root on connector cards and runs it again once when both connec
       expect((await f.api("POST", `/api/bots/${f.clive.id}/connector-cards/${gmail}/resume`, { threadId: job })).body).toEqual({ resumed: true });
       await f.settle(500);
       expect(f.roots()[0].executions).toBe(2);
-    }, { env: composio.env });
+    }, { env: composio.env, fake: { ROOTCLAW_TEST_INTERNAL_CAPABILITY_KEY: testKey } });
   } finally {
     await composio.close();
   }
@@ -558,6 +641,7 @@ it("T8 Stop while parked on a credential card cancels the root and stops the car
 
 it("T8 Stop while parked on connector cards cancels the root and stops the cards; connecting afterwards is kept but starts nothing", async () => {
   const composio = await composioStub();
+  const testKey = "runtime-roots-t8-connector-capability";
   try {
     await scenario(async (f) => {
       expect((await f.api("PUT", "/api/config", { composio: { apiKey: "ak_good" } })).status).toBe(200);
@@ -565,7 +649,8 @@ it("T8 Stop while parked on connector cards cancels the root and stops the cards
       const job = f.clive.activeTaskId;
       await f.say(f.clive.id, job, "T8C-JOB: wire up my mail and chat.");
       await expect.poll(() => existsSync(f.ready("c0")), { timeout: 30_000 }).toBe(true);
-      const requested = await f.internal("/api/internal/connectors/request", { botId: f.clive.id, threadId: job, resumeKey: "t8-resume-key-0001", items: ["gmail", "slack"] }, f.token("composio"));
+      const capability = await f.testCapability(f.clive.id, job, "connectors");
+      const requested = await f.internal("/api/internal/connectors/request", { botId: f.clive.id, threadId: job, resumeKey: "t8-resume-key-0001", items: ["gmail", "slack"] }, capability);
       expect(requested.status, JSON.stringify(requested.body)).toBe(200);
       const [gmail, slack] = requested.body.messageIds as string[];
       f.open("c0");
@@ -587,7 +672,7 @@ it("T8 Stop while parked on connector cards cancels the root and stops the cards
       expect(f.roots()[0]).toMatchObject({ status: "cancelled", outcome: "stopped", executions: 1 });
       expect(f.turns(f.clive.id).map((record: any) => record.planKey)).toEqual(["C0"]);
       expect(await failedLines(f, job)).toEqual([]);
-    }, { env: composio.env });
+    }, { env: composio.env, fake: { ROOTCLAW_TEST_INTERNAL_CAPABILITY_KEY: testKey } });
   } finally {
     await composio.close();
   }
@@ -694,13 +779,21 @@ it("T10 parks a teammate's turn on its credential card, tells the Chief at once,
   expect(await f.chips(job, "needs your input")).toHaveLength(1);
 }), hostTimeout(90_000));
 
-it("T11 does not rerun a cut turn that already pushed: the root ends with what it did, said once", async () => {
-  const home = mkdtempSync(join(tmpdir(), "rootclaw-runtime-roots-outward-"));
+it("T11 does not rerun a cut turn after it sent an email through a native MCP tool", async () => {
+  const mcp = await outwardActionMcpStub();
   try {
     await scenario(async (f) => {
+      const added = await f.api("POST", "/api/mcp/servers", { name: "fixture", type: "http", url: mcp.url });
+      expect(added.status, JSON.stringify(added.body)).toBe(201);
+      const enabled = await f.api("PUT", "/api/mcp/servers/fixture", { type: "http", url: mcp.url, enabled: true });
+      expect(enabled.status, JSON.stringify(enabled.body)).toBe(200);
+      const grant = await f.api("PATCH", `/api/bots/${f.clive.id}`, { mcpServers: ["fixture"], approvalMode: "full" });
+      expect(grant.status, JSON.stringify(grant.body)).toBe(200);
       const job = f.clive.activeTaskId;
-      await f.say(f.clive.id, job, "T11-JOB: push the release branch.");
-      await expect.poll(async () => (await f.messages(job)).some((message: any) => message.kind === "activity" && message.tool?.name === "Bash" && message.tool.ok === true), { timeout: 30_000 }).toBe(true);
+      await f.say(f.clive.id, job, "T11-JOB: send the release notice to the team.");
+      await expect.poll(() => mcp.sent().length, { timeout: 30_000 }).toBe(1);
+      await expect.poll(() => mcp.waiting(), { timeout: 30_000 }).toBe(true);
+      await expect.poll(async () => (await f.messages(job)).some((message: any) => message.kind === "activity" && message.tool?.name === "fixture_gmail_send_email" && message.tool.ok === true), { timeout: 30_000 }).toBe(true);
       await expect.poll(() => f.roots()[0]?.status, { timeout: 15_000 }).toBe("running");
       const cut = f.roots()[0];
       await f.restart("SIGTERM");
@@ -708,12 +801,12 @@ it("T11 does not rerun a cut turn that already pushed: the root ends with what i
       const root = f.roots()[0];
       expect(root).toMatchObject({ id: cut.id, status: "failed", outcome: "interrupted", executions: 1, restarts: 0 });
       expect(root.outcomeDetail.startsWith(INTERRUPTED_OUTWARD), root.outcomeDetail).toBe(true);
-      expect(root.outcomeDetail).toContain("git push");
+      expect(root.outcomeDetail).toContain("fixture_gmail_send_email");
       expect(f.db().events.find((event: any) => event.assignmentId === root.id && event.kind === "restart_reconciled")?.detail).toBe("failed: outward action done");
       await expect.poll(async () => (await f.chips(job, INTERRUPTED_OUTWARD)).length, { timeout: 15_000 }).toBe(1);
       const line = (await f.chips(job, INTERRUPTED_OUTWARD))[0];
       expect(line.tool.name.startsWith("error: ")).toBe(true);
-      expect(line.tool.name).toContain("git push");
+      expect(line.tool.name).toContain("fixture_gmail_send_email");
       expect(await f.chips(job, RERUN_CHIP)).toHaveLength(0);
       expect(await f.chips(job, "turn interrupted — RootClaw restarted")).toHaveLength(0);
       await f.settle(1_500);
@@ -722,13 +815,13 @@ it("T11 does not rerun a cut turn that already pushed: the root ends with what i
       expect(await f.task(f.clive.id, job)).toMatchObject({ busy: false });
       const rows = (await f.messages(job)).filter((message: any) => !["digest", "compaction", "call"].includes(message.kind));
       expect(rows.at(-1).id).toBe(line.id);
-    }, { scripted: false, fake: {
-      FAKE_CLAUDE_MODE: "slow",
-      FAKE_CLAUDE_SLOW_FINISH_GATE: join(home, "finish"),
-      FAKE_CLAUDE_TOOL_CALLS: JSON.stringify([{ name: "Bash", input: { command: "git push origin release" }, ok: true, output: [{ type: "text", text: "pushed" }] }]),
-    } });
+      expect(mcp.sent()).toHaveLength(1);
+    }, { scripted: false, fake: { FAKE_CLAUDE_TOOL_CALLS: JSON.stringify([
+      { name: "fixture_gmail_send_email", input: { to: "release-team@fixture.test", body: "Release is ready." } },
+      { name: "fixture_gmail_wait_for_gate", input: {}, round: 1 },
+    ]) } });
   } finally {
-    rmSync(home, { recursive: true, force: true });
+    await mcp.close();
   }
 }, hostTimeout(90_000));
 
@@ -739,7 +832,7 @@ type StallFixture = {
   dataDir: string;
   clive: { id: string };
   roots(): Array<{ status: string; outcome?: string; executions: number; cards?: string[] }>;
-  messages(threadId: string): Promise<Array<{ id: string; kind: string; tool?: { name: string }; secret?: CardState; connector?: CardState; signIn?: CardState }>>;
+  messages(threadId: string): Promise<Array<{ id: string; kind: string; tool?: { name: string; ok?: boolean }; secret?: CardState; connector?: CardState; signIn?: CardState }>>;
   turns(botId: string): Array<{ planKey?: string }>;
   open(name: string): void;
   script(botId: string, ...entries: unknown[]): void;
@@ -748,6 +841,13 @@ type StallFixture = {
 };
 
 const stallOverCards = async (f: StallFixture, job: string, ids: string[]) => {
+  const pendingCards = (await f.messages(job)).filter((message) => ids.includes(message.id));
+  const completedTool = pendingCards.some((message) => message.kind === "secret") ? "agents_request_credential"
+    : pendingCards.some((message) => message.kind === "signin") ? "agents_request_sign_in" : undefined;
+  if (completedTool) {
+    await expect.poll(async () => (await f.messages(job)).some((message) => message.kind === "activity"
+      && message.tool?.name === completedTool && message.tool.ok === true), { timeout: 10_000 }).toBe(true);
+  }
   const marker = join(f.dataDir, "stall-turns");
   writeFileSync(marker, "now");
   try { await expect.poll(() => f.roots()[0]?.status, { timeout: 20_000 }).not.toBe("running"); } finally { rmSync(marker, { force: true }); }
@@ -755,8 +855,8 @@ const stallOverCards = async (f: StallFixture, job: string, ids: string[]) => {
   expect(f.roots()[0]!.cards).toBeUndefined();
   expect((await f.messages(job)).filter((message) => message.kind === "activity" && message.tool?.name.startsWith("error:")).map((message) => message.tool!.name))
     .toEqual(["error: no activity for 20 minutes — the turn was stopped"]);
-  const cards = (await f.messages(job)).filter((message) => ids.includes(message.id));
-  expect(cards.map((message) => (message.secret ?? message.connector ?? message.signIn)?.stopped)).toEqual(ids.map(() => true));
+  const settledCards = (await f.messages(job)).filter((message) => ids.includes(message.id));
+  expect(settledCards.map((message) => (message.secret ?? message.connector ?? message.signIn)?.stopped)).toEqual(ids.map(() => true));
 };
 
 const answerStartsNothing = async (f: StallFixture, job: string) => {
@@ -786,6 +886,7 @@ it("T12 a turn the watchdog stops after it posted a credential card fails as sta
 
 it("T12 a turn the watchdog stops after it posted connector cards fails as stalled and stops the cards", async () => {
   const composio = await composioStub();
+  const testKey = "runtime-roots-t12-connector-capability";
   try {
     await scenario(async (f) => {
       expect((await f.api("PUT", "/api/config", { composio: { apiKey: "ak_good" } })).status).toBe(200);
@@ -793,7 +894,8 @@ it("T12 a turn the watchdog stops after it posted connector cards fails as stall
       const job = f.clive.activeTaskId;
       await f.say(f.clive.id, job, "T12C-JOB: wire up my mail and chat.");
       await expect.poll(() => existsSync(f.ready("c0")), { timeout: 30_000 }).toBe(true);
-      const requested = await f.internal("/api/internal/connectors/request", { botId: f.clive.id, threadId: job, resumeKey: "t12-resume-key-0001", items: ["gmail", "slack"] }, f.token("composio"));
+      const capability = await f.testCapability(f.clive.id, job, "connectors");
+      const requested = await f.internal("/api/internal/connectors/request", { botId: f.clive.id, threadId: job, resumeKey: "t12-resume-key-0001", items: ["gmail", "slack"] }, capability);
       expect(requested.status, JSON.stringify(requested.body)).toBe(200);
       const [gmail, slack] = requested.body.messageIds as string[];
       await stallOverCards(f, job, [gmail, slack]);
@@ -804,7 +906,7 @@ it("T12 a turn the watchdog stops after it posted connector cards fails as stall
       await answerStartsNothing(f, job);
       const cards = (await f.messages(job)).filter((message: { kind: string }) => message.kind === "connector").map((message: { connector: CardState }) => message.connector);
       expect(cards.map((connector: CardState) => [connector.status, connector.stopped, connector.resumed])).toEqual([["connected", true, undefined], ["connected", true, undefined]]);
-    }, { env: composio.env, fake: STALL_CLOCK });
+    }, { env: composio.env, fake: { ...STALL_CLOCK, ROOTCLAW_TEST_INTERNAL_CAPABILITY_KEY: testKey } });
   } finally {
     await composio.close();
   }

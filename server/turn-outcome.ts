@@ -87,11 +87,84 @@ export function stoppedTurnOutcome(input: {
   return said ? `${parts.join(" ")}\nIts last message, quoted: ${JSON.stringify(said)}` : parts.join(" ");
 }
 
-const SHELL_TOOL = /^(?:mcp__[\w-]+?__)?(?:bash|shell|exec|run_command|execute_command|run_shell_command|run_terminal_cmd|terminal|COMPOSIO_REMOTE_BASH_TOOL)$/i;
+const SHELL_TOOL = /^(?:(?:mcp__[\w-]+?__|agents__|agents_))?(?:bash|shell|exec|run_command|execute_command|run_shell_command|run_terminal_cmd|terminal|vm_exec|COMPOSIO_REMOTE_BASH_TOOL)$/i;
+const SHARED_COMPUTER_TOOL = /^(?:(?:mcp__[\w-]+?__|agents__|agents_))?shared_computer$/i;
 const GIT_OUTWARD = /\bgit\s+(commit|push)\b/g;
 const MONEY_OUTWARD = /\b(pay|payment|charge|refund|transfer)\b/gi;
 const ERROR_CHARS = 200;
 const ERRORS_KEPT = 3;
+
+function parsedToolInput(input: unknown): Record<string, unknown> | undefined {
+  let value = input;
+  if (typeof value === "string") {
+    try { value = JSON.parse(value); } catch { return undefined; }
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  const nested = record.arguments;
+  return nested && typeof nested === "object" && !Array.isArray(nested) ? { ...nested as Record<string, unknown>, ...record } : record;
+}
+
+/** Recover a complete top-level string field from a JSON preview cut before its closing brace. */
+function partialTopLevelStringField(input: unknown, field: string): string | undefined {
+  if (typeof input !== "string") return undefined;
+  const source = input.trimStart();
+  if (!source.startsWith("{")) return undefined;
+  let index = 1;
+  const whitespace = () => { while (/\s/u.test(source[index] ?? "")) index++; };
+  const readString = (): string | undefined => {
+    if (source[index] !== "\"") return undefined;
+    const start = index++;
+    let escaped = false;
+    while (index < source.length) {
+      const ch = source[index]!;
+      index++;
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === "\"") {
+        try { return JSON.parse(source.slice(start, index)) as string; } catch { return undefined; }
+      }
+    }
+    return undefined;
+  };
+  const skipValue = (): boolean => {
+    whitespace();
+    if (source[index] === "\"") return readString() !== undefined;
+    let depth = 0, inString = false, escaped = false;
+    for (; index < source.length; index++) {
+      const ch = source[index]!;
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (ch === "\\") escaped = true;
+        else if (ch === "\"") inString = false;
+        continue;
+      }
+      if (ch === "\"") inString = true;
+      else if (ch === "{" || ch === "[") depth++;
+      else if (ch === "}" || ch === "]") {
+        if (depth === 0) return true;
+        depth--;
+        if (depth === 0) { index++; return true; }
+      } else if (ch === "," && depth === 0) return true;
+    }
+    return depth === 0 && !inString;
+  };
+  for (;;) {
+    whitespace();
+    if (source[index] === "}" || index >= source.length) return undefined;
+    const name = readString();
+    if (name === undefined) return undefined;
+    whitespace();
+    if (source[index] !== ":") return undefined;
+    index++;
+    whitespace();
+    if (name === field) return readString();
+    if (!skipValue()) return undefined;
+    whitespace();
+    if (source[index] !== ",") return undefined;
+    index++;
+  }
+}
 
 const toolRows = (rows: readonly Message[]) =>
   rows.filter((row) => row.role === "bot" && row.kind === "activity" && row.tool !== undefined);
@@ -104,8 +177,16 @@ export function outwardActions(rows: readonly Message[]): string[] {
     const tool = row.tool!;
     if (tool.ok === false) continue;
     if (isOutboundTool(tool.name)) { add(tool.name); continue; }
-    if (!SHELL_TOOL.test(tool.name)) continue;
-    const command = [tool.input, tool.summary].filter((text): text is string => typeof text === "string").join("\n");
+    let command: string;
+    if (SHELL_TOOL.test(tool.name)) {
+      command = [tool.input, tool.summary].filter((text): text is string => typeof text === "string").join("\n");
+    } else if (SHARED_COMPUTER_TOOL.test(tool.name)) {
+      const input = parsedToolInput(tool.input);
+      const action = input?.action ?? partialTopLevelStringField(tool.input, "action");
+      if (action !== "run_command") continue;
+      command = [typeof input?.command === "string" ? input.command : undefined, tool.summary]
+        .filter((text): text is string => typeof text === "string").join("\n");
+    } else continue;
     for (const git of command.matchAll(GIT_OUTWARD)) add(`git ${git[1]}`);
     for (const money of command.matchAll(MONEY_OUTWARD)) add(money[1]!.toLowerCase());
   }

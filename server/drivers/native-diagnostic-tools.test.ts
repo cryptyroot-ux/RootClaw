@@ -127,4 +127,34 @@ process.exit(result.status ?? 1);`);
       processToolCommandScope({ action: "list", filter })?.command,
     ]);
   });
+
+  it("rejects invalid arguments before invoking host executables", async () => {
+    const f = temporaryCommands();
+    executable(f.bin, "nslookup", recordArguments("nslookup"));
+    executable(f.bin, "kill", recordArguments("kill"));
+    const signal = new AbortController().signal;
+
+    await expect(executeNetworkTool({ action: "dns", target: "   " }, undefined, f.root, signal))
+      .rejects.toThrow(/non-empty "target"/);
+    await expect(executeProcessTool({ action: "kill", pid: 0 }, undefined, f.root, signal))
+      .rejects.toThrow(/positive integer "pid"/);
+
+    expect(existsSync(f.argumentsFile)).toBe(false);
+  });
+
+  it("returns direct unavailable-backend errors without launching host executables", async () => {
+    const f = temporaryCommands();
+    executable(f.bin, "nslookup", recordArguments("nslookup"));
+    executable(f.bin, "ps", recordArguments("ps"));
+    const signal = new AbortController().signal;
+
+    const network = await executeNetworkTool({ action: "dns", target: "localhost" }, undefined, undefined, signal);
+    const processes = await executeProcessTool({ action: "list" }, undefined, undefined, signal);
+
+    expect(network.ok).toBe(false);
+    expect(network.text).toContain("No backend available");
+    expect(processes.ok).toBe(false);
+    expect(processes.text).toContain("No backend available");
+    expect(existsSync(f.argumentsFile)).toBe(false);
+  });
 });

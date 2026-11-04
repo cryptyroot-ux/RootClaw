@@ -75,15 +75,20 @@ it("sends cross-bot work onward without resuming either sender", () => fixture(a
   const leadSend = () => sendOf(f.lead.id);
   await expect.poll(leadSend, { timeout: 15_000 }).toBeTruthy();
   expect(leadSend().isError).toBeFalsy();
-  const sentThread = (botId: string) => JSON.parse(sendOf(botId).content[0].text).receipts[0].threadId;
+  expect(sendOf(f.chief.id)?.isError).toBeFalsy();
+  const sentThread = (botId: string, text: string) => f.nodes().find((node: any) => node.botId === botId && node.text === text)?.threadId;
+  const leadThreadId = sentThread(f.lead.id, "Own the release and send final QA to Reviewer.");
+  const qaThreadId = sentThread(f.specialist.id, "Own final release QA.");
+  expect(leadThreadId).toBeTruthy();
+  expect(qaThreadId).toBeTruthy();
   await expect.poll(async () => (await f.api("/api/bots?messages=0")).bots
     .find((bot: any) => bot.id === f.specialist.id)?.busy, { timeout: 15_000 }).toBe(true);
   await f.api(`/api/bots/${f.lead.id}`, { peers: [] }, "PATCH");
   writeFileSync(gate, "finish detached work");
   await expect.poll(() => f.evidence().filter((turn: any) => turn.botId === f.specialist.id).length, { timeout: 15_000 }).toBe(1);
   const bots = (await f.api("/api/bots")).bots;
-  const leadThread = bots.find((bot: any) => bot.id === f.lead.id).tasks.find((task: any) => task.threadId === sentThread(f.chief.id));
-  const qaThread = bots.find((bot: any) => bot.id === f.specialist.id).tasks.find((task: any) => task.threadId === sentThread(f.lead.id));
+  const leadThread = bots.find((bot: any) => bot.id === f.lead.id).tasks.find((task: any) => task.threadId === leadThreadId);
+  const qaThread = bots.find((bot: any) => bot.id === f.specialist.id).tasks.find((task: any) => task.threadId === qaThreadId);
   expect(leadThread.title).toBe("Own the release and send final QA to Reviewer.");
   expect(qaThread.title).toBe("Own final release QA.");
   const qaMessages = await f.messages(qaThread.threadId);

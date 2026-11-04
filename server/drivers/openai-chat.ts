@@ -76,7 +76,7 @@ function fetchPastLimit(url: string, init: RequestInit): Promise<Response> {
   return fetchWithoutLimits(url, { ...init, dispatcher: unlimitedAgent } as Parameters<typeof fetchWithoutLimits>[1]) as unknown as Promise<Response>;
 }
 
-interface RuntimeOptions<Config> {
+export interface RuntimeOptions<Config> {
   input: DriverCreateInput<Config>;
   /** The wire protocol for each round; unset means OpenAI Chat Completions at `apiUrl` (requestBody, reasoning…). */
   adapter?: ModelAdapter;

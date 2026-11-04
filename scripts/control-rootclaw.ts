@@ -218,6 +218,8 @@ export function verificationServerEnvironment(parentEnv: NodeJS.ProcessEnv, data
   if (parentEnv.ROOTCLAW_TEST_STALL_CLOCK === "1") childEnv.ROOTCLAW_TEST_STALL_CLOCK = "1";
   // The first-reply rescue's delay in ms, so a check need not sit through 20 s of silence.
   if (/^\d{1,6}$/.test(parentEnv.ROOTCLAW_FIRST_REPLY_NOTICE_MS ?? "")) childEnv.ROOTCLAW_FIRST_REPLY_NOTICE_MS = parentEnv.ROOTCLAW_FIRST_REPLY_NOTICE_MS;
+  // Test-only capability minting for end-to-end checks that must invoke an internal route directly.
+  if (parentEnv.ROOTCLAW_TEST_INTERNAL_CAPABILITY_KEY) childEnv.ROOTCLAW_TEST_INTERNAL_CAPABILITY_KEY = parentEnv.ROOTCLAW_TEST_INTERNAL_CAPABILITY_KEY;
   // How long a tool call may hold the person's message unread, in ms, so a check need not sit through a minute.
   if (/^\d{1,6}$/.test(parentEnv.ROOTCLAW_PERSON_FIRST_MS ?? "")) childEnv.ROOTCLAW_PERSON_FIRST_MS = parentEnv.ROOTCLAW_PERSON_FIRST_MS;
   // How often @devs reports are asked about, in ms, so a check sees a fix arrive without an hour's wait.
