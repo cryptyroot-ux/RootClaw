@@ -48,6 +48,7 @@ import { processToolDefinitions, createProcessProvider } from "./process-tools.t
 import { packageToolDefinitions, createPackageProvider } from "./package-tools.ts";
 import { networkToolDefinitions, createNetworkProvider } from "./network-tools.ts";
 import { fileWatchToolDefinitions, createFileWatchProvider } from "./file-watch-tools.ts";
+import { nativeRuntimeToolBudget } from "./native-tool-budget.ts";
 import { findProvider, type CapabilityProvider } from "./capability-provider.ts";
 import { runToolBatch } from "./tool-batch.ts";
 import { requestTooLargeMessage } from "../../shared/request-too-large.ts";
@@ -572,26 +573,11 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         const computerExec = turn.integrations?.computerExec;
         const planVerify = turn.planVerify ?? { mode: "off" as const, maxVerifyRetries: 0 };
         const planVerifyOn = planVerify.mode !== "off" && options.tools !== false;
-        const reservedNativeNames = new Set<string>();
-        const reserveNative = (definitions: readonly ChatToolDefinition[]) => {
-          for (const definition of definitions) {
-            const name = definition.function.name;
-            if (allowsTool(scope, { kind: "native", name })) reservedNativeNames.add(name);
-          }
-        };
-        if (questionAllowed) reservedNativeNames.add(ASK_USER_TOOL);
-        if (options.tools !== false) {
-          if (workspace) reserveNative(WORKSPACE_TOOL_DEFINITIONS);
-          if (computerExec) reserveNative(computerExecDefinitions());
-          reserveNative(systemInfoDefinitions());
-          if (computerExec || workspace) {
-            reserveNative([...processToolDefinitions(), ...packageToolDefinitions(), ...networkToolDefinitions(), ...fileWatchToolDefinitions()]);
-          }
-          if (ctx.offloadDir) reservedNativeNames.add(READ_TOOL_OUTPUT_TOOL);
-          if (planVerifyOn) reservedNativeNames.add(UPDATE_PLAN_TOOL);
-        }
         tools = await mountChatTools(options.tools === false ? undefined : turn.integrations, abort.signal, options.computerUse, scope, turn.mcpCallTimeoutMs,
-          toolSchemaProfileFor({ url: options.apiUrl, model }), Math.max(1, reservedNativeNames.size));
+          toolSchemaProfileFor({ url: options.apiUrl, model }), nativeRuntimeToolBudget(scope, {
+            toolsEnabled: options.tools !== false, workspaceEnabled: Boolean(workspace), computerExecEnabled: Boolean(computerExec),
+            offloadOutput: Boolean(ctx.offloadDir), planVerifyOn,
+          }));
         for (const { server, reason } of tools.skipped) {
           emit({ ...base(turn.threadId, turnId), type: "runtime.notice", message: `MCP server "${server}" was skipped for this turn: ${safeText(reason)}` });
         }
@@ -658,15 +644,10 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         if (computerExec) {
           nativeProviders.push(createComputerExecProvider(computerExec));
         }
-        if (options.tools !== false) {
-          nativeProviders.push(createSystemInfoProvider());
-          if (computerExec || workspace) {
-            nativeProviders.push(createProcessProvider(computerExec, workspace?.root));
-            nativeProviders.push(createPackageProvider(computerExec, workspace?.root));
-            nativeProviders.push(createNetworkProvider(computerExec, workspace?.root));
-            nativeProviders.push(createFileWatchProvider(computerExec, workspace?.root));
-          }
-        }
+        if (options.tools !== false) nativeProviders.push(createSystemInfoProvider());
+        if (options.tools !== false && (computerExec || workspace)) nativeProviders.push(
+          createProcessProvider(computerExec, workspace?.root), createPackageProvider(computerExec, workspace?.root),
+          createNetworkProvider(computerExec, workspace?.root), createFileWatchProvider(computerExec, workspace?.root));
 
         // RootClaw's own tool schemas wait behind load_tools until the model needs them (server/drivers/tool-loading.ts).
         const lazy = options.tools !== false && lazyToolsEnabled() ? deferTools(tools.definitions, turn.threadId) : null;
