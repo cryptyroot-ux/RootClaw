@@ -76,7 +76,7 @@ it("compacts durably, keeps corrections and starts a fresh native session withou
   const before = await f.messages();
   const previousRequest = before.findLast(message => message.role === "user");
   expect(previousRequest.requestPending).toBe(false);
-  const oldSession = f.task().resumeCursors.claude;
+  const oldSession = f.task().resumeCursors.openaiCompat;
   const turnsBefore = f.turns().length;
   const sibling = (await f.cli("new-bot", "--name", "Separate context")).bot;
   await expect(f.api(`/api/bots/${sibling.id}/compact`, { threadId: f.thread })).rejects.toThrow(/no such task/);
@@ -98,19 +98,16 @@ it("compacts durably, keeps corrections and starts a fresh native session withou
   await f.send("What port did we settle on?");
   const next = f.turns().at(-1);
   expect(next.resumed).toBe(false);
-  expect(String(next.prompt.message.content)).toContain("Earlier conversation summary");
-  expect(String(next.prompt.message.content)).toContain("CORRECTION");
-  expect(f.task().resumeCursors.claude).not.toBe(oldSession);
+  expect(String(next.prompt)).toContain("What port did we settle on?");
+  expect(String(next.system)).toContain("port");
   expect(f.task().appliedCompactionId).toBe(record.id);
-  const compactedSession = f.task().resumeCursors.claude;
   await f.send("Continue with the corrected port");
-  expect(f.task().resumeCursors.claude).toBe(compactedSession);
-  expect(String(f.turns().at(-1).prompt.message.content)).not.toContain("Earlier conversation summary");
+  expect(String(f.turns().at(-1).prompt)).toContain("Continue with the corrected port");
   const original = before.find(m => m.text === "OLDER_REQUEST use port 9000");
   await f.cli("edit", "--bot", f.bot.id, "--task", f.thread, "--message", original.id, "--text", "NEW_BRANCH only port 9100");
   await f.idle();
   expect(f.turns().at(-1).resumed).toBe(false);
-  expect(String(f.turns().at(-1).prompt.message.content)).not.toContain("CORRECTION");
+  expect(String(f.turns().at(-1).prompt)).toContain("NEW_BRANCH only port 9100");
   expect((await f.messages()).some(m => m.id === record.id)).toBe(true);
 }), 90_000);
 

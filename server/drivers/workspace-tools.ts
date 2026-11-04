@@ -7,6 +7,8 @@ import { basename, dirname, isAbsolute, join, parse as parsePath, relative, reso
 import { randomBytes } from "node:crypto";
 import { homedir, tmpdir } from "node:os";
 import type { ChatToolCallView, ChatToolDefinition, ChatToolResult } from "./chat-mcp-tools.ts";
+import { changeEcho, countOf, lineOf, WRITE_ECHO_LINES, WRITE_ECHO_MAX_LINES } from "./file-echo.ts";
+import { globToRegExp, SKIP_DIRS, walk, ripgrep } from "./search-utils.ts";
 import { executeGitTool, GIT_COMMIT_TOOL, GIT_READ_TOOLS, GIT_TOOL_DEFINITIONS } from "./workspace-git.ts";
 import { executeWebTool, WEB_TOOL_DEFINITIONS, type WebOptions } from "./web-tools.ts";
 
@@ -81,7 +83,6 @@ const READ_MAX_BYTES = 10 * 1024 * 1024;
 const GREP_MAX_LINES = 500;
 const GLOB_MAX = 1_000;
 const LIST_MAX = 1_000;
-const SKIP_DIRS = new Set([".git", "node_modules", ".hg", ".svn", "dist", "build", ".next", ".cache"]);
 
 const str = (description: string) => ({ type: "string", description });
 const int = (description: string, extra: Record<string, unknown> = {}) => ({ type: "integer", description, ...extra });
@@ -661,38 +662,6 @@ function writeAtomic(path: string, content: string, paths: Paths) {
   try { renameSync(temp, target); } catch (error) { try { unlinkSync(temp); } catch {} throw error; }
 }
 
-const ECHO_LINES = 40;
-const ECHO_BYTES = 2_048;
-const ECHO_CONTEXT = 3;
-const WRITE_ECHO_LINES = 20;
-const WRITE_ECHO_MAX_LINES = 200;
-
-/** Numbered lines of `text` around the changed line ranges (0-based, inclusive), so the model need not read it back.
- * At most `maxLines` lines and 2 KB; a cut ends in "[…]", a skipped stretch between changes shows as "…". */
-function changeEcho(text: string, changed: Array<[number, number]>, context = ECHO_CONTEXT, maxLines = ECHO_LINES): string {
-  const lines = text.split("\n");
-  if (lines.at(-1) === "") lines.pop();
-  const shown = new Set<number>();
-  for (const [start, end] of changed) {
-    for (let at = Math.max(0, start - context); at <= Math.min(lines.length - 1, end + context); at++) shown.add(at);
-  }
-  const order = [...shown].sort((a, b) => a - b);
-  const width = String((order.at(-1) ?? 0) + 1).length;
-  const out: string[] = [];
-  let bytes = 0;
-  let count = 0;
-  for (const [index, at] of order.entries()) {
-    const line = `${index && at > order[index - 1]! + 1 ? "…\n" : ""}${String(at + 1).padStart(width)}\t${lines[at]}`;
-    if (count === maxLines || bytes + Buffer.byteLength(line) + 1 > ECHO_BYTES - 4) return [...out, "[…]"].join("\n");
-    out.push(line);
-    bytes += Buffer.byteLength(line) + 1;
-    count++;
-  }
-  return out.join("\n");
-}
-
-const lineOf = (text: string, index: number) => countOf(text.slice(0, index), "\n");
-
 function writeFileTool(args: Record<string, unknown>, paths: Paths): ChatToolResult {
   const path = paths.resolve(args.path, "write");
   if (existsSync(path) && statSync(path).isDirectory()) return fail(`${paths.display(path)} is a folder.`);
@@ -703,12 +672,6 @@ function writeFileTool(args: Record<string, unknown>, paths: Paths): ChatToolRes
   const echo = lines - (content.endsWith("\n") ? 1 : 0) <= WRITE_ECHO_MAX_LINES ? changeEcho(content, [[0, lines - 1]], 0, WRITE_ECHO_LINES) : "";
   return ok(`${existed ? "Overwrote" : "Created"} ${paths.display(path)} (${Buffer.byteLength(content)} bytes, ${lines} lines).${echo ? `\n${echo}` : ""}`);
 }
-
-const countOf = (text: string, needle: string) => {
-  let count = 0;
-  for (let at = text.indexOf(needle); at !== -1; at = text.indexOf(needle, at + needle.length)) count++;
-  return count;
-};
 
 function editFileTool(args: Record<string, unknown>, paths: Paths): ChatToolResult {
   const path = paths.resolve(args.path, "write");
@@ -866,47 +829,6 @@ function applyPatchTool(args: Record<string, unknown>, paths: Paths): ChatToolRe
   }
   const echoes = writes.flatMap((write) => write.content && write.changed?.length ? [`\n\n${paths.display(write.path)}:\n${changeEcho(write.content, write.changed)}`] : []);
   return ok(`Patch applied:\n${writes.filter((write) => write.action !== "moved").map((write) => `- ${paths.display(write.path)} (${write.action})`).join("\n")}${echoes.join("")}`);
-}
-
-// ---------- grep / glob / list ----------
-
-export function globToRegExp(pattern: string): RegExp {
-  let out = "";
-  for (let i = 0; i < pattern.length; i++) {
-    const c = pattern[i]!;
-    if (c === "*") {
-      if (pattern[i + 1] === "*") {
-        i++;
-        if (pattern[i + 1] === "/") { i++; out += "(?:.*/)?"; } else out += ".*";
-      } else out += "[^/]*";
-    } else if (c === "?") out += "[^/]";
-    else if (c === "{") {
-      const end = pattern.indexOf("}", i);
-      if (end === -1) { out += "\\{"; continue; }
-      out += `(?:${pattern.slice(i + 1, end).split(",").map((part) => part.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*")).join("|")})`;
-      i = end;
-    } else out += c.replace(/[.+^${}()|[\]\\]/g, "\\$&");
-  }
-  return new RegExp(`^${out}$`);
-}
-
-function* walk(dir: string, signal?: AbortSignal): Generator<string> {
-  let entries: import("node:fs").Dirent[];
-  try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
-  for (const entry of entries) {
-    if (signal?.aborted) return;
-    const full = join(dir, entry.name);
-    if (entry.isDirectory()) { if (!SKIP_DIRS.has(entry.name)) yield* walk(full, signal); }
-    else if (entry.isFile()) yield full;
-  }
-}
-
-let rgPath: string | null | undefined;
-function ripgrep(): string | null {
-  if (process.env.ROOTCLAW_NO_RG === "1") return null;
-  if (rgPath !== undefined) return rgPath;
-  const probe = spawnSync("rg", ["--version"], { encoding: "utf8" });
-  return (rgPath = probe.status === 0 ? "rg" : null);
 }
 
 async function grepTool(args: Record<string, unknown>, paths: Paths, signal: AbortSignal): Promise<ChatToolResult> {

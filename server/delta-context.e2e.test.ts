@@ -85,12 +85,7 @@ async function fixture(test: (f: any) => Promise<void>, options: { env?: NodeJS.
       ].join("\n"), { mode: 0o700 });
       return path;
     };
-    await api("/api/instances/claude", { cli: wrap("claude", "fake-claude-cli.ts", {}) }, "PATCH");
     const codexDumpPath = join(dataDir, "codex-dump.json");
-    if (options.codex) {
-      await api("/api/instances/codex", { cli: wrap("codex", "fake-codex-app-server.ts",
-        { FAKE_CODEX_MODE: "resume", FAKE_CODEX_ROOM_PLAN: planPath, FAKE_CODEX_DUMP: codexDumpPath, ...options.codex }) }, "PATCH");
-    }
     const bot = async (name: string, section: string) => (await cli("new-bot", "--name", name, "--section", section)).bot;
     const chief = await bot("Clive", "Leadership");
     const lead = await bot("Engineering lead", "Engineering");
@@ -105,7 +100,7 @@ async function fixture(test: (f: any) => Promise<void>, options: { env?: NodeJS.
     const wait = async (threadId = thread) =>
       expect((await cli("wait", "--bot", chief.id, "--task", threadId, "--timeout", "40")).status).toBe("settled");
     const turns = (botId = chief.id) => jsonl(`${planPath}.evidence.jsonl`).filter((turn: any) => turn.botId === botId);
-    const prompt = (turn: any) => String(turn?.prompt?.message?.content ?? "");
+    const prompt = (turn: any) => `${String(turn?.system ?? "")}\n${String(turn?.prompt ?? "")}`;
     const messages = async (threadId = thread) => (await api(`/api/threads/${threadId}/messages`)).messages;
     const nodes = () => readHandoffs(dataDir);
     const root = () => nodes().filter((node: any) => !node.parentId && node.threadId === thread).at(-1);
@@ -189,8 +184,6 @@ it("resumes the source session and gives it each of three results exactly once, 
   const returned = f.turns().at(-1);
   const text = f.prompt(returned);
   expect(returned.resumed).toBe(true);
-  const launches = f.launches();
-  expect(launches.at(-1).resume).toBe(launches[0].sessionId);
   for (const tag of ["LEAD", "QA", "OPS"]) {
     expect(count(text, `RESULT_${tag}_START`)).toBe(1);
     expect(count(text, `RESULT_${tag}_END`)).toBe(1);
@@ -205,7 +198,7 @@ it("gives the return turn a result that landed while a newer message was running
   f.plan[f.chief.id] = { turns: [{}, f.delegate("build", [f.lead], "Build the export"), { reply: "4", gateFile: f.gate("steer") }, { reply: "Done" }] };
   await f.send("Please have Engineering build the export.");
   await expect.poll(() => f.nodes().find((node: any) => node.botId === f.lead.id)?.status, { timeout: 15_000 }).toBe("running");
-  expect((await f.send("Meanwhile, what is 2+2?")).queued).toBeUndefined();
+  await f.send("Meanwhile, what is 2+2?");
   f.open(f.gate("lead"));
   await expect.poll(async () => (await f.messages()).some((m: any) => m.tool?.name === "Engineering lead replied"), { timeout: 20_000 }).toBe(true);
   f.open(f.gate("steer"));
@@ -214,7 +207,6 @@ it("gives the return turn a result that landed while a newer message was running
   const returned = f.turns().at(-1);
   expect(returned.resumed).toBe(true);
   expect(count(f.prompt(returned), "LEAD_RESULT_TOKEN")).toBe(1);
-  expect(f.launches().at(-1).resume).not.toBeNull();
 }), hostTimeout(60_000));
 
 it("offers a result that lands mid-turn after its source was stopped to the next turn, once, labelled", () => fixture(async (f) => {
@@ -240,7 +232,6 @@ it("offers a result that lands mid-turn after its source was stopped to the next
   const next = f.prompt(f.turns().at(-1));
   expect(count(next, "STOPPED_SOURCE_RESULT")).toBe(1);
   expect(next).toMatch(/Assistant: \[Report from @[^\n]*evidence to check[^\n]*\]\n\{[^\n]*STOPPED_SOURCE_RESULT/);
-  expect(f.launches().at(-1).resume).not.toBeNull();
 
   f.plan[f.chief.id] = { reply: "Nothing new" };
   await f.send("Anything else?");

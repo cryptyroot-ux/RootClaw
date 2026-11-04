@@ -417,7 +417,7 @@ async function replayRoomPlan(input: {
     : turn.reply ?? `Result from ${botId}`;
   const threadId = pathTail(locations?.currentWorkingFolder) ?? "";
   const evidence: Array<{ step: PlanStep; response: { error?: { message: string }; result: { isError: boolean } } }> = [];
-  const row = () => ({ botId, turnIndex, threadId, system, prompt, evidence });
+  const row = () => ({ botId, turnIndex, threadId, system, prompt, evidence, resumed });
   for (const call of answeredCalls(input.messages)) {
     if (call.name === "load_tools") continue;
     const step = steps[evidence.length];
