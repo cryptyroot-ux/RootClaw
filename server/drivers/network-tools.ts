@@ -1,6 +1,3 @@
-// Native network diagnostics tool for RootClaw Native Engine.
-// Ping, curl, and DNS lookup. Runs on host (shell) or in a Cua container
-// (computer_exec backend). Mutating actions (curl POST) require approval.
 import type { ChatToolCallView, ChatToolDefinition, ChatToolResult } from "./chat-mcp-tools.ts";
 import { formatNativeCommandResult, runNativeCommand } from "./native-command.ts";
 import { commandForPosixShell } from "./shell-args.ts";
@@ -8,6 +5,7 @@ import { commandForPosixShell } from "./shell-args.ts";
 export const NETWORK_TOOL = "network_tool";
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_TIMEOUT_MS = 120_000;
+const COMPUTER_WORKSPACE = "/home/cua/workspace";
 
 const str = (description: string) => ({ type: "string", description });
 const int = (description: string, extra: Record<string, unknown> = {}) => ({ type: "integer", description, ...extra });
@@ -21,7 +19,7 @@ export const networkToolDefinitions = (): ChatToolDefinition[] => [
         "Network diagnostics: ping a host, curl a URL (GET), or look up DNS records. " +
         "Use 'ping' to check connectivity, 'curl' to fetch a URL, 'dns' to resolve a hostname. " +
         "Ping and DNS are read-only; curl requires approval (it can send data). " +
-        "Only available on Local VM, VPS, or host with shell access.",
+        "Only available on Local VM, VPS, or a host workspace.",
       parameters: {
         type: "object",
         properties: {
@@ -65,16 +63,28 @@ export function validateNetworkToolArgs(args: Record<string, unknown>): void {
   }
 }
 
-export function networkToolCommandScope(args: Record<string, unknown>): { command: string; cwd: string } | undefined {
+export function networkToolCommandScope(
+  args: Record<string, unknown>,
+  options: { platform?: NodeJS.Platform; cwd?: string } = {},
+): { command: string; cwd: string } | undefined {
   const action = String(args.action ?? "");
   const target = String(args.target ?? "").trim();
   const count = typeof args.count === "number" ? args.count : 3;
-  const invocation = networkInvocation(action, target, count);
-  return invocation ? { command: commandForPosixShell(invocation.executable, invocation.args), cwd: "/home/cua/workspace" } : undefined;
+  const platform = options.platform ?? "linux";
+  const invocation = networkInvocation(action, target, count, platform);
+  if (!invocation) return undefined;
+  const command = platform === "win32"
+    ? [invocation.executable, ...invocation.args].join(" ")
+    : commandForPosixShell(invocation.executable, invocation.args);
+  return { command, cwd: options.cwd ?? COMPUTER_WORKSPACE };
 }
 
-function networkInvocation(action: string, target: string, count: number): { executable: string; args: string[] } | undefined {
-  if (action === "ping") return { executable: "ping", args: ["-c", String(count), "-W", "5", target] };
+function networkInvocation(action: string, target: string, count: number, platform: NodeJS.Platform): { executable: string; args: string[] } | undefined {
+  if (action === "ping") {
+    return { executable: "ping", args: platform === "win32"
+      ? ["-n", String(count), "-w", "5000", target]
+      : ["-c", String(count), "-W", "5", target] };
+  }
   if (action === "curl") return { executable: "curl", args: ["-sS", "-L", "--max-time", "30", target] };
   if (action === "dns") return { executable: "nslookup", args: [target] };
   return undefined;
@@ -99,7 +109,10 @@ export function createNetworkProvider(
       return networkToolView(_name, args as Record<string, unknown>);
     },
     commandScope(_name, args) {
-      return networkToolCommandScope(args as Record<string, unknown>);
+      return networkToolCommandScope(args as Record<string, unknown>, {
+        platform: computerExec ? "linux" : process.platform,
+        cwd: computerExec ? COMPUTER_WORKSPACE : workspaceRoot ?? COMPUTER_WORKSPACE,
+      });
     },
     execute(_name, args, signal) {
       return executeNetworkTool(args as Record<string, unknown>, computerExec, workspaceRoot, signal);
@@ -121,15 +134,16 @@ export async function executeNetworkTool(
   const target = String(args.target).trim();
   const timeoutMs = typeof args.timeout_ms === "number" ? args.timeout_ms : DEFAULT_TIMEOUT_MS;
   const count = typeof args.count === "number" ? args.count : 3;
-  const invocation = networkInvocation(action, target, count)!;
 
   if (computerExec) {
+    const invocation = networkInvocation(action, target, count, "linux")!;
     const { executeComputerExec } = await import("./computer-exec-tools.ts");
     const command = commandForPosixShell(invocation.executable, invocation.args);
     return executeComputerExec({ command, timeout_ms: timeoutMs }, computerExec, signal);
   }
 
   if (workspaceRoot) {
+    const invocation = networkInvocation(action, target, count, process.platform)!;
     const output = await runNativeCommand(invocation.executable, invocation.args, workspaceRoot, timeoutMs, signal);
     return formatNativeCommandResult(output, "network_tool");
   }

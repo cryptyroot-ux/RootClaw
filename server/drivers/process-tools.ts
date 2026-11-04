@@ -1,7 +1,3 @@
-// Native process monitoring/management tool for RootClaw Native Engine.
-// Lists, kills, and monitors processes on the host (via shell) or in a
-// Cua container (via computer_exec backend). Mutating actions (kill) require
-// approval; list is read-only.
 import type { ChatToolCallView, ChatToolDefinition, ChatToolResult } from "./chat-mcp-tools.ts";
 import { formatNativeCommandResult, runNativeCommand } from "./native-command.ts";
 import { commandForPosixShell, quotePosixShellArg } from "./shell-args.ts";
@@ -9,6 +5,7 @@ import { commandForPosixShell, quotePosixShellArg } from "./shell-args.ts";
 export const PROCESS_TOOL = "process_tool";
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_TIMEOUT_MS = 120_000;
+const COMPUTER_WORKSPACE = "/home/cua/workspace";
 
 const str = (description: string) => ({ type: "string", description });
 const int = (description: string, extra: Record<string, unknown> = {}) => ({ type: "integer", description, ...extra });
@@ -21,7 +18,7 @@ export const processToolDefinitions = (): ChatToolDefinition[] => [
       description:
         "Manage processes on the bot's computer: list running processes or kill a process by PID. " +
         "Use 'list' to see what's running (optionally filter by name). Use 'kill' to terminate a process by PID. " +
-        "List is read-only; kill requires approval. Only available on Local VM, VPS, or host with shell access.",
+        "List is read-only; kill requires approval. Only available on Local VM, VPS, or a host workspace.",
       parameters: {
         type: "object",
         properties: {
@@ -65,15 +62,33 @@ export function validateProcessToolArgs(args: Record<string, unknown>): void {
   }
 }
 
-export function processToolCommandScope(args: Record<string, unknown>): { command: string; cwd: string } | undefined {
+export function processToolCommandScope(
+  args: Record<string, unknown>,
+  options: { platform?: NodeJS.Platform; cwd?: string } = {},
+): { command: string; cwd: string } | undefined {
   const action = String(args.action ?? "");
+  const platform = options.platform ?? "linux";
+  const invocation = processInvocation(action, args, platform);
+  if (!invocation) return undefined;
+  const filter = action === "list" && typeof args.filter === "string" ? args.filter.trim() : "";
+  const command = platform === "win32"
+    ? [invocation.executable, ...invocation.args].join(" ")
+    : action === "list" && filter
+      ? `ps aux | grep -F -i -- ${quotePosixShellArg(filter)} | grep -v grep`
+      : commandForPosixShell(invocation.executable, invocation.args);
+  return { command, cwd: options.cwd ?? COMPUTER_WORKSPACE };
+}
+
+function processInvocation(action: string, args: Record<string, unknown>, platform: NodeJS.Platform): { executable: string; args: string[] } | undefined {
   if (action === "list") {
-    const filter = typeof args.filter === "string" ? args.filter.trim() : "";
-    const command = `ps aux${filter ? ` | grep -F -i -- ${quotePosixShellArg(filter)} | grep -v grep` : ""}`;
-    return { command, cwd: "/home/cua/workspace" };
+    return platform === "win32"
+      ? { executable: "tasklist", args: ["/FO", "CSV", "/NH"] }
+      : { executable: "ps", args: ["aux"] };
   }
   if (action === "kill") {
-    return { command: `kill ${args.pid}`, cwd: "/home/cua/workspace" };
+    return platform === "win32"
+      ? { executable: "taskkill", args: ["/PID", String(args.pid), "/T"] }
+      : { executable: "kill", args: [String(args.pid)] };
   }
   return undefined;
 }
@@ -97,7 +112,10 @@ export function createProcessProvider(
       return processToolView(_name, args as Record<string, unknown>);
     },
     commandScope(_name, args) {
-      return processToolCommandScope(args as Record<string, unknown>);
+      return processToolCommandScope(args as Record<string, unknown>, {
+        platform: computerExec ? "linux" : process.platform,
+        cwd: computerExec ? COMPUTER_WORKSPACE : workspaceRoot ?? COMPUTER_WORKSPACE,
+      });
     },
     execute(_name, args, signal) {
       return executeProcessTool(args as Record<string, unknown>, computerExec, workspaceRoot, signal);
@@ -118,21 +136,18 @@ export async function executeProcessTool(
   const action = String(args.action);
   const timeoutMs = typeof args.timeout_ms === "number" ? args.timeout_ms : DEFAULT_TIMEOUT_MS;
   const filter = action === "list" && typeof args.filter === "string" ? args.filter.trim() : "";
-  const executable = action === "list" ? "ps" : "kill";
-  const commandArgs = action === "list" ? ["aux"] : [String(args.pid)];
 
   // Prefer computer_exec backend (VPS/Local VM) if available
   if (computerExec) {
     const { executeComputerExec } = await import("./computer-exec-tools.ts");
-    const command = action === "list" && filter
-      ? `ps aux | grep -F -i -- ${quotePosixShellArg(filter)} | grep -v grep`
-      : commandForPosixShell(executable, commandArgs);
-    return executeComputerExec({ command, timeout_ms: timeoutMs }, computerExec, signal);
+    const scope = processToolCommandScope(args, { platform: "linux" })!;
+    return executeComputerExec({ ...scope, timeout_ms: timeoutMs }, computerExec, signal);
   }
 
   // Run host processes directly; filtering captured output avoids a shell pipeline.
   if (workspaceRoot) {
-    const output = await runNativeCommand(executable, commandArgs, workspaceRoot, timeoutMs, signal);
+    const invocation = processInvocation(action, args, process.platform)!;
+    const output = await runNativeCommand(invocation.executable, invocation.args, workspaceRoot, timeoutMs, signal);
     if (filter) output.stdout = output.stdout.split(/\r?\n/)
       .filter((line) => line.toLowerCase().includes(filter.toLowerCase())).join("\n");
     return formatNativeCommandResult(output, "process_tool");

@@ -641,7 +641,6 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           }
         }
 
-        // These diagnostics need either a workspace for host execution or a computer-exec backend.
         if (options.tools !== false && (computerExec || workspace)) {
           const taken = new Set(tools.definitions.map((definition) => definition.function.name));
           for (const definition of [...processToolDefinitions(), ...packageToolDefinitions(), ...networkToolDefinitions(), ...fileWatchToolDefinitions()]) {

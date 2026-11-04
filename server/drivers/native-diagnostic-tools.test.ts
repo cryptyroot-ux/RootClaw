@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { executeNetworkTool, networkToolCommandScope } from "./network-tools.ts";
-import { executeProcessTool, processToolCommandScope } from "./process-tools.ts";
+import { createNetworkProvider, executeNetworkTool, networkToolCommandScope } from "./network-tools.ts";
+import { createProcessProvider, executeProcessTool, processToolCommandScope } from "./process-tools.ts";
 
 const cleanups: Array<() => void> = [];
 afterEach(() => {
@@ -47,6 +47,13 @@ function captured(path: string): Array<{ program: string; args: string[] }> {
   return readFileSync(path, "utf8").trim().split("\n").map((line) => JSON.parse(line) as { program: string; args: string[] });
 }
 
+async function withPlatform<T>(platform: NodeJS.Platform, action: () => Promise<T>): Promise<T> {
+  const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+  Object.defineProperty(process, "platform", { ...descriptor, value: platform });
+  try { return await action(); }
+  finally { Object.defineProperty(process, "platform", descriptor); }
+}
+
 function hostileValue(marker: string): string {
   return `host with spaces 'single' "double" $(touch ${marker}) \`touch ${marker}\`; touch ${marker} | cat`;
 }
@@ -62,7 +69,7 @@ function psOutput(filter: string): string {
 }
 
 describe("native diagnostic argument handling", () => {
-  it("runs host diagnostics without a shell and filters process output in-process", async () => {
+  it.skipIf(process.platform === "win32")("runs host diagnostics without a shell and filters process output in-process", async () => {
     const f = temporaryCommands();
     // An absolute Node shebang keeps the fake executable independent of command parsing.
     executable(f.bin, "nslookup", `${recordArguments("nslookup")}\nprocess.stdout.write("dns result\\n");`);
@@ -82,7 +89,57 @@ describe("native diagnostic argument handling", () => {
     ]);
   });
 
-  it("quotes command-string backend arguments before Bash interprets them", async () => {
+  it.skipIf(process.platform === "win32")("uses Windows-native argv and approval scopes for host diagnostics", async () => {
+    const f = temporaryCommands();
+    executable(f.bin, "ping", `${recordArguments("ping")}\nprocess.stdout.write("ping result\\n");`);
+    executable(f.bin, "tasklist", `${recordArguments("tasklist")}\nprocess.stdout.write('"editor.exe","42"\\n"other.exe","43"\\n');`);
+    executable(f.bin, "taskkill", recordArguments("taskkill"));
+    executable(f.bin, "ps", recordArguments("ps"));
+    executable(f.bin, "kill", recordArguments("kill"));
+
+    const networkProvider = createNetworkProvider(undefined, f.root);
+    const processProvider = createProcessProvider(undefined, f.root);
+    const result = await withPlatform("win32", async () => {
+      const pingScope = networkProvider.commandScope("network_tool", { action: "ping", target: "192.0.2.1", count: 2 });
+      const listScope = processProvider.commandScope("process_tool", { action: "list", filter: "editor" });
+      const killScope = processProvider.commandScope("process_tool", { action: "kill", pid: 42 });
+      const network = await executeNetworkTool({ action: "ping", target: "192.0.2.1", count: 2 }, undefined, f.root, new AbortController().signal);
+      const processes = await executeProcessTool({ action: "list", filter: "editor" }, undefined, f.root, new AbortController().signal);
+      const killed = await executeProcessTool({ action: "kill", pid: 42 }, undefined, f.root, new AbortController().signal);
+      return { pingScope, listScope, killScope, network, processes, killed };
+    });
+
+    expect(result.pingScope).toEqual({ command: "ping -n 2 -w 5000 192.0.2.1", cwd: f.root });
+    expect(result.listScope).toEqual({ command: "tasklist /FO CSV /NH", cwd: f.root });
+    expect(result.killScope).toEqual({ command: "taskkill /PID 42 /T", cwd: f.root });
+    expect(result.network.text).toContain("ping result");
+    expect(result.processes.text).toContain("editor.exe");
+    expect(result.processes.text).not.toContain("other.exe");
+    expect(result.killed.ok).toBe(true);
+    expect(captured(f.argumentsFile)).toEqual([
+      { program: "ping", args: ["-n", "2", "-w", "5000", "192.0.2.1"] },
+      { program: "tasklist", args: ["/FO", "CSV", "/NH"] },
+      { program: "taskkill", args: ["/PID", "42", "/T"] },
+    ]);
+  });
+
+  it("selects Windows-native command scopes for host providers", async () => {
+    const networkProvider = createNetworkProvider(undefined, "C:\\RootClaw");
+    const processProvider = createProcessProvider(undefined, "C:\\RootClaw");
+    const scopes = await withPlatform("win32", async () => ({
+      ping: networkProvider.commandScope("network_tool", { action: "ping", target: "192.0.2.1", count: 2 }),
+      list: processProvider.commandScope("process_tool", { action: "list", filter: "editor" }),
+      kill: processProvider.commandScope("process_tool", { action: "kill", pid: 42 }),
+    }));
+
+    expect(scopes).toEqual({
+      ping: { command: "ping -n 2 -w 5000 192.0.2.1", cwd: "C:\\RootClaw" },
+      list: { command: "tasklist /FO CSV /NH", cwd: "C:\\RootClaw" },
+      kill: { command: "taskkill /PID 42 /T", cwd: "C:\\RootClaw" },
+    });
+  });
+
+  it.skipIf(process.platform === "win32")("quotes command-string backend arguments before Bash interprets them", async () => {
     const f = temporaryCommands();
     executable(f.bin, "curl", `${recordArguments("curl")}\nprocess.stdout.write("curl result\\n");`);
     const filter = hostileValue(f.marker);
