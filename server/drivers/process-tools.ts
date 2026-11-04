@@ -3,6 +3,8 @@
 // Cua container (via computer_exec backend). Mutating actions (kill) require
 // approval; list is read-only.
 import type { ChatToolCallView, ChatToolDefinition, ChatToolResult } from "./chat-mcp-tools.ts";
+import { formatNativeCommandResult, runNativeCommand } from "./native-command.ts";
+import { commandForPosixShell, quotePosixShellArg } from "./shell-args.ts";
 
 export const PROCESS_TOOL = "process_tool";
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -66,8 +68,9 @@ export function validateProcessToolArgs(args: Record<string, unknown>): void {
 export function processToolCommandScope(args: Record<string, unknown>): { command: string; cwd: string } | undefined {
   const action = String(args.action ?? "");
   if (action === "list") {
-    const filter = typeof args.filter === "string" ? args.filter : "";
-    return { command: `ps aux${filter ? ` | grep ${filter}` : ""}`, cwd: "/home/cua/workspace" };
+    const filter = typeof args.filter === "string" ? args.filter.trim() : "";
+    const command = `ps aux${filter ? ` | grep -F -i -- ${quotePosixShellArg(filter)} | grep -v grep` : ""}`;
+    return { command, cwd: "/home/cua/workspace" };
   }
   if (action === "kill") {
     return { command: `kill ${args.pid}`, cwd: "/home/cua/workspace" };
@@ -114,53 +117,25 @@ export async function executeProcessTool(
   validateProcessToolArgs(args);
   const action = String(args.action);
   const timeoutMs = typeof args.timeout_ms === "number" ? args.timeout_ms : DEFAULT_TIMEOUT_MS;
-
-  let command: string;
-  if (action === "list") {
-    const filter = typeof args.filter === "string" && args.filter.trim() ? args.filter.trim() : "";
-    command = filter ? `ps aux | grep -i ${JSON.stringify(filter)} | grep -v grep` : "ps aux";
-  } else {
-    command = `kill ${args.pid}`;
-  }
+  const filter = action === "list" && typeof args.filter === "string" ? args.filter.trim() : "";
+  const executable = action === "list" ? "ps" : "kill";
+  const commandArgs = action === "list" ? ["aux"] : [String(args.pid)];
 
   // Prefer computer_exec backend (VPS/Local VM) if available
   if (computerExec) {
     const { executeComputerExec } = await import("./computer-exec-tools.ts");
+    const command = action === "list" && filter
+      ? `ps aux | grep -F -i -- ${quotePosixShellArg(filter)} | grep -v grep`
+      : commandForPosixShell(executable, commandArgs);
     return executeComputerExec({ command, timeout_ms: timeoutMs }, computerExec, signal);
   }
 
-  // Fall back to host shell (workspace)
+  // Run host processes directly; filtering captured output avoids a shell pipeline.
   if (workspaceRoot) {
-    const { spawn: spawnFn } = await import("node:child_process");
-    return new Promise<ChatToolResult>((resolve) => {
-      const child = spawnFn("/bin/bash", ["-c", command], {
-        cwd: workspaceRoot,
-        env: { ...process.env, PATH: process.env.PATH ?? "/usr/bin:/bin" },
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-      let stdout = "";
-      let stderr = "";
-      const timer = setTimeout(() => child.kill("SIGTERM"), timeoutMs);
-      timer.unref?.();
-      const onAbort = () => child.kill("SIGTERM");
-      if (signal.aborted) onAbort();
-      else signal.addEventListener("abort", onAbort, { once: true });
-      child.stdout?.on("data", (d: Buffer) => { stdout += d.toString(); });
-      child.stderr?.on("data", (d: Buffer) => { stderr += d.toString(); });
-      child.on("close", (code) => {
-        clearTimeout(timer);
-        signal.removeEventListener("abort", onAbort);
-        const lines = [`exit code ${code ?? "unknown"}`];
-        if (stdout) lines.push("--- stdout ---", stdout.trimEnd());
-        if (stderr) lines.push("--- stderr ---", stderr.trimEnd());
-        if (!stdout && !stderr) lines.push("(no output)");
-        resolve({ ok: code === 0, text: lines.join("\n") });
-      });
-      child.on("error", (err) => {
-        clearTimeout(timer);
-        resolve({ ok: false, text: `process_tool failed: ${err.message}` });
-      });
-    });
+    const output = await runNativeCommand(executable, commandArgs, workspaceRoot, timeoutMs, signal);
+    if (filter) output.stdout = output.stdout.split(/\r?\n/)
+      .filter((line) => line.toLowerCase().includes(filter.toLowerCase())).join("\n");
+    return formatNativeCommandResult(output, "process_tool");
   }
 
   return { ok: false, text: "process_tool requires a computer or workspace. No backend available." };

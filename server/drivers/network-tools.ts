@@ -2,6 +2,8 @@
 // Ping, curl, and DNS lookup. Runs on host (shell) or in a Cua container
 // (computer_exec backend). Mutating actions (curl POST) require approval.
 import type { ChatToolCallView, ChatToolDefinition, ChatToolResult } from "./chat-mcp-tools.ts";
+import { formatNativeCommandResult, runNativeCommand } from "./native-command.ts";
+import { commandForPosixShell } from "./shell-args.ts";
 
 export const NETWORK_TOOL = "network_tool";
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -65,11 +67,16 @@ export function validateNetworkToolArgs(args: Record<string, unknown>): void {
 
 export function networkToolCommandScope(args: Record<string, unknown>): { command: string; cwd: string } | undefined {
   const action = String(args.action ?? "");
-  const target = String(args.target ?? "");
-  const cwd = "/home/cua/workspace";
-  if (action === "ping") return { command: `ping -c 3 ${target}`, cwd };
-  if (action === "curl") return { command: `curl -sS -L --max-time 30 ${target}`, cwd };
-  if (action === "dns") return { command: `nslookup ${target}`, cwd };
+  const target = String(args.target ?? "").trim();
+  const count = typeof args.count === "number" ? args.count : 3;
+  const invocation = networkInvocation(action, target, count);
+  return invocation ? { command: commandForPosixShell(invocation.executable, invocation.args), cwd: "/home/cua/workspace" } : undefined;
+}
+
+function networkInvocation(action: string, target: string, count: number): { executable: string; args: string[] } | undefined {
+  if (action === "ping") return { executable: "ping", args: ["-c", String(count), "-W", "5", target] };
+  if (action === "curl") return { executable: "curl", args: ["-sS", "-L", "--max-time", "30", target] };
+  if (action === "dns") return { executable: "nslookup", args: [target] };
   return undefined;
 }
 
@@ -114,52 +121,17 @@ export async function executeNetworkTool(
   const target = String(args.target).trim();
   const timeoutMs = typeof args.timeout_ms === "number" ? args.timeout_ms : DEFAULT_TIMEOUT_MS;
   const count = typeof args.count === "number" ? args.count : 3;
-
-  let command: string;
-  if (action === "ping") {
-    command = `ping -c ${count} -W 5 ${target}`;
-  } else if (action === "curl") {
-    command = `curl -sS -L --max-time 30 ${JSON.stringify(target)}`;
-  } else {
-    command = `nslookup ${target}`;
-  }
+  const invocation = networkInvocation(action, target, count)!;
 
   if (computerExec) {
     const { executeComputerExec } = await import("./computer-exec-tools.ts");
+    const command = commandForPosixShell(invocation.executable, invocation.args);
     return executeComputerExec({ command, timeout_ms: timeoutMs }, computerExec, signal);
   }
 
   if (workspaceRoot) {
-    const { spawn: spawnFn } = await import("node:child_process");
-    return new Promise<ChatToolResult>((resolve) => {
-      const child = spawnFn("/bin/bash", ["-c", command], {
-        cwd: workspaceRoot,
-        env: { ...process.env, PATH: process.env.PATH ?? "/usr/bin:/bin" },
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-      let stdout = "";
-      let stderr = "";
-      const timer = setTimeout(() => child.kill("SIGTERM"), timeoutMs);
-      timer.unref?.();
-      const onAbort = () => child.kill("SIGTERM");
-      if (signal.aborted) onAbort();
-      else signal.addEventListener("abort", onAbort, { once: true });
-      child.stdout?.on("data", (d: Buffer) => { stdout += d.toString(); });
-      child.stderr?.on("data", (d: Buffer) => { stderr += d.toString(); });
-      child.on("close", (code) => {
-        clearTimeout(timer);
-        signal.removeEventListener("abort", onAbort);
-        const lines = [`exit code ${code ?? "unknown"}`];
-        if (stdout) lines.push("--- stdout ---", stdout.trimEnd());
-        if (stderr) lines.push("--- stderr ---", stderr.trimEnd());
-        if (!stdout && !stderr) lines.push("(no output)");
-        resolve({ ok: code === 0, text: lines.join("\n") });
-      });
-      child.on("error", (err) => {
-        clearTimeout(timer);
-        resolve({ ok: false, text: `network_tool failed: ${err.message}` });
-      });
-    });
+    const output = await runNativeCommand(invocation.executable, invocation.args, workspaceRoot, timeoutMs, signal);
+    return formatNativeCommandResult(output, "network_tool");
   }
 
   return { ok: false, text: "network_tool requires a computer or workspace. No backend available." };

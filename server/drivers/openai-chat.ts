@@ -560,14 +560,43 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         const parsed = parseToolScope(turn.toolScope);
         if (!parsed.ok) throw new Error(parsed.error);
         const scope = parsed.scope;
+        const questionAllowed = options.tools !== false && allowsTool(scope, { kind: "native", name: ASK_USER_TOOL });
+        const workspace: WorkspaceToolsConfig | undefined = options.tools !== false && turn.cwd && !turn.guestConfined ? {
+          root: turn.cwd,
+          // The skill index names SKILL.md files outside the workspace: those folders become readable (never writable).
+          readRoots: [...turn.workspaceTools?.readRoots ?? [], ...skillReadRoots(turn.system, turn.systemStable, turn.text)],
+          writeRoots: turn.workspaceTools?.writeRoots,
+          unrestricted: turn.workspaceTools?.unrestricted === true || process.env.ROOTCLAW_WORKSPACE_UNRESTRICTED === "1",
+          jobScope: turn.threadId,
+        } : undefined;
+        const computerExec = turn.integrations?.computerExec;
+        const planVerify = turn.planVerify ?? { mode: "off" as const, maxVerifyRetries: 0 };
+        const planVerifyOn = planVerify.mode !== "off" && options.tools !== false;
+        const reservedNativeNames = new Set<string>();
+        const reserveNative = (definitions: readonly ChatToolDefinition[]) => {
+          for (const definition of definitions) {
+            const name = definition.function.name;
+            if (allowsTool(scope, { kind: "native", name })) reservedNativeNames.add(name);
+          }
+        };
+        if (questionAllowed) reservedNativeNames.add(ASK_USER_TOOL);
+        if (options.tools !== false) {
+          if (workspace) reserveNative(WORKSPACE_TOOL_DEFINITIONS);
+          if (computerExec) reserveNative(computerExecDefinitions());
+          reserveNative(systemInfoDefinitions());
+          if (computerExec || workspace) {
+            reserveNative([...processToolDefinitions(), ...packageToolDefinitions(), ...networkToolDefinitions(), ...fileWatchToolDefinitions()]);
+          }
+          if (ctx.offloadDir) reservedNativeNames.add(READ_TOOL_OUTPUT_TOOL);
+          if (planVerifyOn) reservedNativeNames.add(UPDATE_PLAN_TOOL);
+        }
         tools = await mountChatTools(options.tools === false ? undefined : turn.integrations, abort.signal, options.computerUse, scope, turn.mcpCallTimeoutMs,
-          toolSchemaProfileFor({ url: options.apiUrl, model }));
+          toolSchemaProfileFor({ url: options.apiUrl, model }), Math.max(1, reservedNativeNames.size));
         for (const { server, reason } of tools.skipped) {
           emit({ ...base(turn.threadId, turnId), type: "runtime.notice", message: `MCP server "${server}" was skipped for this turn: ${safeText(reason)}` });
         }
         const trimmedNotice = trimmedToolsNotice(tools.trimmed);
         if (trimmedNotice) emit({ ...base(turn.threadId, turnId), type: "runtime.notice", message: trimmedNotice });
-        const questionAllowed = options.tools !== false && allowsTool(scope, { kind: "native", name: ASK_USER_TOOL });
         let optionalQuestionOnly = questionAllowed && tools.definitions.length === 0;
           // An MCP server squatting ask_user cannot shadow it (dispatch intercepts the name); skip its definition.
         if (questionAllowed && !tools.definitions.some((definition) => definition.function.name === ASK_USER_TOOL)) {
@@ -578,16 +607,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           tools.definitions.push(READ_TOOL_OUTPUT_DEFINITION);
         }
         // Native workspace tools: in-process, rooted at the turn's folder, confined unless the turn allows more.
-        const workspace: WorkspaceToolsConfig | undefined = options.tools !== false && turn.cwd && !turn.guestConfined ? {
-          root: turn.cwd,
-          // The skill index names SKILL.md files outside the workspace: those folders become readable (never writable).
-          readRoots: [...turn.workspaceTools?.readRoots ?? [], ...skillReadRoots(turn.system, turn.systemStable, turn.text)],
-          writeRoots: turn.workspaceTools?.writeRoots,
-          unrestricted: turn.workspaceTools?.unrestricted === true || process.env.ROOTCLAW_WORKSPACE_UNRESTRICTED === "1",
-          jobScope: turn.threadId,
-        } : undefined;
         const workspaceNames = new Set<string>();
-        const computerExec = turn.integrations?.computerExec;
         if (workspace) {
           const taken = new Set(tools.definitions.map((definition) => definition.function.name));
           for (const definition of WORKSPACE_TOOL_DEFINITIONS) {
@@ -621,8 +641,8 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           }
         }
 
-        // Native process/package/network/file-watch tools (mutating, require approval).
-        if (options.tools !== false) {
+        // These diagnostics need either a workspace for host execution or a computer-exec backend.
+        if (options.tools !== false && (computerExec || workspace)) {
           const taken = new Set(tools.definitions.map((definition) => definition.function.name));
           for (const definition of [...processToolDefinitions(), ...packageToolDefinitions(), ...networkToolDefinitions(), ...fileWatchToolDefinitions()]) {
             const name = definition.function.name;
@@ -641,17 +661,17 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         }
         if (options.tools !== false) {
           nativeProviders.push(createSystemInfoProvider());
-          nativeProviders.push(createProcessProvider(computerExec, workspace?.root));
-          nativeProviders.push(createPackageProvider(computerExec, workspace?.root));
-          nativeProviders.push(createNetworkProvider(computerExec, workspace?.root));
-          nativeProviders.push(createFileWatchProvider(computerExec, workspace?.root));
+          if (computerExec || workspace) {
+            nativeProviders.push(createProcessProvider(computerExec, workspace?.root));
+            nativeProviders.push(createPackageProvider(computerExec, workspace?.root));
+            nativeProviders.push(createNetworkProvider(computerExec, workspace?.root));
+            nativeProviders.push(createFileWatchProvider(computerExec, workspace?.root));
+          }
         }
 
         // RootClaw's own tool schemas wait behind load_tools until the model needs them (server/drivers/tool-loading.ts).
         const lazy = options.tools !== false && lazyToolsEnabled() ? deferTools(tools.definitions, turn.threadId) : null;
         // Planner/verifier (engine.planVerify, docs/design/planner-verifier.md): gated per turn, off by default.
-        const planVerify = turn.planVerify ?? { mode: "off" as const, maxVerifyRetries: 0 };
-        const planVerifyOn = planVerify.mode !== "off" && options.tools !== false;
         plan = planVerifyOn ? takeCarriedPlan(turn.threadId) : null;
         let planning = false;
         let replanned = false;
@@ -1113,6 +1133,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
                   }
                 }
               } else if (nativeProvider) {
+                if (!allowsTool(scope, { kind: "native", name: call.function.name })) throw new Error("Tool selection excludes this tool");
                 nativeProvider.validate(call.function.name, args);
                 const shown = nativeProvider.view(call.function.name, args as Record<string, unknown>); title = shown.title;
                 const full = (turn.approvalModeNow?.() ?? turn.approvalMode) === "full";

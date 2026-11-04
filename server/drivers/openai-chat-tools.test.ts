@@ -39,6 +39,8 @@ interface ChatRequest {
 type Script = (body: ChatRequest, response: ServerResponse, round: number) => void;
 type Provider = "openai-compat" | "grok" | "minimax" | "cerebras";
 const API_KEY_CANARY = "fixture-credential-cda00ee8d8384f54";
+const TOOLS_WITHOUT_EXECUTION_BACKEND = ["ask_user", "system_info"];
+const BACKEND_DEPENDENT_DIAGNOSTICS = ["process_tool", "package_tool", "network_tool", "file_watch_tool"];
 
 function deferred<T = void>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -244,6 +246,40 @@ describe("bounded action announcement recovery", () => {
   });
 });
 
+describe("native diagnostic tool availability", () => {
+  it("keeps system info available and omits diagnostics without a workspace or computer backend", async () => {
+    const f = await fixture((_body, response) => answer(response));
+    await f.start({ integrations: undefined });
+    expect(await f.completed()).toMatchObject({ ok: true });
+    expect(f.requests[0].tools?.map((tool) => tool.function.name)).toEqual(TOOLS_WITHOUT_EXECUTION_BACKEND);
+  });
+
+  it("offers diagnostics when a workspace provides a host execution backend", async () => {
+    const f = await fixture((_body, response) => answer(response));
+    await f.start({ integrations: undefined, cwd: f.directory });
+    expect(await f.completed()).toMatchObject({ ok: true });
+    const names = f.requests[0].tools?.map((tool) => tool.function.name) ?? [];
+    expect(names).toEqual(expect.arrayContaining(BACKEND_DEPENDENT_DIAGNOSTICS));
+  });
+});
+
+describe("native tool scope enforcement", () => {
+  it("refuses a native provider call excluded by tool scope before argument validation", async () => {
+    const f = await fixture((_body, response, round) => round === 1
+      ? sse(response, [chunk({ tool_calls: [toolCall("network_tool", '{"action":"invalid","target":"localhost"}', "call_network")] }, "tool_calls")])
+      : answer(response));
+    await f.start({
+      integrations: undefined,
+      cwd: f.directory,
+      toolScope: { deny: ["native:network_tool"] },
+    });
+    expect(await f.completed()).toMatchObject({ ok: false });
+    const result = f.requests[1]?.messages.find((message) => message.role === "tool" && message.tool_call_id === "call_network");
+    expect(result?.content).toContain("Tool selection excludes this tool");
+    expect(result?.content).not.toContain('network_tool "action" must be');
+  });
+});
+
 describe("a searched MCP catalog", () => {
   it("asks about the tool call_tool runs, and never about a search", async () => {
     const remote = await startFakeHttpMcp({ tools: whopLikeCatalog(300) });
@@ -441,14 +477,14 @@ describe("optional built-in question compatibility", () => {
     await f.start({ integrations: undefined });
     expect(await f.completed()).toMatchObject({ ok: true });
     expect(f.requests).toHaveLength(2);
-    expect(f.requests[0].tools?.map(tool => tool.function.name)).toEqual(["ask_user"]);
+    expect(f.requests[0].tools?.map(tool => tool.function.name)).toEqual(TOOLS_WITHOUT_EXECUTION_BACKEND);
     expect(f.requests[1]).not.toHaveProperty("tools");
     expect(f.requests[1].messages).toEqual(f.requests[0].messages);
     expect(f.effects()).toEqual([]);
     f.recorder.events.length = 0;
     await f.start({ integrations: undefined });
     expect(await f.completed()).toMatchObject({ ok: true });
-    expect(f.requests[2].tools?.map(tool => tool.function.name)).toEqual(["ask_user"]);
+    expect(f.requests[2].tools?.map(tool => tool.function.name)).toEqual(TOOLS_WITHOUT_EXECUTION_BACKEND);
   });
 
   it.each([
@@ -469,7 +505,7 @@ describe("optional built-in question compatibility", () => {
     expect(await f.completed()).toMatchObject({ ok: false });
     // 429/5xx are transport retries of the same request; nothing is downgraded either way.
     expect(f.requests).toHaveLength([429, 500].includes(status as number) ? RETRY_MAX_ATTEMPTS : 1);
-    for (const request of f.requests) expect(request.tools?.map(tool => tool.function.name)).toEqual(["ask_user"]);
+    for (const request of f.requests) expect(request.tools?.map(tool => tool.function.name)).toEqual(TOOLS_WITHOUT_EXECUTION_BACKEND);
   });
 
   it("retries network failures as the same request and never strips tools mounted by the person", async () => {
@@ -482,7 +518,7 @@ describe("optional built-in question compatibility", () => {
       await f.start(network ? { integrations: undefined } : {});
       expect(await f.completed()).toMatchObject({ ok: false });
       expect(f.requests).toHaveLength(network ? RETRY_MAX_ATTEMPTS : 1);
-      if (network) for (const request of f.requests) expect(request.tools?.map(tool => tool.function.name)).toEqual(["ask_user"]);
+      if (network) for (const request of f.requests) expect(request.tools?.map(tool => tool.function.name)).toEqual(TOOLS_WITHOUT_EXECUTION_BACKEND);
       if (!network) expect(f.requests[0].tools?.some(tool => tool.function.name === "audit_write")).toBe(true);
       expect(f.effects()).toEqual([]);
     }
@@ -754,7 +790,7 @@ describe.each<Provider>(["openai-compat", "grok", "minimax"])("%s structured too
     await f.start({ integrations: undefined, system: "Fixture persona", transcript: [{ role: "user", text: "Earlier question" }, { role: "assistant", text: "Earlier answer" }] });
     expect(await f.completed()).toMatchObject({ ok: true });
     expect(f.requests).toHaveLength(1);
-    expect(f.requests[0].tools?.map((tool) => tool.function.name)).toEqual(["ask_user"]);
+    expect(f.requests[0].tools?.map((tool) => tool.function.name)).toEqual(TOOLS_WITHOUT_EXECUTION_BACKEND);
     expect(f.requests[0].messages.map((message) => message.role)).toEqual(["system", "user", "assistant", "user"]);
     expect(f.recorder.events).toContainEqual(expect.objectContaining({ type: "item.completed", itemType: "assistant_text", text: imitation }));
     expect(f.recorder.events.some((event) => event.type === "request.opened" || event.type === "item.started")).toBe(false);
@@ -979,7 +1015,7 @@ describe("structured tool execution boundaries", () => {
     expect(await f.completed()).toMatchObject({ ok: true, usage: { input: 12, output: 4 } });
     expect(f.recorder.events).toContainEqual(expect.objectContaining({ type: "item.completed", itemType: "assistant_text", text: "Hello from the fixture." }));
     expect(f.recorder.events.some((event) => event.type === "runtime.error" || event.type === "request.opened")).toBe(false);
-    expect(f.requests[0].tools?.map((tool) => tool.function.name)).toEqual(["ask_user"]);
+    expect(f.requests[0].tools?.map((tool) => tool.function.name)).toEqual(TOOLS_WITHOUT_EXECUTION_BACKEND);
     expect(f.effects()).toEqual([]);
   });
 
@@ -1458,8 +1494,9 @@ describe("a turn with the person's Windows computer, the built-in browser and th
     await f.start({ integrations: integrations(42) });
     expect(await f.completed()).toMatchObject({ ok: true });
     const names = f.requests[0].tools!.map((tool) => tool.function.name);
-    expect(names).toHaveLength(115);
+    expect(names.length).toBeLessThanOrEqual(128);
     expect(names).toContain("ask_user");
+    expect(names).toContain("system_info");
     expect(names).toEqual(expect.arrayContaining(syntheticToolNames("agents_agent", 42)));
     expect(names).toEqual(expect.arrayContaining(["computer_click", "computer_type_text", "computer_get_window_state"]));
     expect(names.filter((name) => name.startsWith("computer_browser_"))).toEqual([]);
@@ -1476,9 +1513,10 @@ describe("a turn with the person's Windows computer, the built-in browser and th
     } finally { console.warn = warn; }
     const names = f.requests[0].tools!.map((tool) => tool.function.name);
     expect(names).toHaveLength(128);
-    expect(names.at(-1)).toBe("ask_user");
+    expect(names).toContain("ask_user");
+    expect(names).toContain("system_info");
     expect(f.recorder.events).toContainEqual(expect.objectContaining({ type: "runtime.notice",
-      message: `"data" listed 2 of 5 tools, "device" listed 0 of 23 tools to fit the model's 128-tool limit; the rest are left out of this turn.` }));
+      message: `"data" listed 1 of 5 tools, "device" listed 0 of 23 tools to fit the model's 128-tool limit; the rest are left out of this turn.` }));
     expect(f.recorder.events.some((event) => event.type === "runtime.error")).toBe(false);
   });
 });

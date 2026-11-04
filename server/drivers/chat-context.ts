@@ -11,6 +11,7 @@ import {
   minOutputTokens,
   offloadRequest,
   offloadTail,
+  outputTokensFor,
   outputReserve,
   windowMargin,
 } from "./turn-context.ts";

@@ -57,7 +57,6 @@ const OUTPUT_BYTES = 50 * 1024;
 const TOOL_COUNT = 128;
 /** ask_user, which the runtime lists after the MCP tools. */
 const RUNTIME_TOOLS = 1;
-const MCP_TOOL_COUNT = TOOL_COUNT - RUNTIME_TOOLS;
 const MAX_PAGES = 100;
 const SCHEMA_BYTES = 64 * 1024;
 const CATALOG_BYTES = 1024 * 1024;
@@ -269,10 +268,14 @@ function omitBlankDefaults(builtInBrowser: boolean, tool: string, args: unknown)
 
 /** Under `schemaProfile` the model reads each tool's schema fitted to its provider; calls are still checked against the full one. */
 export async function mountChatTools(integrations: SendTurnInput["integrations"], signal: AbortSignal, computerUse = false, toolScope?: ToolScope, callTimeoutMs: number = DEFAULT_CALL_MS,
-  schemaProfile?: ToolSchemaProfile): Promise<ChatToolSession> {
+  schemaProfile?: ToolSchemaProfile, reservedRuntimeToolCount = RUNTIME_TOOLS): Promise<ChatToolSession> {
   const parsed = parseToolScope(toolScope);
   if (!parsed.ok) throw new Error(parsed.error);
   const scope = parsed.scope;
+  const runtimeToolCount = Number.isFinite(reservedRuntimeToolCount)
+    ? Math.max(RUNTIME_TOOLS, Math.min(TOOL_COUNT, Math.floor(reservedRuntimeToolCount)))
+    : RUNTIME_TOOLS;
+  const mcpToolCount = TOOL_COUNT - runtimeToolCount;
   const servers: Array<[string, Server]> = [];
   const observers = new Map<string, AppObserver>();
   const searchable = new Set<string>();
@@ -343,7 +346,7 @@ export async function mountChatTools(integrations: SendTurnInput["integrations"]
     // The agents server keeps its whole list first; a configured server fits in what the built-ins leave, or is skipped.
     const shares = shareToolBudget(mounts.flatMap((mount, index) => index < builtIns && mount.status === "fulfilled"
       ? [{ name: String(index), tools: mount.value.tools.length, agents: mount.value.agents }] : [])
-      .sort((a, b) => Number(b.agents) - Number(a.agents)), MCP_TOOL_COUNT);
+      .sort((a, b) => Number(b.agents) - Number(a.agents)), mcpToolCount);
     for (const [index, mount] of mounts.entries()) {
       const configured = servers[index]![0];
       if (signal.aborted || closed) throw aborted();
@@ -374,7 +377,7 @@ export async function mountChatTools(integrations: SendTurnInput["integrations"]
             continue;
           }
           originalNames.add(tool.name);
-          if (definitions.length + staged.length >= MCP_TOOL_COUNT) throw new Error("MCP tool count exceeds the 128-tool limit");
+          if (definitions.length + staged.length >= mcpToolCount) throw new Error("MCP tool count exceeds the 128-tool limit");
           // One tool the model cannot be offered drops alone: the rest of its server, and the turn, carry on.
           const unusable = !object(tool.inputSchema) || tool.inputSchema.type !== "object" ? "has no object input schema"
             : Buffer.byteLength(JSON.stringify(tool.inputSchema)) > SCHEMA_BYTES ? "has a schema over the 64KB limit" : null;
