@@ -4,7 +4,7 @@ import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
-const SKIP_DIRS = new Set([".git", "node_modules", ".hg", ".svn", "dist", "build", ".next", ".cache"]);
+export const SKIP_DIRS = new Set([".git", "node_modules", ".hg", ".svn", "dist", "build", ".next", ".cache"]);
 
 export function globToRegExp(pattern: string): RegExp {
   let out = "";

@@ -53,11 +53,12 @@ export class ChatContext {
   compactions = 0;
   overflowCompactions = 0;
   compactedAfter: number | undefined;
+  readonly deps: ChatContextDeps;
   private pinnedOriginal: OpenAIChatMessage["content"] | undefined;
 
-  constructor(
-    public readonly deps: ChatContextDeps,
-  ) {}
+  constructor(deps: ChatContextDeps) {
+    this.deps = deps;
+  }
 
   get window(): number { return this.deps.window; }
   set window(v: number) { this.deps.window = v; }

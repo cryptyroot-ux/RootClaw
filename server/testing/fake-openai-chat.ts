@@ -263,6 +263,7 @@ interface PlanTurn {
   reply?: string;
   resumeReply?: string;
   gateFile?: string;
+  readyFile?: string;
   delayMs?: number;
   fail?: boolean;
   turns?: PlanTurn[];
@@ -475,6 +476,7 @@ async function replayRoomPlan(input: {
     unfinished.delete(botId);
     return true;
   }
+  if (turn.readyFile) writeFileSync(turn.readyFile, "ready");
   if (turn.gateFile && !(await waitUntil(() => existsSync(turn.gateFile!)))) {
     unfinished.delete(botId);
     return true;

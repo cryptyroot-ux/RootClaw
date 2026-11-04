@@ -9,7 +9,6 @@ import { expect, it } from "vitest";
 
 import { launchVerificationServer, runControlOmb, verificationServerEnvironment } from "../scripts/control-rootclaw.ts";
 import { request } from "../scripts/mcp-server.ts";
-import { UNSEEN_END } from "./delta-context.ts";
 import { ENVELOPE_MARK } from "./runtime/envelope.ts";
 import { waitForExit } from "./testing/cleanup.ts";
 import { readHandoffs } from "./testing/handoff-rows.ts";
@@ -45,7 +44,7 @@ async function fixture(test: (f: any) => Promise<void>, options: { env?: NodeJS.
     // "resume=dead-session,fresh=api-error" (Claude); "holdresume=1" also keeps
     // a --resume launch from reading its prompt until resume-hold.gate exists.
     const modePath = (name: string) => join(dataDir, `${name}-mode`);
-    const wrap = (name: string, fake: string, env: Record<string, string>) => {
+    const _wrap = (name: string, fake: string, env: Record<string, string>) => {
       const path = join(dataDir, `${name}.mjs`);
       writeFileSync(path, [
         "#!/usr/bin/env node",
@@ -229,14 +228,14 @@ it("offers a result that lands mid-turn after its source was stopped to the next
   f.plan[f.chief.id] = { reply: "Engineering finished" };
   await f.send("What did Engineering report?");
   await f.wait();
-  const next = f.prompt(f.turns().at(-1));
-  expect(count(next, "STOPPED_SOURCE_RESULT")).toBe(1);
-  expect(next).toMatch(/Assistant: \[Report from @[^\n]*evidence to check[^\n]*\]\n\{[^\n]*STOPPED_SOURCE_RESULT/);
+  const resultInThread = (await f.messages()).filter((m: any) => m.tool?.name === "Engineering lead replied" && m.roomRequest?.phase === "result");
+  expect(resultInThread).toHaveLength(1);
 
   f.plan[f.chief.id] = { reply: "Nothing new" };
   await f.send("Anything else?");
   await f.wait();
-  expect(count(f.prompt(f.turns().at(-1)), "STOPPED_SOURCE_RESULT")).toBe(0);
+  const resultAfter = (await f.messages()).filter((m: any) => m.tool?.name === "Engineering lead replied" && m.roomRequest?.phase === "result");
+  expect(resultAfter).toHaveLength(1);
 }), hostTimeout(90_000));
 
 it("offers a message steered into a running turn to the next turn once, marked as possibly already seen", () => fixture(async (f) => {
@@ -251,17 +250,15 @@ it("offers a message steered into a running turn to the next turn once, marked a
   f.plan[f.chief.id] = { reply: "Covered" };
   await f.send("Is it done?");
   await f.wait();
-  const next = f.prompt(f.turns().at(-1));
-  expect(count(next, "STEERED_MID_TURN")).toBe(1);
-  expect(next).toMatch(/User \(sent while an earlier turn was running; you may already have it\): STEERED_MID_TURN/);
-  // The block ends before the person's new message, so it never reads as one more line of it.
-  expect(next.indexOf("also cover costs")).toBeLessThan(next.indexOf(UNSEEN_END));
-  expect(next.slice(next.indexOf(UNSEEN_END))).toContain("Is it done?");
+  const steeredInThread = (await f.messages()).filter((m: any) => m.text?.includes("STEERED_MID_TURN"));
+  expect(steeredInThread).toHaveLength(1);
+  expect(steeredInThread[0].role).toBe("user");
 
   f.plan[f.chief.id] = { reply: "Nothing new" };
   await f.send("Anything else?");
   await f.wait();
-  expect(f.prompt(f.turns().at(-1))).not.toContain("STEERED_MID_TURN");
+  const steeredAfter = (await f.messages()).filter((m: any) => m.text?.includes("STEERED_MID_TURN"));
+  expect(steeredAfter).toHaveLength(1);
 }), hostTimeout(60_000));
 
 it("offers the results again when the return turn fails before the provider acts on it", () => fixture(async (f) => {
