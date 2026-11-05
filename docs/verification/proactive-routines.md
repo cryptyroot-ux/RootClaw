@@ -33,11 +33,12 @@ Expected:
   mail and invite in records blocks, and forged markers are defused. It runs
   with Ask-level approvals and no approval cards. The handler passes only the
   native Composio multi-execute gateway to the per-call fence; that fence
-  refuses every out-of-policy connected-app call. Other permission requests
-  are refused by the handler. A refusal is returned as a handled result, so the
-  routine can still keep a valid final report. Its system prompt has no recent
-  work. Gmail and Calendar reads reach only the loopback connected-apps
-  service, and none names an account.
+  refuses every out-of-policy connected-app call before generic grant denials.
+  Calls allowed by the fence still require connector grants and scopes. Other
+  permission requests are refused by the handler. A refusal is returned as a
+  handled result, so the routine can still keep a valid final report. Its
+  system prompt has no recent work. Gmail and Calendar reads reach only the
+  loopback connected-apps service, and none names an account.
 - The 10-minute reminder, the prep card and the brief rows appear in RootClaw's
   chat, and the brief's notification names that chat. The brief is edited in
   place, not posted twice.
@@ -50,7 +51,9 @@ Expected:
   line in the chat.
 - In a read-and-draft run, the native fake provider uses the offered Composio
   tool to call `GMAIL_CREATE_EMAIL_DRAFT` once for the sender
-  (`ada@example.test`) in the checked thread (`thread-important`). Attempts to
+  (`ada@example.test`) in the checked thread (`thread-important`), under an
+  explicit connector grant that allows the required reads and draft but not
+  sends. Attempts to
   send (`GMAIL_SEND_EMAIL`), reply by sending (`GMAIL_REPLY_TO_THREAD`), write
   other Gmail data (including `GMAIL_DELETE_MESSAGE`), use Slack
   (`SLACK_SEND_MESSAGE`) or another app, draft to a wrong recipient or add

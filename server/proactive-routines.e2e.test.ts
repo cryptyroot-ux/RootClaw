@@ -161,8 +161,13 @@ describe("RootClaw keeps an eye on the day, hidden from the sidebar", () => {
     try {
       const fencedApi = client(fencedFixture);
       const bot = (await fencedApi("GET", "/api/bots")).bots.find((candidate: any) => candidate.defaultBot && !candidate.defaultBot.person);
-      await fencedApi("PATCH", `/api/bots/${bot.id}`, { approvalMode: "ask" });
-      expect((await fencedApi("GET", "/api/bots")).bots.find((candidate: any) => candidate.id === bot.id)).toMatchObject({ approvalMode: "ask" });
+      const connectorTools = {
+        gmail: { tools: ["GMAIL_FETCH_EMAILS", "GMAIL_GET_PROFILE", "GMAIL_CREATE_EMAIL_DRAFT"] },
+        googlecalendar: { tools: ["GOOGLECALENDAR_EVENTS_LIST", "GOOGLECALENDAR_LIST_CALENDARS"] },
+      };
+      await fencedApi("PATCH", `/api/bots/${bot.id}`, { approvalMode: "ask", connectorTools });
+      expect((await fencedApi("GET", "/api/bots")).bots.find((candidate: any) => candidate.id === bot.id))
+        .toMatchObject({ approvalMode: "ask", connectorTools });
       const watch = (await fencedApi("GET", "/api/routines")).routines.find((routine: any) => routine.botId === bot.id && routine.deliver === "brief");
       fencedApps.emails = [{
         messageId: "important-1", threadId: "thread-important", messageTimestamp: new Date(Date.now() - 5 * MINUTE).toISOString(),

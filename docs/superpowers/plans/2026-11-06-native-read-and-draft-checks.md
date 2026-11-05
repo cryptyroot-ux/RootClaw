@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Runtime eligibility is based on the server-selected `driverKind`, not user-controlled model text or prompt contents.
-- Run with Ask-level approvals and no approval cards: only the native Composio multi-execute gateway reaches the per-call route fence, which refuses every out-of-policy connected-app call; the handler refuses every other out-of-policy request itself.
+- Run with Ask-level approvals and no approval cards: only the native Composio multi-execute gateway reaches the per-call route fence, which refuses every out-of-policy connected-app call before generic grant denials; calls allowed by that fence still require connector grants and scopes. The handler refuses every other out-of-policy request itself.
 - Reuse `createReadAndDraft`, `RoutineChecks.mayDraft`, and the existing check key; expand runtime enforcement only if the E2E exposes a concrete gap.
 - Do not add a per-bot setting, new provider, or new trust level.
 - Do not allow sending, replying by send, Slack or other apps, arbitrary Gmail writes, drafts outside checked threads, extra recipients, or multiple drafts for the same checked thread.
@@ -64,7 +64,7 @@
 
 - [x] **Step 1: Add `openai-compat` to `FENCED_ENGINES`.**
 
-  Preserve the existing `driverKind` lookup and all `read-and-draft` route/tool enforcement. If the native E2E demonstrates an ordering gap, permit only the exact Composio multi-execute gateway request to reach the existing per-call fence; do not widen other approvals or change draft authorization. A per-call fence refusal is returned as a handled MCP result so the routine can keep a valid final report.
+  Preserve the existing `driverKind` lookup and all `read-and-draft` route/tool enforcement. If the native E2E demonstrates an ordering gap, permit only the exact Composio multi-execute gateway request to reach the existing per-call fence; do not widen other approvals or change draft authorization. Evaluate that fence before generic connector-grant denials, but continue to require grants and scopes for every call it allows. Commit an allowed draft only after those permissions pass and are revalidated immediately before relay. A per-call fence refusal is returned as a handled MCP result so the routine can keep a valid final report.
 
 - [x] **Step 2: Run the native read-and-draft and fence suites.**
 

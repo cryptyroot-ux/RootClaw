@@ -14424,6 +14424,25 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         }
         // Security: a member's own bridge reaches only their own installation, and only in their own turn.
         const actor = teamConnections.relayActor(internalCapability); if (actor.refusal) return json(res, 200, { jsonrpc: "2.0", id: (body as { id?: unknown }).id ?? null, result: { content: [{ type: "text", text: actor.refusal }], isError: true } });
+        const rpc = body && typeof body === "object" && !Array.isArray(body)
+          ? (body as { id?: unknown; method?: unknown; params?: unknown })
+          : null;
+        const rpcParams = rpc?.params && typeof rpc.params === "object" && !Array.isArray(rpc.params)
+          ? (rpc.params as { name?: unknown; arguments?: unknown })
+          : null;
+        const outboundCalls = rpc?.method === "tools/call" && typeof rpcParams?.name === "string"
+          ? outboundCallsIn(rpcParams.name, rpcParams.arguments)
+          : [];
+        const outboundTool = outboundCalls.length ? outboundCalls[0].slug : null;
+        const refuseOutbound = (text: string, isToolError = true) => {
+          res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+          return res.end(JSON.stringify({ jsonrpc: "2.0", id: rpc?.id ?? null, result: {
+            content: [{ type: "text", text }], ...(isToolError ? { isError: true } : {}),
+          } }));
+        };
+        // Security invariant: refuse routine-forbidden calls before generic grants; prepared allowed calls still pass every grant below.
+        const preparedReadAndDraft = proactive.fence.prepareConnectorCall(currentSender, internalCapability.threadId, body);
+        if (preparedReadAndDraft?.refused) return refuseOutbound(READ_AND_DRAFT_REFUSAL, false);
         // Verdict every tools/call frame against connectorTools; a grants record makes every unrecognized shape a deny.
         const call = connectorCallFromFrame(body);
         let serviceSlugs: readonly string[] = [];
@@ -14490,27 +14509,11 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           });
         }
         // Below Full access, a tools/call that sends something waits on a card or spends the daily allowance.
-        const rpc = body && typeof body === "object" && !Array.isArray(body)
-          ? (body as { id?: unknown; method?: unknown; params?: unknown })
-          : null;
-        const rpcParams = rpc?.params && typeof rpc.params === "object" && !Array.isArray(rpc.params)
-          ? (rpc.params as { name?: unknown; arguments?: unknown })
-          : null;
-        const outboundCalls = rpc?.method === "tools/call" && typeof rpcParams?.name === "string"
-          ? outboundCallsIn(rpcParams.name, rpcParams.arguments)
-          : [];
-        const outboundTool = outboundCalls.length ? outboundCalls[0].slug : null;
-        const refuseOutbound = (text: string, isToolError = true) => {
-          res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
-          return res.end(JSON.stringify({ jsonrpc: "2.0", id: rpc?.id ?? null, result: {
-            content: [{ type: "text", text }], ...(isToolError ? { isError: true } : {}),
-          } }));
-        };
         // An app this bot may not touch is refused outright, never turned into a question for the person.
         const connectorCalls = rpc?.method === "tools/call" && typeof rpcParams?.name === "string"
           ? connectorCallsIn(rpcParams.name, rpcParams.arguments)
           : [];
-        if (proactive.fence.refusesConnectorCall(currentSender, internalCapability.threadId, body)) return refuseOutbound(READ_AND_DRAFT_REFUSAL, false);
+        if (!preparedReadAndDraft && proactive.fence.refusesConnectorCall(currentSender, internalCapability.threadId, body)) return refuseOutbound(READ_AND_DRAFT_REFUSAL, false);
         const scopeRefusal = await teamConnections.callRefusal(internalCapability, connectorCalls); if (scopeRefusal) return refuseOutbound(scopeRefusal);
         const access = connectorAccessDecision(currentSender.connectorScopes, connectorCalls, serviceSlugs);
         if (!access.ok) {
@@ -14537,9 +14540,10 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         if (!held.ok) return refuseOutbound(held.text);
         const outboundApproved = held.approved;
         if (outboundApproved) requireActiveInternalCapability();
-        let dispatchRefusal: string | undefined;
-        const refuseDispatch: (text: string) => never = (text) => {
+        let dispatchRefusal: string | undefined, dispatchIsToolError = true;
+        const refuseDispatch: (text: string, isToolError?: boolean) => never = (text, isToolError = true) => {
           dispatchRefusal = text;
+          dispatchIsToolError = isToolError;
           throw new Error(text);
         };
         let upstream: Awaited<ReturnType<typeof composio.relayMcp>>;
@@ -14569,9 +14573,10 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
                 refuseDispatch(error instanceof Error ? error.message : String(error));
               }
             }
+            if (preparedReadAndDraft && !preparedReadAndDraft.commit()) refuseDispatch(READ_AND_DRAFT_REFUSAL, false);
           }, undefined, actor.access,
         ); } catch (error) {
-          if (dispatchRefusal) return refuseOutbound(dispatchRefusal);
+          if (dispatchRefusal) return refuseOutbound(dispatchRefusal, dispatchIsToolError);
           throw error;
         }
         const headers: Record<string, string> = {

@@ -108,6 +108,20 @@ describe("the fence around a read-and-draft run", () => {
     expect(gate.refusesConnectorCall(bot, "run-thread", call("GMAIL_CREATE_EMAIL_DRAFT", { thread_id: "t-other", recipient_email: "ada@x.test" }))).toBe(true);
     expect(gate.refusesConnectorCall(bot, "main-chat", call("GMAIL_SEND_EMAIL"))).toBe(false);
   });
+
+  it("does not consume an allowed draft until its outer connector grants have passed", () => {
+    const { gate, drafted, decided } = fence();
+    const prepared = gate.prepareConnectorCall(bot, "run-thread", call("GMAIL_CREATE_EMAIL_DRAFT", { thread_id: "t-ada", recipient_email: "ada@x.test" }));
+    const overlapping = gate.prepareConnectorCall(bot, "run-thread", call("GMAIL_CREATE_EMAIL_DRAFT", { thread_id: "t-ada", recipient_email: "ada@x.test" }));
+    expect(prepared).toMatchObject({ refused: false });
+    expect(drafted).toEqual([]);
+    expect(prepared?.commit()).toBe(true);
+    expect(drafted).toEqual(["t-ada"]);
+    expect(prepared?.commit()).toBe(true);
+    expect(overlapping?.commit()).toBe(false);
+    expect(drafted).toEqual(["t-ada"]);
+    expect(decided.at(-1)).toMatchObject({ decision: "auto-denied", source: "routine", rule: "read-and-draft", tool: "GMAIL_CREATE_EMAIL_DRAFT" });
+  });
 });
 
 describe("the fence around a new Cloud's first look", () => {

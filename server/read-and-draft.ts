@@ -73,6 +73,8 @@ export interface ReadAndDraftDeps {
 
 export interface DraftReply { threadId: string; to?: string }
 
+export interface PreparedConnectorCall { refused: boolean; commit(): boolean }
+
 /** The reply a draft call writes, or null when it is not a reply in one thread to one person. */
 export function draftReply(args: unknown): DraftReply | null {
   if (!isRecord(args) || typeof args.thread_id !== "string" || !args.thread_id) return null;
@@ -157,25 +159,60 @@ export function createReadAndDraft(deps: ReadAndDraftDeps) {
     return !ROUTES.has(route) && confines(threadId) && refuse(bot, threadId, route);
   }
 
-  /** True when the frame was refused; an allowed draft is counted, so a retry of the run never writes it twice. */
-  function refusesConnectorCall(bot: Pick<Bot, "id" | "name">, threadId: string, frame: unknown): boolean {
+  /** Checks a routine call without spending its draft allowance until outer connector grants have passed. */
+  function prepareConnectorCall(bot: Pick<Bot, "id" | "name">, threadId: string, frame: unknown): PreparedConnectorCall | null {
     const run = runOf(threadId);
-    const looking = run ? null : deps.look?.(threadId) ?? null;
-    if (!run && !looking) return false;
+    if (!run) return null;
     const drafts: DraftReply[] = [];
     const refused = refusedConnectorCall(frame, (reply) => {
       if (drafts.some((one) => one.threadId === reply.threadId)) return false;
-      const ok = run ? run.checkKey !== undefined && deps.mayDraft(run.checkKey, reply.threadId, reply.to) : looking!.draft(reply);
+      const ok = run.checkKey !== undefined && deps.mayDraft(run.checkKey, reply.threadId, reply.to);
+      if (ok) drafts.push(reply);
+      return ok;
+    });
+    if (refused !== null) {
+      refuse(bot, threadId, refused);
+      return { refused: true, commit: () => false };
+    }
+    let committed = false;
+    return {
+      refused: false,
+      commit() {
+        if (committed) return true;
+        if (drafts.some((reply) => run.checkKey === undefined || !deps.mayDraft(run.checkKey, reply.threadId, reply.to))) {
+          refuse(bot, threadId, DRAFT_TOOL);
+          return false;
+        }
+        committed = true;
+        for (const reply of drafts) deps.drafted(run.checkKey!, reply.threadId);
+        if (drafts.length) deps.wroteDrafts?.(bot.id, drafts.length);
+        return true;
+      },
+    };
+  }
+
+  /** True when the frame was refused; an allowed draft is counted, so a retry of the run never writes it twice. */
+  function refusesConnectorCall(bot: Pick<Bot, "id" | "name">, threadId: string, frame: unknown): boolean {
+    const prepared = prepareConnectorCall(bot, threadId, frame);
+    if (prepared) {
+      if (prepared.refused) return true;
+      return !prepared.commit();
+    }
+    const looking = deps.look?.(threadId) ?? null;
+    if (!looking) return false;
+    const drafts: DraftReply[] = [];
+    const refused = refusedConnectorCall(frame, (reply) => {
+      if (drafts.some((one) => one.threadId === reply.threadId)) return false;
+      const ok = looking.draft(reply);
       if (ok) drafts.push(reply);
       return ok;
     });
     if (refused !== null) return refuse(bot, threadId, refused);
-    if (run) for (const reply of drafts) deps.drafted(run.checkKey!, reply.threadId);
     if (drafts.length) deps.wroteDrafts?.(bot.id, drafts.length);
     return false;
   }
 
-  return { confines, answers, refusesRoute, refusesConnectorCall };
+  return { confines, answers, refusesRoute, prepareConnectorCall, refusesConnectorCall };
 }
 
 export type ReadAndDraft = ReturnType<typeof createReadAndDraft>;

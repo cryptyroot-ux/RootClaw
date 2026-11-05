@@ -82,8 +82,9 @@ there is no brief at all. Its row says
    `server/read-and-draft.ts`. Everything is allow-only:
    - the run runs at Ask, and the server answers permission requests itself,
      never as a card: only the native Composio multi-execute gateway reaches the
-     relay, where each connected-app call is checked; every other request is
-     refused;
+     relay, where each connected-app call is checked before generic grant
+     denials; calls allowed by the fence still need the bot's connector grants
+     and scopes, and every other request is refused;
    - its RootClaw routes are conversation reads, its own results, the
      engine's hooks and the connected-apps relay;
    - through the relay it reads Gmail and Google Calendar, and may write one
