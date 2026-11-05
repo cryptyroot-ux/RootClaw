@@ -9,7 +9,8 @@ import { removeTempDir } from "./testing/cleanup.ts";
 import { openSse } from "./testing/sse.ts";
 
 async function launch(boat?: string, enterprise?: { dir: string; licenseKey: string }) {
-  const fixture = await launchVerificationServer(process.env, undefined, undefined, undefined, enterprise, undefined, [], boat);
+  const testCapabilityKey = randomUUID();
+  const fixture = await launchVerificationServer({ ...process.env, ROOTCLAW_TEST_INTERNAL_CAPABILITY_KEY: testCapabilityKey }, undefined, undefined, undefined, enterprise, undefined, [], boat);
   const { url, dataDir } = fixture.info;
   fixture.fakeChat.set({ mode: "slow", gates: dataDir, errorStatus: 400 });
   const api = async (method: string, path: string, body?: unknown, token?: string, expectedStatus = 200) => {
@@ -21,6 +22,15 @@ async function launch(boat?: string, enterprise?: { dir: string; licenseKey: str
     const value = await response.json() as any;
     expect(response.status, `${method} ${path}: ${JSON.stringify(value)}`).toBe(expectedStatus);
     return value;
+  };
+  const mintCapability = async (botId: string, threadId: string) => {
+    const response = await fetch(`${url}/api/testing/internal-capability`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-rootclaw-test-capability": testCapabilityKey },
+      body: JSON.stringify({ botId, threadId, kind: "agents" }),
+    });
+    expect(response.status).toBe(201);
+    return (await response.json() as { token: string }).token;
   };
   const control = (args: string[]) => runControlOmb([...args, "--url", url]) as Promise<any>;
   const file = (threadId: string, extension: string) => join(dataDir, `${threadId}.${extension}`);
@@ -69,11 +79,11 @@ async function launch(boat?: string, enterprise?: { dir: string; licenseKey: str
       },
     };
   };
-  return { url, dataDir, api, control, file, dump, messages, botsNow, fakeChat, turnEnded, incidentsThread, pushes, close: () => fixture.close() };
+  return { url, dataDir, api, control, file, dump, messages, botsNow, fakeChat, turnEnded, incidentsThread, pushes, mintCapability, close: () => fixture.close() };
 }
 
 it("reports a crashed run to the Chief, who retries it from the incidents thread", async () => {
-  const { url, api, control, file, dump, messages, botsNow, fakeChat, close } = await launch();
+  const { url, api, control, file, dump, messages, botsNow, fakeChat, mintCapability, close } = await launch();
   try {
     const chief = (await control(["new-bot", "--name", "Clive", "--section", "Ops"])).bot;
     await api("PATCH", `/api/bots/${chief.id}`, { chiefOfStaff: true });
@@ -133,6 +143,9 @@ it("reports a crashed run to the Chief, who retries it from the incidents thread
     expect((await control(["wait", "--bot", chief.id, "--task", incidents.threadId, "--timeout", "30"])).status).toBe("settled");
     fakeChat.set({ toolCalls: [] });
     await expect.poll(async () => (await botsNow()).find((bot) => bot.id === ada.id)?.tasks?.find((task: any) => task.threadId === ada.activeTaskId)?.busy, { timeout: 20_000 }).toBe(true);
+    const adaCapability = await mintCapability(ada.id, ada.activeTaskId);
+    expect(await api("POST", "/api/internal/retry-thread", { toBotId: chief.id, toThreadId: incidents.threadId }, adaCapability, 403))
+      .toMatchObject({ error: "only a Chief of Staff can retry a teammate's thread" });
     await retryViaNativeTool(ada.activeTaskId, "Try Ada's retry again while it is running.", "still running");
     await retryViaNativeTool("no-such-thread", "Retry the unknown thread.", "no such thread");
     expect((await messages(incidents.threadId)).filter((message) => message.kind === "activity" && (message.tool?.name ?? "").startsWith("Retried Ada's thread #"))).toHaveLength(1);

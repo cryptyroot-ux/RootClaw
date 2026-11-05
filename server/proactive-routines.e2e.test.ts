@@ -215,17 +215,17 @@ describe("RootClaw keeps an eye on the day, hidden from the sidebar", () => {
         preview: { subject: "Q3 numbers due Friday", body: "Can you send the Q3 numbers by Friday?" },
       }];
       const attempts = [
+        { tool_slug: "GMAIL_CREATE_EMAIL_DRAFT", arguments: { thread_id: "thread-important", recipient_email: "mallory@example.test", body: "Wrong recipient." } },
         { tool_slug: "GMAIL_CREATE_EMAIL_DRAFT", arguments: { thread_id: "thread-important", recipient_email: "ada@example.test", body: "I will send the numbers Friday." } },
         { tool_slug: "GMAIL_CREATE_EMAIL_DRAFT", arguments: { thread_id: "thread-important", recipient_email: "ada@example.test", body: "A duplicate draft." } },
         { tool_slug: "GMAIL_CREATE_EMAIL_DRAFT", arguments: { thread_id: "thread-unchecked", recipient_email: "ada@example.test", body: "Draft outside the checked thread." } },
-        { tool_slug: "GMAIL_CREATE_EMAIL_DRAFT", arguments: { thread_id: "thread-important", recipient_email: "mallory@example.test", body: "Wrong recipient." } },
         { tool_slug: "GMAIL_CREATE_EMAIL_DRAFT", arguments: { thread_id: "thread-important", recipient_email: "ada@example.test", cc: ["mallory@example.test"], body: "Extra recipient." } },
         { tool_slug: "GMAIL_SEND_EMAIL", arguments: { recipient_email: "ada@example.test", subject: "Q3 numbers", body: "Sending now." } },
         { tool_slug: "GMAIL_REPLY_TO_THREAD", arguments: { thread_id: "thread-important", body: "Replying now." } },
         { tool_slug: "GMAIL_DELETE_MESSAGE", arguments: { message_id: "important-1" } },
         { tool_slug: "SLACK_SEND_MESSAGE", arguments: { channel: "general", text: "Q3 numbers" } },
       ];
-      const denied = attempts.slice(1).map((attempt) => attempt.tool_slug);
+      const denied = attempts.filter((_, index) => index !== 1).map((attempt) => attempt.tool_slug);
       fencedFixture.fakeChat.set({ routes: [{
         match: "Q3 numbers due Friday",
         toolCalls: attempts.map((tool, round) => ({ name: NATIVE_COMPOSIO_TOOL, input: { tools: [tool] }, round })),
