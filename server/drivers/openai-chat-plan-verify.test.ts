@@ -8,7 +8,7 @@ process.env.ROOTCLAW_RETRY_SCALE ??= "0.001";
 import type { SendTurnInput } from "../contracts.ts";
 import { recordEvents } from "../testing/events.ts";
 import { OpenAICompatDriver } from "./openai-compat.ts";
-import { PLAN_TAG } from "./plan-verify.ts";
+import { PLAN_KEEP_HINT, PLAN_TAG } from "./plan-verify.ts";
 
 interface Body { messages: Array<{ role: string; content: unknown }>; tools?: Array<{ function: { name: string } }>; stream?: boolean }
 const chunk = (delta: unknown, finish: string | null = null) => ({ choices: [{ index: 0, delta, finish_reason: finish }] });
@@ -161,6 +161,21 @@ describe("planner/verifier in a native turn", () => {
     const recorded = plans(f.recorder.events);
     expect(recorded.map((event) => [event.revision, event.reason])).toEqual([[1, "initial"], [2, "replan"], [3, "completed"]]);
     expect(recorded[1]!.steps.map((step) => step.status)).toEqual(["done", "pending", "pending"]);
+  });
+
+  it("keeps the latest plan and hint after compaction between planner rounds", async () => {
+    const f = await fixture(["plan", "status", "answer"]);
+    const done = await f.run({ planVerify: { mode: "plan", maxVerifyRetries: 1 }, turnContext: { compactAt: 1 } });
+
+    expect(done).toMatchObject({ ok: true, stopReason: "end_turn" });
+    expect(f.streamed).toHaveLength(3);
+    const messages = f.streamed[2]!.messages;
+    const pinned = messages.filter((message) => String(message.content).startsWith(PLAN_TAG));
+    expect(messages[0]!.content).toBe("You are a bot.");
+    expect(pinned).toHaveLength(1);
+    expect(messages.at(-1)).toBe(pinned[0]);
+    expect(String(pinned[0]!.content)).toContain(PLAN_KEEP_HINT);
+    expect(String(pinned[0]!.content)).toContain("1. [x] Find the bug");
   });
 
   it("plans without checking in plan-only mode", async () => {

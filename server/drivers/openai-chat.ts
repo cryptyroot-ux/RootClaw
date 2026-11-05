@@ -708,8 +708,8 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           window,
           budget,
           planning,
-          plan,
-          planHint,
+          get plan() { return plan; },
+          get planHint() { return planHint; },
           requestsLeft, consumeRequest: () => { requests++; },
           driverKind: options.driverKind,
         });
