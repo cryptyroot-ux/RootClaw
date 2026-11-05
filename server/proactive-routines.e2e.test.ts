@@ -171,6 +171,7 @@ describe("RootClaw keeps an eye on the day, hidden from the sidebar", () => {
       const attempts = [
         { tool_slug: "GMAIL_CREATE_EMAIL_DRAFT", arguments: { thread_id: "thread-important", recipient_email: "ada@example.test", body: "I will send the numbers Friday." } },
         { tool_slug: "GMAIL_CREATE_EMAIL_DRAFT", arguments: { thread_id: "thread-important", recipient_email: "ada@example.test", body: "A duplicate draft." } },
+        { tool_slug: "GMAIL_CREATE_EMAIL_DRAFT", arguments: { thread_id: "thread-unchecked", recipient_email: "ada@example.test", body: "Draft outside the checked thread." } },
         { tool_slug: "GMAIL_CREATE_EMAIL_DRAFT", arguments: { thread_id: "thread-important", recipient_email: "mallory@example.test", body: "Wrong recipient." } },
         { tool_slug: "GMAIL_CREATE_EMAIL_DRAFT", arguments: { thread_id: "thread-important", recipient_email: "ada@example.test", cc: ["mallory@example.test"], body: "Extra recipient." } },
         { tool_slug: "GMAIL_SEND_EMAIL", arguments: { recipient_email: "ada@example.test", subject: "Q3 numbers", body: "Sending now." } },
