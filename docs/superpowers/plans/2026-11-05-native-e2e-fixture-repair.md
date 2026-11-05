@@ -132,33 +132,23 @@
 
 ### Task 5: Resolve retired contracts and independent failure clusters
 
+**Current narrowed scope:** The Phase 5 execution plan is `docs/superpowers/plans/2026-11-05-phase-5-native-e2e-repair.md`. It covers exactly `hooks`, `helper-model`, `cloud-team-engine-homes`, `computer-engine-removal`, `engine-status-reads`, and `proactive-routines`; other failures in the original ledger are not part of this phase. Review and approve that plan before implementation.
+
 **Files:**
-- Modify only files still failing in the Task 1 ledger, including as applicable: `server/hooks.e2e.test.ts`, `server/helper-model.e2e.test.ts`, `server/cloud-team-engine-homes.e2e.test.ts`, `server/computer-engine-removal.e2e.test.ts`, `server/engine-status-reads.e2e.test.ts`, `server/proactive-routines.e2e.test.ts`, and tests with stale `/api/instances/claude` or legacy model selections.
+- Modify only the six suites named in the linked Phase 5 plan.
 - Modify runtime files only if a separate product regression is demonstrated.
 
 **Interfaces:**
-- Consumes: the current native instance/model and prompt contracts, plus Task 1's reproduced error evidence.
-- Produces: tests aligned with supported behavior, each remaining failure fixed or documented with a reproducible environmental cause.
+- Consumes: the six-suite scope and reproduced evidence in the linked Phase 5 plan.
+- Produces: each in-scope test passing against current behavior or a precise disposition for a retired contract. This does not resolve the rest of the original ledger.
 
-- [ ] **Step 1: Re-run the remaining failed Vitest paths from the ledger**
+- [ ] **Step 1: Execute the reviewed six-suite Phase 5 plan**
 
-  Run: `pnpm exec vitest run` with the ledger's remaining failed file paths. Update each row with the new result and first causal error.
+  Follow `docs/superpowers/plans/2026-11-05-phase-5-native-e2e-repair.md` using the execution method approved for that plan. Its Tasks 1–5 own the narrowed reproductions, fixture changes, and individual test dispositions.
 
-- [ ] **Step 2: Decide each legacy test from the current product contract**
+- [ ] **Step 2: Complete the narrowed Phase 5 verification**
 
-  If the test covers supported user behavior, migrate its model/provider setup and keep its behavior assertions. If it asserts only retired CLI-specific behavior (such as a Claude transcript directory or CLI lifecycle hook), document the removed contract and replace it with a current native test where an equivalent supported behavior exists; otherwise remove only that obsolete test. Do not convert unrelated failures into skips.
-
-- [ ] **Step 3: Reproduce each remaining prompt, schema, evidence, timeout, and socket failure**
-
-  Run the affected test by its exact name from the ledger and capture the first causal error. Do not infer a shared cause from similar timeout or assertion text.
-
-- [ ] **Step 4: Trace each reproduced failure to its current contract**
-
-  For stale fixtures or retired engine-only behavior, update or replace only the affected test as specified in Step 2. For a confirmed product defect, add the narrow failing regression before changing runtime code. If a failure is environmental, record the exact reproduction and evidence without claiming it passed.
-
-- [ ] **Step 5: Re-run each affected file and update the ledger**
-
-  Expected: every original failing case is either green or has a specific, reproducible explanation; no cluster is declared resolved based only on a reduced failure count.
+  Follow Task 6 of the linked plan. Expected: all retained candidate tests and its specified static checks pass, with each retired case documented; this does not resolve other failures in the original ledger.
 
 ### Task 6: Verify the complete pipeline
 

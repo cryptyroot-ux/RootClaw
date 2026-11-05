@@ -1,26 +1,24 @@
-// Real server, fake Claude CLI, and a loopback Boat that fails the test on any call to Boat's own agent
-// (/prompt, /prompts/{id}, /events, /interrupt).
+// Real server with loopback chat and Boat fixtures; Boat's own agent endpoints fail the test.
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, type Server } from "node:http";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { runControlOmb } from "../scripts/control-rootclaw.ts";
-import { SNAPSHOT_REUSE_MS } from "./harness/registry.ts";
+import { FAKE_OPENAI_MODEL, startFakeOpenAiChat, type FakeOpenAiChat } from "./testing/fake-openai-chat.ts";
 import { freePortBlock } from "./testing/ports.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
-const FAKE_CLI = join(ROOT, "server/testing/fake-claude-cli.ts");
 const ENGINE_NAME = "Verification Claude";
+const NATIVE_ENGINE = { driver: "openai-compat", displayName: ENGINE_NAME };
 const REMOVED = "Its previous engine is no longer part of RootClaw.";
 const JPEG = Buffer.from("/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAMCAgMCAgMDAwMEAwMEBQgFBQQEBQoHBwYIDAoMDAsKCwsNDhIQDQ4RDgsLEBYQERMUFRUVDA8XGBYUGBIUFRT/2wBDAQMEBAUEBQkFBQkUDQsNFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBT/wAARCAABAAEDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD8qqKKKAP/2Q==", "base64");
 
 function install(home: string, boatPort: () => number) {
   const data = join(home, "data");
-  const dumpFile = join(home, "dump.json");
   let child: ChildProcess | null = null;
   let base = "";
   let output = "";
@@ -60,20 +58,10 @@ function install(home: string, boatPort: () => number) {
     (await api("GET", `/api/threads/${threadId}/messages?limit=50`)).messages
       .filter((message: any) => message.kind === "activity").map((message: any) => String(message.tool?.name));
   const moveLines = async (threadId: string) => (await lines(threadId)).filter(line => line.includes(REMOVED));
-  const dump = async () => {
-    let parsed: any = null;
-    await expect.poll(() => {
-      if (!existsSync(dumpFile)) return false;
-      try { parsed = JSON.parse(readFileSync(dumpFile, "utf8")); return true; } catch { return false; }
-    }, { timeout: 15_000 }).toBe(true);
-    return parsed;
-  };
-  const turn = async (botId: string, threadId: string, text: string) => {
-    rmSync(dumpFile, { force: true });
+  const turn = async (botId: string, threadId: string, text: string): Promise<void> => {
     await control(["send", "--bot", botId, "--task", threadId, "--text", text]);
     const settled = await control(["wait", "--bot", botId, "--task", threadId, "--timeout", "30"]);
     expect(settled.status, JSON.stringify(settled)).toBe("settled");
-    return dump();
   };
   async function start() {
     const port = await freePortBlock([0, 1]);
@@ -104,17 +92,18 @@ function install(home: string, boatPort: () => number) {
     child = null;
     await waitForExit(proc, { signal: "SIGTERM" });
   }
-  return { data, dumpFile, api, send, bots, bot, editSavedBot, editConfig, lines, moveLines, turn, start, stop, log: () => output };
+  return { data, api, send, bots, bot, editSavedBot, editConfig, lines, moveLines, turn, start, stop, log: () => output };
 }
 
-const claudeEntry = (dumpFile: string) => ({
-  driver: "claudeAgent", displayName: ENGINE_NAME, config: { cli: FAKE_CLI }, environment: { FAKE_CLAUDE_DUMP: dumpFile },
-});
+let fakeChat: FakeOpenAiChat;
+const extraChats: FakeOpenAiChat[] = [];
+const nativeConfig = () => ({ openaiCompat: { url: fakeChat.url, key: "fixture-only", model: FAKE_OPENAI_MODEL }, instances: { openaiCompat: NATIVE_ENGINE }, defaultModelSelection: { instanceId: "openaiCompat", model: FAKE_OPENAI_MODEL } });
 const onEngine = (model: string) => ({ instanceId: "computer", model });
+const replacement = { instanceId: "openaiCompat", model: FAKE_OPENAI_MODEL };
 /** A bot (and each of its conversations) as v0.1.94 saved it on the engine. */
 const savedOnEngine = (saved: any) => {
-  saved.modelSelection = onEngine("claude-fable-5");
-  for (const task of saved.tasks) task.modelSelection = onEngine("claude-fable-5");
+  saved.modelSelection = onEngine(FAKE_OPENAI_MODEL);
+  for (const task of saved.tasks) task.modelSelection = onEngine(FAKE_OPENAI_MODEL);
 };
 
 describe("removing the Computer engine", () => {
@@ -136,6 +125,7 @@ describe("removing the Computer engine", () => {
   };
 
   beforeAll(async () => {
+    fakeChat = await startFakeOpenAiChat();
     boatServer = createServer(async (req, res) => {
       const path = new URL(req.url ?? "/", "http://box.fixture").pathname;
       let raw = ""; for await (const part of req) raw += part;
@@ -166,6 +156,8 @@ describe("removing the Computer engine", () => {
     await new Promise<void>(resolve => boatServer.listen(0, "127.0.0.1", resolve));
   });
   afterAll(async () => {
+    if (fakeChat) await fakeChat.stop();
+    for (const chat of extraChats) await chat.stop();
     for (const server of running) await server.stop();
     if (boatServer) { boatServer.closeAllConnections(); await new Promise<void>(resolve => boatServer.close(() => resolve())); }
     for (const home of homes) await removeTempDir(home);
@@ -174,11 +166,7 @@ describe("removing the Computer engine", () => {
   it("moves bots off it once, keeps each conversation where it worked, and never hands a turn to Boat's own agent", async () => {
     const { server } = fresh();
     // A turn's first computer call is what creates the Boat, as with a real model, so this engine uses the cloud computer.
-    const claudeEntry = (dumpFile: string) => ({
-      driver: "claudeAgent", displayName: ENGINE_NAME, config: { cli: FAKE_CLI },
-      environment: { FAKE_CLAUDE_DUMP: dumpFile, FAKE_CLAUDE_USES_CLOUD_COMPUTER: "1" },
-    });
-    server.editConfig(config => Object.assign(config, { box: { token: "box_verification_fixture" }, instances: { claude: claudeEntry(server.dumpFile) } }));
+    server.editConfig(config => Object.assign(config, { ...nativeConfig(), box: { token: "box_verification_fixture" } }));
     await server.start();
     const [starter] = await server.bots();
     const { task: opened } = await server.api("POST", `/api/bots/${starter.id}/tasks`, {});
@@ -192,9 +180,9 @@ describe("removing the Computer engine", () => {
     // Everything as v0.1.94 saved it. The fleet, the new-bot defaults and the
     // automatic-recovery backup name the engine.
     server.editConfig(config => Object.assign(config, {
-      instances: { claude: claudeEntry(server.dumpFile), computer: { driver: "boxAgent" } },
-      defaultModelSelection: { instanceId: "computer", model: "claude-fable-5" },
-      newBotDefaults: { profile: { modelSelection: { instanceId: "computer", model: "claude-fable-5" } } },
+      ...nativeConfig(), instances: { openaiCompat: NATIVE_ENGINE, computer: { driver: "boxAgent" } },
+      defaultModelSelection: { instanceId: "computer", model: FAKE_OPENAI_MODEL },
+      newBotDefaults: { profile: { modelSelection: { instanceId: "computer", model: FAKE_OPENAI_MODEL } } },
       automaticRecovery: { enabled: true, backup: { instanceId: "computer", model: "sonnet" } },
     }));
     // The starter: on the engine with Works on Cloud, another conversation
@@ -204,13 +192,13 @@ describe("removing the Computer engine", () => {
       saved.computer = "cloud";
       saved.fallback = [onEngine("sonnet")];
       saved.resumeCursors = { computer: "boat-prompt-run" };
-      for (const task of saved.tasks) task.modelSelection = onEngine(task.threadId === other ? "gpt-5.4" : "claude-fable-5");
+      for (const task of saved.tasks) task.modelSelection = onEngine(task.threadId === other ? "gpt-5.4" : FAKE_OPENAI_MODEL);
     });
     // Atlas: on the engine with Works on Auto, the default for new bots.
     server.editSavedBot(auto.id, saved => {
       saved.modelSelection = onEngine("claude-fable-5");
       delete saved.computer;
-      for (const task of saved.tasks) task.modelSelection = onEngine("claude-fable-5");
+      for (const task of saved.tasks) task.modelSelection = onEngine(FAKE_OPENAI_MODEL);
     });
     // Iris: on Claude and Auto, with its open conversation switched to the engine.
     server.editSavedBot(mixed.id, saved => {
@@ -221,7 +209,7 @@ describe("removing the Computer engine", () => {
     const { instances } = await server.api("GET", "/api/instances");
     expect(instances.map((instance: any) => instance.instanceId)).not.toContain("computer");
     expect(instances.map((instance: any) => instance.driverKind)).not.toContain("boxAgent");
-    const replacement = { instanceId: "claude", model: instances.find((instance: any) => instance.instanceId === "claude").models.default };
+    expect(instances.map((instance: any) => instance.instanceId)).toContain("openaiCompat");
 
     const movedStarter = await server.bot(starter.id);
     expect(movedStarter.modelSelection).toEqual(replacement);
@@ -264,71 +252,89 @@ describe("removing the Computer engine", () => {
     expect(await server.moveLines(auto.threadId)).toHaveLength(1);
     expect(await server.moveLines(mixedConversation.threadId)).toHaveLength(1);
 
-    const cloudTurn = await server.turn(starter.id, main, "Take a screenshot of the cloud computer.");
-    expect(cloudTurn.argv[cloudTurn.argv.indexOf("--model") + 1]).toBe(replacement.model);
-    expect(cloudTurn.mcpConfig.mcpServers.computer.args).toEqual([expect.stringMatching(/harness-mcp-proxy\.(?:ts|js)$/), "computer"]);
+    fakeChat.set({ toolCalls: [{ name: "computer_screenshot" }] });
+    const requestStart = fakeChat.requests.length;
+    await server.turn(starter.id, main, "Take a screenshot of the cloud computer.");
+    const cloudRequest = fakeChat.requests.slice(requestStart).find(request => request.model === FAKE_OPENAI_MODEL)!;
+    expect(cloudRequest.model).toBe(replacement.model);
+    expect((cloudRequest.tools as any[]).map(tool => tool.function.name)).toContain("computer_screenshot");
     expect(boxesCreated).toBe(1);
     expect(agentCalls).toEqual([]);
 
     const { task: atlasNew } = await server.api("POST", `/api/bots/${auto.id}/tasks`, {});
-    const autoMovedTurn = await server.turn(auto.id, atlasNew.threadId, "Take a screenshot of the cloud computer.");
-    expect(autoMovedTurn.mcpConfig.mcpServers.computer.args).toEqual([expect.stringMatching(/harness-mcp-proxy\.(?:ts|js)$/), "computer"]);
+    const atlasRequestStart = fakeChat.requests.length;
+    await server.turn(auto.id, atlasNew.threadId, "Take a screenshot of the cloud computer.");
+    expect(fakeChat.requests.slice(atlasRequestStart).some(request => (request.tools as any[] ?? []).some(tool => tool.function.name === "computer_screenshot"))).toBe(true);
     expect(boxesCreated).toBe(2);
     expect(agentCalls).toEqual([]);
 
     await server.api("PATCH", `/api/bots/${starter.id}`, { computer: null });
     const callsBeforeAuto = boatCalls;
-    const autoTurn = await server.turn(starter.id, other, "what is 2+2?");
-    expect(autoTurn.mcpConfig?.mcpServers?.computer?.args?.[1]).not.toBe("computer");
+    const autoRequestStart = fakeChat.requests.length;
+    await server.turn(starter.id, other, "what is 2+2?");
+    const autoRequest = fakeChat.requests.slice(autoRequestStart).find(request => request.model === FAKE_OPENAI_MODEL);
+    expect(autoRequest).toBeDefined();
+    expect((autoRequest!.tools as any[]).map(tool => tool.function.name)).not.toContain("computer_screenshot");
     expect(boatCalls - callsBeforeAuto, "an Auto turn reached the Boat account").toBe(0);
     expect(agentCalls).toEqual([]);
     await server.stop();
   }, 180_000);
 
   it("moves a bot later, as soon as an engine is there to move it to", async () => {
-    const { home, server } = fresh();
-    // Its only engine is not installed yet, so nothing can take the bot at
-    // start. (A fleet without a "claude" id is kept exactly as written.)
-    const cli = join(home, "later", "claude.mjs");
-    const later = { driver: "claudeAgent", displayName: ENGINE_NAME, config: { cli }, environment: { FAKE_CLAUDE_DUMP: server.dumpFile } };
-    server.editConfig(config => Object.assign(config, { box: { token: "box_verification_fixture" }, instances: { later } }));
+    const { server } = fresh();
+    server.editConfig(config => Object.assign(config, { box: { token: "box_verification_fixture" } }));
     await server.start();
     const [starter] = await server.bots();
     await server.stop();
-    server.editConfig(config => Object.assign(config, { instances: { later, computer: { driver: "boxAgent" } } }));
+    server.editConfig(config => Object.assign(config, {
+      openaiCompat: { managedModels: [] },
+      instances: { openaiCompat: { ...NATIVE_ENGINE, config: { managedModels: [] } }, computer: { driver: "boxAgent" } },
+    }));
     server.editSavedBot(starter.id, saved => {
-      saved.modelSelection = { instanceId: "computer", model: "claude-fable-5" };
-      for (const task of saved.tasks) task.modelSelection = { instanceId: "computer", model: "claude-fable-5" };
+      saved.modelSelection = { instanceId: "computer", model: FAKE_OPENAI_MODEL };
+      for (const task of saved.tasks) task.modelSelection = { instanceId: "computer", model: FAKE_OPENAI_MODEL };
     });
 
     await server.start();
-    await server.api("GET", "/api/instances");
-    expect((await server.bot(starter.id)).modelSelection.instanceId).toBe("computer");
+    const emptyCatalog = await server.api("GET", "/api/instances");
+    const emptyNative = emptyCatalog.instances.find((instance: any) => instance.instanceId === "openaiCompat");
+    expect(emptyNative.models).toEqual({ default: "", options: [] });
+    expect((await server.bot(starter.id)).modelSelection).toEqual(onEngine(FAKE_OPENAI_MODEL));
+    expect(await server.moveLines(starter.threadId)).toEqual([]);
 
-    // Claude arrives (an install, a sign-in or a key); the next look at the
-    // engines moves the bot without a restart. Installed outside the app, it is
-    // seen once the last status read is older than the reuse window.
-    mkdirSync(dirname(cli), { recursive: true });
-    writeFileSync(cli, `#!/usr/bin/env node\nawait import(${JSON.stringify(pathToFileURL(FAKE_CLI).href)});\n`, { mode: 0o755 });
-    await new Promise((resolve) => setTimeout(resolve, SNAPSHOT_REUSE_MS));
+    await server.stop();
+    const laterChat = await startFakeOpenAiChat();
+    extraChats.push(laterChat);
+    const catalogResponse = await fetch(`${laterChat.url}/models`);
+    expect(catalogResponse.ok).toBe(true);
+    const providerCatalog = await catalogResponse.json() as { data?: Array<{ id?: string }> };
+    expect(providerCatalog.data?.map(model => model.id)).toContain(FAKE_OPENAI_MODEL);
+    server.editConfig(config => Object.assign(config, {
+      openaiCompat: { url: laterChat.url, key: "fixture-only", model: FAKE_OPENAI_MODEL },
+      instances: { openaiCompat: NATIVE_ENGINE, computer: { driver: "boxAgent" } },
+    }));
+    await server.start();
     const { instances } = await server.api("GET", "/api/instances");
-    const model = instances.find((instance: any) => instance.instanceId === "later").models.default;
     await expect.poll(async () => (await server.bot(starter.id)).modelSelection, { timeout: 15_000 })
-      .toEqual({ instanceId: "later", model });
+      .toEqual(replacement);
     expect(await server.moveLines(starter.threadId)).toEqual([
       `${starter.name} now uses ${ENGINE_NAME}. ${REMOVED} ${starter.name} still works on its cloud desktop.`,
     ]);
+    const requestStart = laterChat.requests.length;
+    await server.turn(starter.id, starter.threadId, "Confirm the newly available provider.");
+    await expect.poll(async () => laterChat.requests.slice(requestStart).some(request =>
+      request.model === FAKE_OPENAI_MODEL && request.stream === true), { timeout: 15_000 }).toBe(true);
     await server.stop();
   }, 120_000);
 
   it("keeps serving when the move fails at start, and moves the bots on a later try", async () => {
     const { server } = fresh();
     const teams = join(server.data, "section-contexts.json");
-    server.editConfig(config => Object.assign(config, { box: { token: "box_verification_fixture" }, instances: { claude: claudeEntry(server.dumpFile) } }));
+    server.editConfig(config => Object.assign(config, { ...nativeConfig(), box: { token: "box_verification_fixture" } }));
     await server.start();
     const [starter] = await server.bots();
     await server.stop();
-    server.editConfig(config => Object.assign(config, { instances: { claude: claudeEntry(server.dumpFile), computer: { driver: "boxAgent" } } }));
+    server.editConfig(config => Object.assign(config, { instances: { openaiCompat: NATIVE_ENGINE, computer: { driver: "boxAgent" } } }));
     server.editSavedBot(starter.id, savedOnEngine);
     // An unreadable teams file stops every save of the bots, the move's too.
     writeFileSync(teams, "not json");
@@ -340,7 +346,7 @@ describe("removing the Computer engine", () => {
 
     rmSync(teams);
     await server.send(starter.id, starter.threadId, "hello");
-    await expect.poll(async () => (await server.bot(starter.id)).modelSelection.instanceId, { timeout: 15_000 }).toBe("claude");
+    await expect.poll(async () => (await server.bot(starter.id)).modelSelection.instanceId, { timeout: 15_000 }).toBe("openaiCompat");
     expect((await server.bot(starter.id)).computer).toBe("cloud");
     expect(await server.moveLines(starter.threadId)).toEqual([
       `${starter.name} now uses ${ENGINE_NAME}. ${REMOVED} ${starter.name} still works on its cloud desktop.`,
@@ -351,20 +357,17 @@ describe("removing the Computer engine", () => {
   it("keeps a bot on Auto when the engine it moves to can't use a computer, and says so", async () => {
     const { server } = fresh();
     // An OpenAI-compatible endpoint with tools off: it answers, but has no computer.
-    const chat = {
-      driver: "openai-compat", displayName: "Chat Only",
-      config: { url: "http://127.0.0.1:9/v1", key: "sk-verification-fixture", tools: false, model: "chat-model" },
-    };
-    server.editConfig(config => Object.assign(config, { box: { token: "box_verification_fixture" }, instances: { chat } }));
+    const chat = { ...NATIVE_ENGINE, displayName: "Chat Only", config: { tools: false } };
+    server.editConfig(config => Object.assign(config, { ...nativeConfig(), box: { token: "box_verification_fixture" }, instances: { openaiCompat: chat } }));
     await server.start();
     const [starter] = await server.bots();
     await server.stop();
-    server.editConfig(config => Object.assign(config, { instances: { chat, computer: { driver: "boxAgent" } } }));
+    server.editConfig(config => Object.assign(config, { instances: { openaiCompat: chat, computer: { driver: "boxAgent" } } }));
     server.editSavedBot(starter.id, saved => { savedOnEngine(saved); delete saved.computer; });
 
     await server.start();
     const moved = await server.bot(starter.id);
-    expect(moved.modelSelection).toEqual({ instanceId: "chat", model: "chat-model" });
+    expect(moved.modelSelection).toEqual(replacement);
     expect(moved.computer).toBeUndefined();
     expect(await server.moveLines(starter.threadId)).toEqual([
       `${starter.name} now uses Chat Only. ${REMOVED} Chat Only can't use a desktop, so ${starter.name} no longer works ` +
