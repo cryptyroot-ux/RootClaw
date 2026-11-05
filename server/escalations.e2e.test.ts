@@ -1,7 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { basename } from "node:path";
 import { expect, it } from "vitest";
 import { launchVerificationServer, runControlOmb } from "../scripts/control-rootclaw.ts";
 import { openSse } from "./testing/sse.ts";
@@ -9,6 +7,7 @@ import { openSse } from "./testing/sse.ts";
 async function launch() {
   const fixture = await launchVerificationServer(process.env);
   const { url, dataDir } = fixture.info;
+  const fakeChat = fixture.fakeChat;
   const api = async (method: string, path: string, body?: unknown, expectedStatus = 200) => {
     const response = await fetch(url + path, {
       method,
@@ -20,36 +19,24 @@ async function launch() {
     return value;
   };
   const control = (args: string[]) => runControlOmb([...args, "--url", url]) as Promise<any>;
-  const file = (threadId: string, extension: string) => join(dataDir, `${threadId}.${extension}`);
+  const requestFor = (threadId: string) => fakeChat.requests.findLast((request: any) => {
+    if (request.stream !== true) return false;
+    const system = (request.messages as any[]).find((message) => message.role === "system")?.content;
+    const cwd = typeof system === "string" ? /"currentWorkingFolder"\s*:\s*"((?:\\.|[^"])*)"/.exec(system)?.[1] : undefined;
+    return cwd ? basename(JSON.parse(`"${cwd}"`)) === threadId : false;
+  }) as any;
   const dump = async (threadId: string) => {
-    await expect.poll(() => existsSync(file(threadId, "json")), { timeout: 20_000 }).toBe(true);
-    return JSON.parse(readFileSync(file(threadId, "json"), "utf8"));
+    await expect.poll(() => requestFor(threadId), { timeout: 20_000 }).toBeTruthy();
+    const request = requestFor(threadId);
+    const messages = request.messages as any[];
+    return {
+      ...request,
+      prompt: messages,
+      systemPrompt: messages.filter((message) => message.role === "system").map((message) => message.content).join("\n"),
+    };
   };
   const messages = async (threadId: string) => (await api("GET", `/api/threads/${threadId}/messages?limit=100`)).messages as any[];
   const botsNow = async () => (await api("GET", "/api/bots")).bots as any[];
-  const planFile = join(dataDir, "cli-plan.json");
-  const plan = (threadId: string, entry: Record<string, unknown>) => {
-    const current = existsSync(planFile) ? JSON.parse(readFileSync(planFile, "utf8")) : {};
-    current[threadId] = entry;
-    writeFileSync(planFile, JSON.stringify(current));
-  };
-  const useCli = async () => {
-    const wrapper = join(dataDir, "escalation-cli.mjs");
-    writeFileSync(wrapper, [
-      "#!/usr/bin/env node",
-      'import { existsSync, readFileSync } from "node:fs";',
-      'import { join } from "node:path";',
-      'const at = process.argv.indexOf("--mcp-config");',
-      'const thread = at < 0 ? "probe" : JSON.parse(readFileSync(process.argv[at + 1], "utf8")).mcpServers?.agents?.env?.ROOTCLAW_THREAD_ID ?? "probe";',
-      `const own = existsSync(${JSON.stringify(planFile)}) ? JSON.parse(readFileSync(${JSON.stringify(planFile)}, "utf8"))[thread] : undefined;`,
-      "if (own?.replies) process.env.FAKE_CLAUDE_REPLIES = JSON.stringify(own.replies);",
-      "if (own?.tools) process.env.FAKE_CLAUDE_TOOL_CALLS = JSON.stringify(own.tools);",
-      "if (own?.mode) process.env.FAKE_CLAUDE_MODE = own.mode;",
-      `process.env.FAKE_CLAUDE_DUMP = join(${JSON.stringify(dataDir)}, thread + ".json");`,
-      `await import(${JSON.stringify(pathToFileURL(join(process.cwd(), "server/testing/fake-claude-cli.ts")).href)});`,
-    ].join("\n"), { mode: 0o700 });
-    await api("PATCH", "/api/instances/claude", { cli: wrapper });
-  };
   await api("PATCH", "/api/config", { features: { chiefEscalations: true } });
   const turnEnded = (botId: string, threadId: string) => expect.poll(async () =>
     (await botsNow()).find((b) => b.id === botId)?.tasks?.find((t: any) => t.threadId === threadId)?.busy, { timeout: 30_000 }).toBe(false);
@@ -57,23 +44,25 @@ async function launch() {
     await expect.poll(async () => (await botsNow()).find((b) => b.id === botId)?.tasks?.some((t: any) => t.title === "Team escalations"), { timeout: 20_000 }).toBe(true);
     return (await botsNow()).find((b) => b.id === botId).tasks.find((t: any) => t.title === "Team escalations") as { threadId: string };
   };
-  return { url, dataDir, api, control, dump, messages, botsNow, plan, useCli, turnEnded, escalationsThread, close: () => fixture.close() };
+  return { url, dataDir, api, control, dump, messages, botsNow, fakeChat, turnEnded, escalationsThread, close: () => fixture.close() };
 }
 
 it("delivers a pending peer-comm approval card to the Chief's escalations thread", async () => {
-  const { api, control, dump, messages, plan, useCli, turnEnded, escalationsThread, close } = await launch();
+  const { api, control, dump, messages, fakeChat, turnEnded, escalationsThread, close } = await launch();
   try {
     const chief = (await control(["new-bot", "--name", "Clive", "--section", "Ops"])).bot;
     await api("PATCH", `/api/bots/${chief.id}`, { chiefOfStaff: true });
     const ada = (await control(["new-bot", "--name", "Ada", "--section", "Ops"])).bot;
     await api("PATCH", `/api/bots/${ada.id}`, { approvePeerComms: true, approvalMode: "ask" });
     const hedge = (await control(["new-bot", "--name", "Hedge", "--section", "Ops"])).bot;
-    await useCli();
-    plan(ada.activeTaskId, {
-      tools: [{ name: "coordinate_bots", server: "agents", input: { bot_ids: [hedge.id], message: "Hedge, a quick one before I file the memo.", consult: true } }],
-      replies: ["I asked Hedge and will wait for the person's say-so."],
-    });
-    plan(chief.activeTaskId, { replies: ["Standing by."] });
+    fakeChat.set({ routes: [{
+      match: "File the memo after checking with Hedge",
+      toolCalls: [
+        { name: "load_tools", input: { names: ["coordinate_bots"] } },
+        { name: "agents_coordinate_bots", input: { bot_ids: [hedge.id], message: "Hedge, a quick one before I file the memo.", consult: true }, round: 1 },
+      ],
+      reply: "I asked Hedge and will wait for the person's say-so.",
+    }] });
 
     await control(["send", "--bot", ada.id, "--text", "File the memo after checking with Hedge."]);
     await expect.poll(async () => (await messages(ada.activeTaskId)).some((m) => m.kind === "options" && m.card?.requestId), { timeout: 20_000 }).toBe(true);
@@ -103,14 +92,12 @@ it("delivers a pending peer-comm approval card to the Chief's escalations thread
 }, 150_000);
 
 it("delivers a teammate turn that ends needing input to the Chief's escalations thread", async () => {
-  const { api, control, dump, messages, plan, useCli, turnEnded, escalationsThread, close } = await launch();
+  const { api, control, dump, messages, fakeChat, turnEnded, escalationsThread, close } = await launch();
   try {
     const chief = (await control(["new-bot", "--name", "Clive", "--section", "Ops"])).bot;
     await api("PATCH", `/api/bots/${chief.id}`, { chiefOfStaff: true });
     const mira = (await control(["new-bot", "--name", "Mira", "--section", "Ops"])).bot;
-    await useCli();
-    plan(mira.activeTaskId, { replies: ["Half done.\nNEEDS INPUT: which repository should I tag?"] });
-    plan(chief.activeTaskId, { replies: ["I told the person."] });
+    fakeChat.set({ routes: [{ match: "Tag the release", reply: "Half done.\nNEEDS INPUT: which repository should I tag?" }] });
 
     await control(["send", "--bot", mira.id, "--text", "Tag the release."]);
     await turnEnded(mira.id, mira.activeTaskId);
@@ -134,17 +121,19 @@ it("delivers a teammate turn that ends needing input to the Chief's escalations 
 }, 150_000);
 
 it("carries the provenance fence header on a bot-raised escalation", async () => {
-  const { api, control, dump, messages, plan, useCli, turnEnded, escalationsThread, close } = await launch();
+  const { api, control, dump, messages, fakeChat, turnEnded, escalationsThread, close } = await launch();
   try {
     const chief = (await control(["new-bot", "--name", "Clive", "--section", "Ops"])).bot;
     await api("PATCH", `/api/bots/${chief.id}`, { chiefOfStaff: true });
     const mira = (await control(["new-bot", "--name", "Mira", "--section", "Ops"])).bot;
-    await useCli();
-    plan(mira.activeTaskId, {
-      tools: [{ name: "raise_escalation", server: "agents", input: { reason: "The deploy needs the production key only the person can unlock." } }],
-      replies: ["I flagged the gate and stopped."],
-    });
-    plan(chief.activeTaskId, { replies: ["I told the person."] });
+    fakeChat.set({ routes: [{
+      match: "Ship the deploy",
+      toolCalls: [
+        { name: "load_tools", input: { names: ["raise_escalation"] } },
+        { name: "agents_raise_escalation", input: { reason: "The deploy needs the production key only the person can unlock." }, round: 1 },
+      ],
+      reply: "I flagged the gate and stopped.",
+    }] });
 
     await control(["send", "--bot", mira.id, "--text", "Ship the deploy."]);
     await turnEnded(mira.id, mira.activeTaskId);
@@ -166,15 +155,18 @@ it("carries the provenance fence header on a bot-raised escalation", async () =>
 }, 150_000);
 
 it("routes a Chief's own gate to the person, never a dead end", async () => {
-  const { url, api, control, botsNow, plan, useCli, turnEnded, close } = await launch();
+  const { url, api, control, botsNow, fakeChat, turnEnded, close } = await launch();
   try {
     const clive = (await control(["new-bot", "--name", "Clive", "--section", "Ops"])).bot;
     await api("PATCH", `/api/bots/${clive.id}`, { chiefOfStaff: true });
-    await useCli();
-    plan(clive.activeTaskId, {
-      tools: [{ name: "raise_escalation", server: "agents", input: { reason: "The production key needs the person's unlock." } }],
-      replies: ["I flagged the gate and stopped."],
-    });
+    fakeChat.set({ routes: [{
+      match: "Ship the deploy",
+      toolCalls: [
+        { name: "load_tools", input: { names: ["raise_escalation"] } },
+        { name: "agents_raise_escalation", input: { reason: "The production key needs the person's unlock." }, round: 1 },
+      ],
+      reply: "I flagged the gate and stopped.",
+    }] });
     const stream = await openSse(`${url}/api/events`, { origin: url });
     try {
       await control(["send", "--bot", clive.id, "--text", "Ship the deploy."]);

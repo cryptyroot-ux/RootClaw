@@ -1,12 +1,14 @@
 // Loaded only by group-local-vm.e2e.test.ts via --import. Replace the container
 // boundary, preserving the real server, lease code, MCP config and fake driver.
 import { registerHooks } from 'node:module';
+import { fileURLToPath } from 'node:url';
 const state = process.env.ROOTCLAW_TEST_VM_STATE;
 if (!state) throw new Error('An explicit isolated VM state file is required');
 const actual = new URL('../container-computer.ts?actual', import.meta.url).href;
 const atomic = new URL('../atomic.ts', import.meta.url).href;
 const mock = new URL('./group-local-vm-mock.mjs', import.meta.url).href;
 const profilesMock = new URL('./group-local-vm-profiles-mock.mjs', import.meta.url).href;
+const mcpFixture = fileURLToPath(new URL('./group-local-vm-mcp.mjs', import.meta.url));
 registerHooks({
   resolve(specifier, context, nextResolve) {
     if (specifier.endsWith('/container-computer.ts')) return { url: mock, shortCircuit: true };
@@ -46,6 +48,12 @@ registerHooks({
       import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
       import { writeFileAtomic } from ${JSON.stringify(atomic)};
       const file = ${JSON.stringify(state)};
+      export function containerComputerMcp(_runtime, control, target = SHARED_LOCAL_VM_TARGET) {
+        return { command: process.execPath, args: [${JSON.stringify(mcpFixture)}], env: {
+          ...(control ? { ROOTCLAW_CONTROL_URL: control.url, ROOTCLAW_CONTROL_TOKEN: control.token } : {}),
+          ROOTCLAW_TEST_VM_TARGET_KEY: target.key, ROOTCLAW_TEST_VM_CONTAINER_NAME: target.containerName,
+        } };
+      }
       const read = () => JSON.parse(readFileSync(file, 'utf8'));
       export async function containerRuntimeStatus() { return { runtime: 'podman', daemonUp: true }; }
       export async function containerExec(target, command) {
@@ -110,15 +118,35 @@ registerHooks({
       return { ...result, source: `import { readFileSync as readVmClock } from 'node:fs';\n` +
         String(result.source).replaceAll('Date.now()', `(Date.now() + (JSON.parse(readVmClock(${JSON.stringify(state)}, 'utf8')).clockOffset || 0))`) };
     }
-    if (url.endsWith('/drivers/claude.ts')) {
-      return { ...result, source: `import { existsSync as existsVmRelease, readFileSync as readVmEvents, writeFileSync as writeVmEvent } from 'node:fs';\n` +
-        String(result.source).replace('for (const l of Array.from(listeners)) l(event);',
-          `if (event.type === 'turn.completed') {\n        const fixture = JSON.parse(readVmEvents(${JSON.stringify(state)}, 'utf8'));\n        if (fixture.dropCompletion) return;\n        if (fixture.holdCompletion) { writeVmEvent(${JSON.stringify(state)} + '.completionheld', event.turnId ?? ''); const timer = setInterval(() => { if (!existsVmRelease(${JSON.stringify(state)} + '.releasecompletion')) return; clearInterval(timer); writeVmEvent(${JSON.stringify(state)} + '.latecompleted', event.turnId ?? ''); for (const l of Array.from(listeners)) l(event); }, 10); return; }\n      }\n      for (const l of Array.from(listeners)) l(event);`) };
+    if (url.endsWith('/drivers/openai-chat.ts')) {
+      const result = nextLoad(url, context);
+      const source = String(result.source);
+      const marker = '    for (const listener of Array.from(listeners)) listener(event);';
+      const traced = source.replace(marker, `
+    if (event.type === 'turn.completed') {
+      const fixture = JSON.parse(readVmEvents(${JSON.stringify(state)}, 'utf8'));
+      if (fixture.dropCompletion) return;
+      if (fixture.holdCompletion) {
+        writeVmEvent(${JSON.stringify(state)} + '.completionheld', event.turnId ?? '');
+        const timer = setInterval(() => {
+          if (!existsVmRelease(${JSON.stringify(state)} + '.releasecompletion')) return;
+          clearInterval(timer);
+          writeVmEvent(${JSON.stringify(state)} + '.latecompleted', event.turnId ?? '');
+          for (const listener of Array.from(listeners)) listener(event);
+        }, 10);
+        return;
+      }
+    }
+${marker}`);
+      if (traced === source) throw new Error('native completion hook did not match');
+      return { ...result, source: `import { existsSync as existsVmRelease, readFileSync as readVmEvents, writeFileSync as writeVmEvent } from 'node:fs';\n${traced}` };
     }
     if (url.endsWith('/turn-watchdog.ts')) {
-      return { ...result, source: `import { readFileSync as readVmWatch } from 'node:fs';\n` +
-        String(result.source).replace('this.opts = opts;', 'this.opts = { ...opts, checkMs: 30 };')
-          .replace('at - turn.lastEventAt < silentMs', `at - turn.lastEventAt < (JSON.parse(readVmWatch(${JSON.stringify(state)}, 'utf8')).stall ? 0 : JSON.parse(readVmWatch(${JSON.stringify(state)}, 'utf8')).stallThread === turn.threadId ? 100 : silentMs)`) };
+      const source = String(result.source);
+      const watched = source.replace('this.opts = opts;', 'this.opts = { ...opts, checkMs: 30 };')
+        .replace('at - turn.lastEventAt < silentMs', `at - turn.lastEventAt < (JSON.parse(readVmWatch(${JSON.stringify(state)}, 'utf8')).stall ? 0 : JSON.parse(readVmWatch(${JSON.stringify(state)}, 'utf8')).stallThread === turn.threadId ? 100 : silentMs)`);
+      if (watched === source) throw new Error('native watchdog test hook did not match');
+      return { ...result, source: `import { readFileSync as readVmWatch } from 'node:fs';\n${watched}` };
     }
     if (url.endsWith('/turn-dispatch-guard.ts')) {
       // wedgeClear parks a room turn inside waitForClear; the clearwait marker proves it got there.
@@ -130,6 +158,25 @@ registerHooks({
       return { ...result, source: `import { readFileSync as readVmDeadline } from 'node:fs';\n` +
         String(result.source).replace('this.limitMs = roomTurnTimeoutMs(minutes);',
           `this.limitMs = JSON.parse(readVmDeadline(${JSON.stringify(state)}, 'utf8')).timeout ? 5000 : roomTurnTimeoutMs(minutes);`) };
+    }
+    if (url.endsWith('/drivers/chat-mcp-tools.ts')) {
+      const result = nextLoad(url, context);
+      const source = String(result.source);
+      const marker = 'const mounts = await Promise.allSettled(servers.map(async ([name, descriptor]) => {';
+      const traced = source.replace(marker, `${marker}
+      if (process.env.ROOTCLAW_TEST_VM_MOUNT_TRACE) {
+        const agents = integrations?.agents?.env ?? {};
+        appendVmMountTrace(process.env.ROOTCLAW_TEST_VM_MOUNT_TRACE, JSON.stringify({
+          server: name,
+          botId: agents.ROOTCLAW_BOT_ID ?? (descriptor.env.ROOTCLAW_CONTROL_URL ? new URL(descriptor.env.ROOTCLAW_CONTROL_URL).searchParams.get('botId') : null),
+          threadId: agents.ROOTCLAW_THREAD_ID ?? null,
+          command: descriptor.command,
+          args: descriptor.args,
+          env: descriptor.env,
+        }) + String.fromCharCode(10));
+      }`);
+      if (traced === source) throw new Error('native MCP mount trace hook did not match');
+      return { ...result, source: `import { appendFileSync as appendVmMountTrace } from 'node:fs';\n${traced}` };
     }
     return result;
   },

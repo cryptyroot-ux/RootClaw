@@ -180,11 +180,11 @@ export async function startFakeOpenAiChat(env: NodeJS.ProcessEnv = {}): Promise<
     const __systemPrompt = textOf(messages.find((message) => message.role === "system")?.content);
     let __cwd: string | undefined;
     try { const __m = __systemPrompt.match(/"currentWorkingFolder":\s*"([^"]+)"/); if (__m) __cwd = JSON.parse(`"${__m[1]}"`); } catch { /* ignore */ }
-    if (script.dump) writeFileSync(script.dump, JSON.stringify({ model, prompt, systemPrompt: __systemPrompt, cwd: __cwd,
-      messages, tools: body.tools ?? [], mcpConfig: { mcpServers: mountedServers(Array.isArray(body.tools) ? body.tools : []) } }, null, 2));
-    if (newTurn && script.prompts && body.stream === true) appendFileSync(script.prompts, `${JSON.stringify(prompt)}\n`);
     const system = messages.filter((message) => message.role === "system").map((message) => textOf(message.content)).join("\n");
     const botId = pathTail(fileLocations(system)?.sharedBotFolder);
+    if (script.dump) writeFileSync(script.dump, JSON.stringify({ model, prompt, systemPrompt: __systemPrompt, cwd: __cwd, ...(botId ? { botId } : {}),
+      messages, tools: body.tools ?? [], mcpConfig: { mcpServers: mountedServers(Array.isArray(body.tools) ? body.tools : []) } }, null, 2));
+    if (newTurn && script.prompts && body.stream === true) appendFileSync(script.prompts, `${JSON.stringify(prompt)}\n`);
     const botMode = botId ? botModes.get(botId) : undefined;
     if (await replayRoomPlan({ env, res, body, messages, model, prompt, currentTurnText, system, newTurn, botMode, unfinished,
       activeTurnIndexes: activeRoomTurnIndexes, nextTurnIndexes: nextRoomTurnIndexes, writeEvidence })) return;
@@ -204,16 +204,6 @@ export async function startFakeOpenAiChat(env: NodeJS.ProcessEnv = {}): Promise<
         await new Promise((resolve) => setTimeout(resolve, 50));
       }
     }
-    if (mode === "slow" && body.stream === true) {
-      const gate = script.gates && __cwd ? join(script.gates, `${basename(__cwd)}.gate`) : script.gate;
-      while (!gate || !existsSync(gate)) {
-        if (res.destroyed || res.socket?.destroyed !== false) return;
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      }
-      if (readFileSync(gate, "utf8").trim() === "fail") {
-        res.writeHead(500, { "content-type": "application/json" }); res.end(JSON.stringify({ error: { message: "fixture turn failed" } })); return;
-      }
-    }
     // Tool calls: an explicit CALL_TOOL, else the route's or script's list, asked for once at the start of a turn.
     const called = newTurn ? /CALL_TOOL\s+(\S+)(?:\s+(\{.*\}))?/s.exec(userText) : null;
     const sinceUser = messages.slice(messages.findLastIndex((message) => message.role === "user") + 1);
@@ -222,8 +212,23 @@ export async function startFakeOpenAiChat(env: NodeJS.ProcessEnv = {}): Promise<
     const scripted = body.stream !== true ? []
       : script.sequence ? script.sequence[step] ?? []
       : (route?.toolCalls ?? script.toolCalls ?? []).filter((call) => (call.round ?? 0) === round);
-    const calls = called ? [{ name: called[1]!, arguments: called[2] ?? "{}" }]
+    const requestedCalls = called ? [{ name: called[1]!, arguments: called[2] ?? "{}" }]
       : scripted.map((call) => ({ name: call.name, arguments: JSON.stringify(call.input ?? {}) }));
+    const offered = Array.isArray(body.tools)
+      ? new Set(body.tools.map((tool) => (tool as { function?: { name?: unknown } })?.function?.name).filter((name): name is string => typeof name === "string"))
+      : null;
+    const calls = !called && offered ? requestedCalls.filter((call) => offered.has(call.name)) : requestedCalls;
+    if (mode === "slow" && body.stream === true && calls.length === 0) {
+      const gate = script.gates && __cwd ? join(script.gates, `${basename(__cwd)}.gate`) : script.gate;
+      while (!gate || !existsSync(gate)) {
+        if (res.destroyed || res.socket?.destroyed !== false) return;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      if (readFileSync(gate, "utf8").trim() === "fail") {
+        res.writeHead(script.errorStatus ?? 500, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: { message: script.errorMessage ?? "fixture turn failed" } })); return;
+      }
+    }
     const answer = (): string => {
       if (released) return released;
       if (route?.reply !== undefined) return route.reply;
@@ -589,7 +594,7 @@ async function replayRoomPlan(input: {
     if (!gone()) {
       if (streamStarted) res.end();
       else {
-        res.writeHead(500, { "content-type": "application/json" });
+        res.writeHead(400, { "content-type": "application/json" });
         res.end(JSON.stringify({ error: { message: turn.failResumed && resumed
           ? "Scripted failure of a resumed turn"
           : "Scripted addressed agent failure" } }));
