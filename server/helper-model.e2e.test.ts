@@ -10,7 +10,7 @@ it("validates and persists the per-bot helper switch, including creation", async
     const api = async (path: string, method = "GET", body?: unknown) => fetch(`${fixture.info.url}${path}`, {
       method,
       headers: body ? { "content-type": "application/json" } : undefined,
-      body: body ? JSON.stringify(body) : undefined,
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
     for (const wrong of ["no", 0, null, { off: true }]) {
       const response = await api("/api/bots", "POST", { settings: { helperModel: wrong } });

@@ -314,7 +314,6 @@ describe("removing the Computer engine", () => {
       instances: { openaiCompat: NATIVE_ENGINE, computer: { driver: "boxAgent" } },
     }));
     await server.start();
-    const { instances } = await server.api("GET", "/api/instances");
     await expect.poll(async () => (await server.bot(starter.id)).modelSelection, { timeout: 15_000 })
       .toEqual(replacement);
     expect(await server.moveLines(starter.threadId)).toEqual([
