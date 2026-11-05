@@ -74,6 +74,7 @@ export interface ReadAndDraftDeps {
 export interface DraftReply { threadId: string; to?: string }
 
 export interface PreparedConnectorCall { refused: boolean; commit(): boolean }
+export type ConnectorRefusalDisposition = "handled" | "tool-error";
 
 /** The reply a draft call writes, or null when it is not a reply in one thread to one person. */
 export function draftReply(args: unknown): DraftReply | null {
@@ -191,15 +192,14 @@ export function createReadAndDraft(deps: ReadAndDraftDeps) {
     };
   }
 
-  /** True when the frame was refused; an allowed draft is counted, so a retry of the run never writes it twice. */
-  function refusesConnectorCall(bot: Pick<Bot, "id" | "name">, threadId: string, frame: unknown): boolean {
+  function refusesConnectorCall(bot: Pick<Bot, "id" | "name">, threadId: string, frame: unknown): ConnectorRefusalDisposition | null {
     const prepared = prepareConnectorCall(bot, threadId, frame);
     if (prepared) {
-      if (prepared.refused) return true;
-      return !prepared.commit();
+      if (prepared.refused) return "handled";
+      return prepared.commit() ? null : "handled";
     }
     const looking = deps.look?.(threadId) ?? null;
-    if (!looking) return false;
+    if (!looking) return null;
     const drafts: DraftReply[] = [];
     const refused = refusedConnectorCall(frame, (reply) => {
       if (drafts.some((one) => one.threadId === reply.threadId)) return false;
@@ -207,9 +207,12 @@ export function createReadAndDraft(deps: ReadAndDraftDeps) {
       if (ok) drafts.push(reply);
       return ok;
     });
-    if (refused !== null) return refuse(bot, threadId, refused);
+    if (refused !== null) {
+      refuse(bot, threadId, refused);
+      return "tool-error";
+    }
     if (drafts.length) deps.wroteDrafts?.(bot.id, drafts.length);
-    return false;
+    return null;
   }
 
   return { confines, answers, refusesRoute, prepareConnectorCall, refusesConnectorCall };

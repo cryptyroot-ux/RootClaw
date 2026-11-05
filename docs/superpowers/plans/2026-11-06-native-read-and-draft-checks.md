@@ -14,6 +14,7 @@
 
 - Runtime eligibility is based on the server-selected `driverKind`, not user-controlled model text or prompt contents.
 - Run with Ask-level approvals and no approval cards: only the native Composio multi-execute gateway reaches the per-call route fence, which refuses every out-of-policy connected-app call before generic grant denials; calls allowed by that fence still require connector grants and scopes. The handler refuses every other out-of-policy request itself.
+- Only read-and-draft routine refusals are returned as handled results; preserve the Cloud first-look fence's tool-error refusals.
 - Reuse `createReadAndDraft`, `RoutineChecks.mayDraft`, and the existing check key; expand runtime enforcement only if the E2E exposes a concrete gap.
 - Do not add a per-bot setting, new provider, or new trust level.
 - Do not allow sending, replying by send, Slack or other apps, arbitrary Gmail writes, drafts outside checked threads, extra recipients, or multiple drafts for the same checked thread.

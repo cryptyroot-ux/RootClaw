@@ -14513,7 +14513,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         const connectorCalls = rpc?.method === "tools/call" && typeof rpcParams?.name === "string"
           ? connectorCallsIn(rpcParams.name, rpcParams.arguments)
           : [];
-        if (!preparedReadAndDraft && proactive.fence.refusesConnectorCall(currentSender, internalCapability.threadId, body)) return refuseOutbound(READ_AND_DRAFT_REFUSAL, false);
+        const otherFenceRefusal = preparedReadAndDraft ? null : proactive.fence.refusesConnectorCall(currentSender, internalCapability.threadId, body);
+        if (otherFenceRefusal) return refuseOutbound(READ_AND_DRAFT_REFUSAL, otherFenceRefusal === "tool-error");
         const scopeRefusal = await teamConnections.callRefusal(internalCapability, connectorCalls); if (scopeRefusal) return refuseOutbound(scopeRefusal);
         const access = connectorAccessDecision(currentSender.connectorScopes, connectorCalls, serviceSlugs);
         if (!access.ok) {
