@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { launchVerificationServer } from "../scripts/control-rootclaw.ts";
+import { READ_AND_DRAFT_REFUSAL } from "./read-and-draft.ts";
 import { startFakeConnectedApps, type FakeConnectedApps } from "./testing/fake-connected-apps.ts";
 import { FAKE_OPENAI_MODEL } from "./testing/fake-openai-chat.ts";
 
@@ -187,13 +188,22 @@ describe("RootClaw keeps an eye on the day, hidden from the sidebar", () => {
       }] });
       const requestStart = fencedFixture.fakeChat.requests.length;
       const { run: started } = await fencedApi("POST", `/api/routines/${watch.id}/run`, undefined, 201);
-      await expect.poll(async () => (await fencedApi("GET", "/api/routines")).runs.find((candidate: any) => candidate.id === started.id), { timeout: 30_000 })
-        .toMatchObject({ status: "completed", access: "read-and-draft", deliver: "brief" });
+      await expect.poll(async () => (await fencedApi("GET", "/api/routines")).runs.find((candidate: any) => candidate.id === started.id)?.status, { timeout: 30_000 })
+        .toMatch(/completed|failed/);
       const run = (await fencedApi("GET", "/api/routines")).runs.find((candidate: any) => candidate.id === started.id);
       const requests = fencedFixture.fakeChat.requests.slice(requestStart) as NativeRequest[];
+      expect(run).toMatchObject({ status: "completed", access: "read-and-draft", deliver: "brief" });
       expect(requests.filter((request) => request.stream === true)).toHaveLength(attempts.length + 1);
       expect(run.threadId).toBeTruthy();
       expect(requests[0]?.tools?.map((tool) => tool.function?.name)).toContain(NATIVE_COMPOSIO_TOOL);
+      const toolResults = requests.flatMap((request) => {
+        const message = request.messages?.findLast((one) => one.role === "tool");
+        return message ? [JSON.parse(String(message.content)) as { ok?: boolean; result?: string }] : [];
+      });
+      expect(toolResults).toHaveLength(attempts.length);
+      const refusedResults = toolResults.filter((result) => result.result?.includes(READ_AND_DRAFT_REFUSAL));
+      expect(refusedResults).toHaveLength(denied.length);
+      expect(refusedResults.every((result) => result.ok === true)).toBe(true);
 
       const reads = ["GMAIL_FETCH_EMAILS", "GMAIL_GET_PROFILE", "GOOGLECALENDAR_EVENTS_LIST", "GOOGLECALENDAR_LIST_CALENDARS"];
       const writes = fencedApps.calls.filter((call) => !reads.includes(call.tool));
@@ -207,16 +217,20 @@ describe("RootClaw keeps an eye on the day, hidden from the sidebar", () => {
       const threadMessages = async (threadId: string) => (await fencedApi("GET", `/api/threads/${threadId}/messages?limit=200`)).messages as any[];
       const cardThreads = [...new Set([run.threadId, run.resultsThreadId].filter((threadId: string | undefined): threadId is string => Boolean(threadId)))];
       await expect.poll(async () => (await Promise.all(cardThreads.map(threadMessages))).flat()
-        .filter((message) => message.kind === "options" || message.kind === "question"), { timeout: 10_000 }).toEqual([]);
+        .filter((message) => message.kind === "question" || (message.kind === "options" && typeof message.card?.requestId === "string")), { timeout: 10_000 }).toEqual([]);
       const decisionDir = join(fencedFixture.info.dataDir, "decisions");
       const decisions = () => existsSync(decisionDir)
         ? readdirSync(decisionDir).filter((name) => /^\d{4}-\d{2}\.ndjson$/.test(name))
           .flatMap((name) => readFileSync(join(decisionDir, name), "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line)))
         : [];
-      await expect.poll(() => decisions().filter((decision) => decision.rule === "read-and-draft"), { timeout: 10_000 }).toHaveLength(denied.length);
-      const refusals = decisions().filter((decision) => decision.rule === "read-and-draft");
+      const readAndDraftDecisions = () => decisions().filter((decision) => decision.rule === "read-and-draft");
+      await expect.poll(() => readAndDraftDecisions().filter((decision) => decision.decision === "auto-denied"), { timeout: 10_000 }).toHaveLength(denied.length);
+      const refusals = readAndDraftDecisions().filter((decision) => decision.decision === "auto-denied");
       expect(refusals.map((decision) => decision.tool).sort()).toEqual(denied.sort());
       expect(refusals.every((decision) => decision.decision === "auto-denied" && decision.source === "routine")).toBe(true);
+      expect(readAndDraftDecisions().filter((decision) => decision.decision === "auto-approved")).toEqual(
+        Array.from({ length: attempts.length }, () => expect.objectContaining({ tool: NATIVE_COMPOSIO_TOOL, source: "routine" })),
+      );
     } finally {
       await fencedFixture.close();
       await fencedApps.close();

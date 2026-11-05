@@ -80,8 +80,10 @@ there is no brief at all. Its row says
    routine keeps the NOTHING NEW convention in `server/automation-reports.ts`.
 3. **Read-and-draft runs** (`access: "read-and-draft"`), in
    `server/read-and-draft.ts`. Everything is allow-only:
-   - the run runs at Ask, and the server refuses every request in it outright,
-     never as a card;
+   - the run runs at Ask, and the server answers permission requests itself,
+     never as a card: only the native Composio multi-execute gateway reaches the
+     relay, where each connected-app call is checked; every other request is
+     refused;
    - its RootClaw routes are conversation reads, its own results, the
      engine's hooks and the connected-apps relay;
    - through the relay it reads Gmail and Google Calendar, and may write one

@@ -31,10 +31,13 @@ Expected:
 - New mail and a meeting with other people become **one** native run on the
   server-selected driver (`driverKind: "openai-compat"`). Its prompt holds the
   mail and invite in records blocks, and forged markers are defused. It runs
-  with Ask-level approvals and no approval cards. The handler itself refuses
-  out-of-policy requests. Its system prompt has no recent work. Gmail and
-  Calendar reads reach only the loopback connected-apps service, and none names
-  an account.
+  with Ask-level approvals and no approval cards. The handler passes only the
+  native Composio multi-execute gateway to the per-call fence; that fence
+  refuses every out-of-policy connected-app call. Other permission requests
+  are refused by the handler. A refusal is returned as a handled result, so the
+  routine can still keep a valid final report. Its system prompt has no recent
+  work. Gmail and Calendar reads reach only the loopback connected-apps
+  service, and none names an account.
 - The 10-minute reminder, the prep card and the brief rows appear in RootClaw's
   chat, and the brief's notification names that chat. The brief is edited in
   place, not posted twice.

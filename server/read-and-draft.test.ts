@@ -64,15 +64,29 @@ describe("the fence around a read-and-draft run", () => {
     expect(fence(null).gate.confines("run-thread")).toBe(false);
   });
 
-  it("refuses every request there outright, with no card, and leaves other conversations alone", async () => {
+  it("refuses every other request there outright, with no card, and leaves other conversations alone", async () => {
     const { gate, decided, respond } = fence();
     const say = vi.fn();
-    const event = { type: "request.opened", threadId: "run-thread", requestId: "q1", requestType: "permission", tool: "WebSearch", summary: "Search the web" } as never;
+    const event = { type: "request.opened", threadId: "run-thread", requestId: "q1", requestType: "permission", provider: "openai-compat", tool: "WebSearch", summary: "Search the web" } as never;
     expect(gate.answers(event, bot, say)).toBe(true);
     await vi.waitFor(() => expect(respond).toHaveBeenCalledWith("run-thread", "q1", { behavior: "deny", message: READ_AND_DRAFT_REFUSAL }));
     expect(say.mock.calls[0]![0]).toMatchObject({ kind: "activity", tool: { ok: false } });
     expect(decided).toEqual([expect.objectContaining({ decision: "auto-denied", rule: "read-and-draft", tool: "WebSearch" })]);
     expect(gate.answers({ ...(event as object), threadId: "main-chat" } as never, bot, say)).toBe(false);
+  });
+
+  it("passes only the native Composio multi-execute gateway to the per-call fence", async () => {
+    const { gate, decided, respond } = fence();
+    const event = { type: "request.opened", threadId: "run-thread", requestId: "q1", requestType: "permission", provider: "openai-compat",
+      tool: "composio_composio_multi_execute_tool", summary: "Run connected-app tools" } as never;
+    expect(gate.answers(event, bot, vi.fn())).toBe(true);
+    await vi.waitFor(() => expect(respond).toHaveBeenCalledWith("run-thread", "q1", { behavior: "allow" }));
+    expect(decided).toEqual([expect.objectContaining({ decision: "auto-approved", source: "routine", rule: "read-and-draft" })]);
+
+    const otherDriver = { ...(event as object), requestId: "q2", provider: "other-driver" } as never;
+    expect(gate.answers(otherDriver, bot, vi.fn())).toBe(true);
+    await vi.waitFor(() => expect(respond).toHaveBeenCalledWith("run-thread", "q2", { behavior: "deny", message: READ_AND_DRAFT_REFUSAL }));
+    expect(decided.at(-1)).toMatchObject({ decision: "auto-denied", source: "routine", rule: "read-and-draft" });
   });
 
   it("lets it reach only conversation reads, its own results, hooks and the relay of RootClaw's routes", () => {

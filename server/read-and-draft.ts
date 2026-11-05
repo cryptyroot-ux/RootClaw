@@ -1,6 +1,7 @@
 // Security invariant: a read-and-draft routine run is unattended and its prompt carries untrusted mail and invite text
 // beside the person's private data, so it gets no way to act outside or to persist anything. Everything is allow-only:
-// - the engine runs at Ask, and the server answers every request in the run itself: each is refused, never a card;
+// - the engine runs at Ask, and the server answers every request itself, never with a card; only the native Composio
+//   multi-execute gateway is passed through to the connected-app route, where each call is checked;
 // - of RootClaw's own routes it may reach only conversation reads, the paging of its own long results, the engine's
 //   hooks and the connected-apps relay;
 // - through the relay it may only read Gmail and Google Calendar, and write a draft replying in one of the threads its
@@ -13,6 +14,7 @@ import { connectorCallsIn, isReadOnlyTool, KNOWN_READ_SLUGS } from "../shared/ou
 import type { RuntimeEvent } from "../shared/runtime-events.ts";
 import type { ProviderAdapter } from "./contracts.ts";
 import type { DecisionRow } from "./decision-log.ts";
+import { COMPOSIO_MULTI_EXECUTE_TOOL } from "./connector-verdict.ts";
 import { recordsText } from "./records-block.ts";
 import type { RoutineRun } from "./routines.ts";
 
@@ -30,6 +32,7 @@ export const READ_AND_DRAFT_TOOLS: ReadonlySet<string> = new Set(["agents", "com
 
 export const READ_AND_DRAFT_REFUSAL = "This work reads and drafts only: RootClaw refused this. Do not try another way.";
 const RULE = "read-and-draft";
+const COMPOSIO_MULTI_EXECUTE_CHAT_TOOL = `composio_${COMPOSIO_MULTI_EXECUTE_TOOL.toLowerCase()}`;
 
 /** RootClaw's own routes a read-and-draft run may reach. */
 const ROUTES: ReadonlySet<string> = new Set([
@@ -125,13 +128,18 @@ export function createReadAndDraft(deps: ReadAndDraftDeps) {
     return true;
   };
 
-  /** True when the request is in a read-and-draft run and was refused here, before any grant or card. */
+  /** True when a read-and-draft request was answered here, before any grant or card. */
   function answers(event: RequestOpened, asker: Bot, say: Say): boolean {
     if (!confines(event.threadId)) return false;
     const adapter = deps.adapter(event.providerInstanceId ?? asker.modelSelection.instanceId);
-    say({ role: "bot", kind: "activity", tool: { name: `Refused (reads and drafts only): ${event.summary.slice(0, 120)}`, ok: false } });
-    deps.decide({ threadId: event.threadId, requestId: event.requestId, botId: asker.id, botName: asker.name, tool: event.tool, summary: event.summary, decision: "auto-denied", source: "routine", rule: RULE });
-    const decision = { behavior: event.requestType === "question" ? "answer" as const : "deny" as const, message: READ_AND_DRAFT_REFUSAL };
+    const connectorGateway = event.requestId !== undefined && event.requestType === "permission" &&
+      event.provider === "openai-compat" && event.tool === COMPOSIO_MULTI_EXECUTE_CHAT_TOOL;
+    if (!connectorGateway) say({ role: "bot", kind: "activity", tool: { name: `Refused (reads and drafts only): ${event.summary.slice(0, 120)}`, ok: false } });
+    deps.decide({ threadId: event.threadId, requestId: event.requestId, botId: asker.id, botName: asker.name, tool: event.tool, summary: event.summary,
+      decision: connectorGateway ? "auto-approved" : "auto-denied", source: "routine", rule: RULE });
+    const decision = connectorGateway
+      ? { behavior: "allow" as const }
+      : { behavior: event.requestType === "question" ? "answer" as const : "deny" as const, message: READ_AND_DRAFT_REFUSAL };
     void (async () => {
       try {
         if (event.requestId === undefined || !adapter) throw new Error("no request to answer");
@@ -140,7 +148,7 @@ export function createReadAndDraft(deps: ReadAndDraftDeps) {
         if (event.turnId && !deps.stale(event)) await adapter?.interruptTurn(event.threadId, event.turnId).catch(() => {});
       }
       if (!deps.stale(event)) deps.release(event.threadId);
-    })().catch(() => console.error("[read-and-draft] Could not refuse a request."));
+    })().catch(() => console.error("[read-and-draft] Could not answer a request."));
     return true;
   }
 

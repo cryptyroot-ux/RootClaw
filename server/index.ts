@@ -14500,15 +14500,17 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           ? outboundCallsIn(rpcParams.name, rpcParams.arguments)
           : [];
         const outboundTool = outboundCalls.length ? outboundCalls[0].slug : null;
-        const refuseOutbound = (text: string) => {
+        const refuseOutbound = (text: string, isToolError = true) => {
           res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
-          return res.end(JSON.stringify({ jsonrpc: "2.0", id: rpc?.id ?? null, result: { content: [{ type: "text", text }], isError: true } }));
+          return res.end(JSON.stringify({ jsonrpc: "2.0", id: rpc?.id ?? null, result: {
+            content: [{ type: "text", text }], ...(isToolError ? { isError: true } : {}),
+          } }));
         };
         // An app this bot may not touch is refused outright, never turned into a question for the person.
         const connectorCalls = rpc?.method === "tools/call" && typeof rpcParams?.name === "string"
           ? connectorCallsIn(rpcParams.name, rpcParams.arguments)
           : [];
-        if (proactive.fence.refusesConnectorCall(currentSender, internalCapability.threadId, body)) return refuseOutbound(READ_AND_DRAFT_REFUSAL);
+        if (proactive.fence.refusesConnectorCall(currentSender, internalCapability.threadId, body)) return refuseOutbound(READ_AND_DRAFT_REFUSAL, false);
         const scopeRefusal = await teamConnections.callRefusal(internalCapability, connectorCalls); if (scopeRefusal) return refuseOutbound(scopeRefusal);
         const access = connectorAccessDecision(currentSender.connectorScopes, connectorCalls, serviceSlugs);
         if (!access.ok) {
