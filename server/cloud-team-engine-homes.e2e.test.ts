@@ -88,7 +88,7 @@ it.runIf(process.platform !== "win32")("a private Team Cloud turn uses its membe
   const profile = await team.as(bob, "PUT", "/api/me", { aboutMe: "Profile-only marker profile-violet-47." });
   expect(profile.status, JSON.stringify(profile.body)).toBe(200);
   expect((await team.as(bob, "GET", "/api/me")).body.aboutMe).toBe("Profile-only marker profile-violet-47.");
-  await turn(bob, bobThread, "Please greet me.");
+  await turn(bob, bobThread, "Please greet me and remember this conversation-only marker: bob-conversation-only-marker-pine-34.");
   const request = chat.requests.at(-1)!;
   const wire = JSON.stringify(request.messages);
   expect(wire).toContain("profile-violet-47");
@@ -108,9 +108,11 @@ it.runIf(process.platform !== "win32")("a private Team Cloud turn uses its membe
 it.runIf(process.platform !== "win32")("Bob's native conversation resumes with its private history", async () => {
   await turn(bob, bobThread, "Repeat my private marker.");
   const request = chat.requests.at(-1)!;
-  expect(JSON.stringify(request.messages)).toContain("profile-violet-47");
-  expect(JSON.stringify(request.messages)).toContain("bob-cobalt-28");
-  expect(JSON.stringify(request.messages)).not.toContain("admin-jade-91");
+  const wire = JSON.stringify(request.messages);
+  expect(wire).toContain("bob-conversation-only-marker-pine-34");
+  expect(wire).toContain("profile-violet-47");
+  expect(wire).toContain("bob-cobalt-28");
+  expect(wire).not.toContain("admin-jade-91");
 }, hostTimeout(90_000));
 
 it.runIf(isolatedNativeShell)("Owner and Admin native shell turns cannot read Bob's engine-home marker", async () => {
