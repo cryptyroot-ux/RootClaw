@@ -4389,6 +4389,89 @@ describe("harness HTTP API", () => {
     }
   });
 
+  it("reads only thread attachments in direct and room turns", async () => {
+    const bot = (await api("POST", "/api/bots", {
+      modelSelection: { instanceId: "claude", model: "claude-sonnet-5" },
+      requireAvailableModel: true,
+    })).body.bot;
+    let group: any;
+    const attachmentPaths: string[] = [];
+    fakeEngine.set({ mode: "happy" });
+
+    const messages = async (threadId: string) =>
+      (await api("GET", `/api/threads/${threadId}/messages?limit=100`)).body.messages as Array<{ role: string; kind: string; text?: string }>;
+    const busy = async (threadId: string, groupId?: string) => {
+      const state = (await api("GET", "/api/bots?messages=0")).body;
+      return groupId
+        ? Boolean(state.groups.find((candidate: { id: string }) => candidate.id === groupId)?.working)
+        : Boolean(state.bots.find((candidate: { id: string }) => candidate.id === bot.id)?.tasks
+          ?.find((task: { threadId: string; busy?: boolean }) => task.threadId === threadId)?.busy);
+    };
+    const send = async (threadId: string, path: string, text: string, groupId?: string) => {
+      const beforeMessages = await messages(threadId);
+      const beforeRequests = fakeEngine.requests.length;
+      const route = groupId ? `/api/groups/${groupId}/messages` : `/api/bots/${bot.id}/messages`;
+      expect((await api("POST", route, { text })).status).toBe(202);
+      await expect.poll(() => fakeEngine.requests.length > beforeRequests, { timeout: 10_000 }).toBe(true);
+      await expect.poll(async () => {
+        const current = await messages(threadId);
+        return current.length > beforeMessages.length && current.slice(beforeMessages.length)
+          .some((message) => message.role === "bot" && message.kind === "text" && message.text?.startsWith("Fixture reply:"));
+      }, { timeout: 10_000 }).toBe(true);
+      await expect.poll(() => busy(threadId, groupId), { timeout: 10_000 }).toBe(false);
+      return fakeEngine.requests.slice(beforeRequests).flatMap((request) =>
+        (Array.isArray(request.messages) ? request.messages : [])
+          .filter((message: any) => message.role === "tool")
+          .map((message: any) => typeof message.content === "string" ? message.content : JSON.stringify(message.content)));
+    };
+    const callTool = async (threadId: string, route: string, name: string, input: Record<string, unknown>, groupId?: string) => {
+      const cue = `ATTACHMENT_READ_FIXTURE_${randomUUID()}`;
+      fakeEngine.set({ routes: [{ match: cue, toolCalls: [{ name, input }] }] });
+      return send(threadId, route, cue, groupId);
+    };
+    const verifyThread = async (threadId: string, route: string, marker: string, groupId?: string) => {
+      const file = join(home, ".rootclaw", "attachments", `${randomUUID()}.txt`);
+      const sibling = join(home, ".rootclaw", "attachments", `${randomUUID()}.txt`);
+      attachmentPaths.push(file, sibling);
+      writeFileSync(file, `${marker}\n`, { mode: 0o600 });
+      writeFileSync(sibling, "UNREFERENCED_THREAD_ATTACHMENT\n", { mode: 0o600 });
+
+      await send(threadId, route, `Use the attached file later.\n\n<attached-file path="${file}" name="fixture.txt" />`, groupId);
+      const read = async (path: string) => {
+        const results = await callTool(threadId, route, "read_file", { path }, groupId);
+        return results.join("\n");
+      };
+      expect(await read(file)).toContain(marker);
+      expect(await read(sibling)).toMatch(/outside the workspace/i);
+      expect(await callTool(threadId, route, "write_file", { path: file, content: "OVERWRITTEN\n" }, groupId)
+        .then((results) => results.join("\n"))).toMatch(/read-only/i);
+      expect(readFileSync(file, "utf8")).toBe(`${marker}\n`);
+    };
+
+    try {
+      expect((await api("PATCH", `/api/bots/${bot.id}`, { approvalMode: "full" })).status).toBe(200);
+      await verifyThread(bot.threadId, `/api/bots/${bot.id}/messages`, "DIRECT_ATTACHMENT_MARKER");
+
+      const created = await api("POST", "/api/groups", {
+        name: "Attachment access fixture",
+        memberIds: [bot.id],
+        setup: { bulletin: "", defaultResponder: { kind: "member", botId: bot.id } },
+      });
+      expect(created.status).toBe(201);
+      group = created.body.group;
+      await verifyThread(group.threadId, `/api/groups/${group.id}/messages`, "ROOM_ATTACHMENT_MARKER", group.id);
+    } finally {
+      if (group) {
+        await api("POST", `/api/groups/${group.id}/interrupt`, {}).catch(() => undefined);
+        await api("DELETE", `/api/groups/${group.id}`).catch(() => undefined);
+      }
+      await api("POST", `/api/bots/${bot.id}/interrupt`, {}).catch(() => undefined);
+      await api("DELETE", `/api/bots/${bot.id}`).catch(() => undefined);
+      for (const path of attachmentPaths) rmSync(path, { force: true });
+      fakeEngine.set({ mode: "hang" });
+    }
+  }, 60_000);
+
   it("saves, serves, and guards image attachments", async () => {
     // a real 1x1 PNG so the bytes round-trip intact
     const png = Buffer.from(
