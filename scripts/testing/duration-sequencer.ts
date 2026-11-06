@@ -78,7 +78,7 @@ export class DurationSequencer extends BaseSequencer {
     // weighted files go unmatched (a path-key mismatch on some platform), the
     // shards fall back toward equal file counts: annotate, but run the tests.
     const hostOnly = hostE2eOnly();
-    const listed = Object.keys(weights).filter((key) => !(hostOnly && isPortableE2e(key))).length;
+    const listed = Object.keys(weights).filter((key) => hostOnly ? !isPortableE2e(key) : !E2E.test(key)).length;
     const found = keys.filter((key) => Object.hasOwn(weights, key)).length;
     this.ctx.logger.log(
       `duration-sequencer: shard ${shard.index}/${shard.count} runs ${mine.length} of ${files.length} files, ` +
