@@ -1,0 +1,12 @@
+{
+  "id": "test-driven-development",
+  "name": "Test Driven Development",
+  "version": "1.0.0",
+  "description": "Use when implementing any feature or bugfix, before writing implementation code",
+  "defaultEnabled": true,
+  "triggerTerms": [
+    "test driven development",
+    "test-driven-development"
+  ],
+  "requiredCapabilities": []
+}

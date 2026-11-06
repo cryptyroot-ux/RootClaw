@@ -11,7 +11,7 @@ import { isSkillName, parseSkillMd, SKILL_FILE_MAX_BYTES } from "../shared/skill
 import type { SkillPackageStamp } from "./skills.ts";
 
 export function skillsLibraryEnabled(cfg: AppConfig): boolean {
-  return cfg.features?.skillsLibrary === true;
+  return cfg.features?.skillsLibrary !== false;
 }
 
 export interface SkillManifest {
@@ -111,16 +111,14 @@ export function mergeSkills(bundled: readonly BundledSkill[], user: readonly Bun
 }
 
 export function selectBundledSkills(
-  text: string,
+  _text: string,
   capabilities: Iterable<string>,
   skills: readonly BundledSkill[],
 ): BundledSkill[] {
-  const haystack = text.toLowerCase();
   const available = new Set(capabilities);
   return skills.filter(({ manifest }) =>
     manifest.defaultEnabled &&
-    manifest.requiredCapabilities.every((capability) => available.has(capability)) &&
-    manifest.triggerTerms.some((term) => haystack.includes(term.toLowerCase())),
+    manifest.requiredCapabilities.every((capability) => available.has(capability)),
   );
 }
 
