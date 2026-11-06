@@ -71,7 +71,8 @@ RUN apt-get update \
     libcairo2 libgdk-pixbuf-2.0-0 libxrender1 libasound2 libfreetype6 \
     libfontconfig1 libdbus-1-3 libnss3 libnss3-tools libnspr4 \
     libatk-bridge2.0-0 libdrm2 libxkbcommon0 libatspi2.0-0 libcups2 \
-    libxshmfence1 libgbm1 fonts-noto-color-emoji fonts-noto-cjk fonts-freefont-ttf \
+    libxshmfence1 libgbm1 fonts-noto-color-emoji fonts-noto-cjk fonts-freefont-ttf bubblewrap \
+  && bwrap --version \
   && if [ "$TARGETARCH" = "arm64" ]; then apt-get install -y --no-install-recommends chromium; fi \
   && rm -rf /var/lib/apt/lists/* \
   && useradd --create-home --home-dir /data --shell /bin/bash rootclaw

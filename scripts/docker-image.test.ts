@@ -214,6 +214,12 @@ describe("container images", () => {
     expect(last(chain("runtime"), "ENV")).toMatch(/^AGENT_BROWSER_EXECUTABLE_PATH=\/opt\/rootclaw-browser\/chrome .*NODE_ENV=production$/);
   });
 
+  it("installs bubblewrap in the shared runtime used by the self-hosted server", () => {
+    const apt = chain("runtime").find(step => step.op === "RUN" && step.args.startsWith("apt-get update"))!;
+    expect(apt.args).toContain("bubblewrap");
+    expect(apt.args).toContain("bwrap --version");
+  });
+
   it("hands the Cloud home's server every setting the image's ENV gives it", () => {
     // The root supervisor passes the server an allow-listed environment; a setting the image sets but the list drops is
     // lost silently (ROOTCLAW_DUCKDB_DIR was: the server then found neither the 1Password SDK nor DuckDB in /app/duckdb).
