@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
+import { spawnSync } from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
 import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -371,6 +372,18 @@ describe("shell", () => {
     } finally { rmSync(outside, { recursive: true, force: true }); }
   });
   describe("exact file shell mounts", () => {
+    const heldFds: number[] = [];
+    afterEach(() => { for (const fd of heldFds.splice(0)) fs.closeSync(fd); });
+    function build(command: string, readFiles: NonNullable<WorkspaceToolsConfig["readFiles"]>) {
+      const program = sandboxedShell(command, root, [root], "bwrap", { readFiles, env: { PATH: "/usr/bin", HOME: join(base, "home") } });
+      heldFds.push(...(program.extraFds ?? []));
+      return program;
+    }
+    function attachmentFds(canonicalPath: string) {
+      return fs.readdirSync("/proc/self/fd").filter((fd) => {
+        try { return fs.readlinkSync(`/proc/self/fd/${fd}`) === canonicalPath; } catch { return false; }
+      });
+    }
     function attachment() {
       const store = join(base, "store");
       const lexicalStore = join(base, "messages", "attachments");
@@ -385,12 +398,14 @@ describe("shell", () => {
 
     it("binds only the pinned canonical file read-only at its lexical message path", () => {
       const grant = attachment();
-      const { args } = sandboxedShell("true", root, [root], "bwrap", { readFiles: [grant], env: { PATH: "/usr/bin", HOME: join(base, "home") } });
+      const { args, extraFds } = build("true", [grant]);
       const mounts = args.flatMap((arg, index) => arg === "--ro-bind" || arg === "--bind" ? [args.slice(index, index + 3)] : []);
-      expect(mounts).toContainEqual(["--ro-bind", grant.canonicalPath, grant.path]);
+      expect(args.slice(args.indexOf("--ro-bind-fd"), args.indexOf("--ro-bind-fd") + 3)).toEqual(["--ro-bind-fd", "3", grant.path]);
+      expect(extraFds).toHaveLength(1);
+      expect(fs.fstatSync(extraFds[0]!).isFile()).toBe(true);
+      expect(args).not.toContain(grant.canonicalPath);
       expect(mounts.filter(([, source]) => source!.startsWith(base))).toEqual([
         ["--bind", root, root],
-        ["--ro-bind", grant.canonicalPath, grant.path],
       ]);
       const destination = args.indexOf(grant.path);
       expect(args.slice(0, destination).join(" ")).toContain(`--dir ${dirname(grant.path)}`);
@@ -398,8 +413,7 @@ describe("shell", () => {
 
     it.each(["store symlink", "file symlink", "directory", "missing"])("omits a grant replaced by %s", (replacement) => {
       const grant = attachment();
-      const options = { readFiles: [grant], env: { PATH: "/usr/bin", HOME: join(base, "home") } };
-      expect(sandboxedShell("true", root, [root], "bwrap", options).args).toContain(grant.path);
+      expect(build("true", [grant]).args).toContain(grant.path);
       const outside = join(base, "outside");
       mkdirSync(outside);
       writeFileSync(join(outside, "document.txt"), "REPLACEMENT-SECRET");
@@ -414,10 +428,71 @@ describe("shell", () => {
           writeFileSync(join(grant.canonicalPath, "descendant.txt"), "DESCENDANT-SECRET");
         }
       }
-      const { args } = sandboxedShell("true", root, [root], "bwrap", options);
+      const { args } = build("true", [grant]);
       const sources = args.flatMap((arg, index) => arg === "--ro-bind" || arg === "--bind" ? [args[index + 1]] : []);
       expect(sources.filter((source) => source!.startsWith(base))).toEqual([root]);
       expect(args).not.toContain(grant.path);
+    });
+
+    it.runIf(shellSandbox() === "bwrap")("holds the opened file when its canonical pathname is replaced before bubblewrap starts", () => {
+      const grant = attachment();
+      const program = build(`cat ${JSON.stringify(grant.path)}`, [grant]);
+      const outside = join(base, "external.txt");
+      writeFileSync(outside, "EXTERNAL-REPLACEMENT");
+      fs.renameSync(grant.canonicalPath, join(base, "original.txt"));
+      symlinkSync(outside, grant.canonicalPath);
+      const result = spawnSync(program.file, program.args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe", ...(program.extraFds ?? [])] });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toBe("PINNED-ATTACHMENT");
+      expect(result.stdout).not.toContain("EXTERNAL-REPLACEMENT");
+    });
+
+    it.runIf(shellSandbox() === "bwrap")("passes attachment descriptors to background shells and releases the parent copies", async () => {
+      const grant = attachment();
+      config = { ...config, readFiles: [grant] };
+      const started = await run("shell", { command: `cat ${JSON.stringify(grant.path)}`, background: true });
+      expect(started.ok, started.text).toBe(true);
+      expect(attachmentFds(grant.canonicalPath)).toEqual([]);
+      const log = /Output goes to (\S+)/.exec(started.text)![1]!;
+      await expect.poll(() => readFileSync(join(root, log), "utf8")).toBe("PINNED-ATTACHMENT");
+      const foreground = await run("shell", { command: `cat ${JSON.stringify(grant.path)}` });
+      expect(foreground.ok, foreground.text).toBe(true);
+      expect(attachmentFds(grant.canonicalPath)).toEqual([]);
+    });
+
+    it.runIf(shellSandbox() === "bwrap").each([false, true])("releases descriptors when spawn throws (background=%s)", async (background) => {
+      const grant = attachment();
+      config = { ...config, readFiles: [grant] };
+      const result = await run("shell", { command: "echo \0", background });
+      expect(result.ok).toBe(false);
+      expect(result.text).toMatch(/null bytes/);
+      expect(attachmentFds(grant.canonicalPath)).toEqual([]);
+    });
+
+    it.runIf(shellSandbox() === "bwrap")("releases descriptors on the background job-limit early return", async () => {
+      const grant = attachment();
+      const scope = `attachment-cap-${Date.now()}`;
+      config = { ...config, readFiles: [grant], jobScope: scope };
+      try {
+        for (let index = 0; index < 8; index++) {
+          expect((await run("shell", { command: "sleep 60", background: true })).ok).toBe(true);
+        }
+        const refused = await run("shell", { command: "true", background: true });
+        expect(refused.ok).toBe(false);
+        expect(refused.text).toMatch(/Too many background commands/);
+        expect(attachmentFds(grant.canonicalPath)).toEqual([]);
+      } finally { stopBackgroundJobs(scope, 100); }
+    });
+
+    it.runIf(process.platform === "linux")("releases already opened descriptors when command construction throws", () => {
+      const grant = attachment();
+      const grants = [grant];
+      grants[Symbol.iterator] = function* () {
+        yield grant;
+        throw new Error("grant iteration failed");
+      };
+      expect(() => build("true", grants)).toThrow("grant iteration failed");
+      expect(attachmentFds(grant.canonicalPath)).toEqual([]);
     });
 
     it.runIf(shellSandbox() === "bwrap")("confines a confined shell to the read-only attachment through WorkspaceToolsConfig", async () => {

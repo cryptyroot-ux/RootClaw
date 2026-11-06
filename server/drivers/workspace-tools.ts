@@ -416,8 +416,10 @@ export interface SandboxOptions {
   env?: NodeJS.ProcessEnv;
 }
 
-/** The program and arguments that run `command` in `cwd`, writing only to `writable`. */
-export function sandboxedShell(command: string, cwd: string, writable: readonly string[], kind: Sandbox, options: SandboxOptions = {}): { file: string; args: string[] } {
+/** The program and arguments that run `command` in `cwd`, writing only to `writable`.
+ * The caller owns extraFds and keeps them open until the background child starts or the foreground child exits,
+ * then closes them; an abandoned command closes them without spawning. */
+export function sandboxedShell(command: string, cwd: string, writable: readonly string[], kind: Sandbox, options: SandboxOptions = {}): { file: string; args: string[]; extraFds: number[] } {
   const dirs = [...new Set(writable.filter((dir) => existsSync(dir)).map((dir) => realOrSelf(dir)))];
   if (kind === "bwrap") {
     const env = options.env ?? process.env;
@@ -435,27 +437,37 @@ export function sandboxedShell(command: string, cwd: string, writable: readonly 
       ...(options.readable ?? []).filter((dir) => existsSync(dir))].map((dir) => realOrSelf(dir)))];
     // Shorter paths first, so a nested mount lands on top of the folder that holds it; writable binds last.
     readOnly.sort((a, b) => a.length - b.length);
-    const readFiles = (options.readFiles ?? []).filter((grant) => {
-      try {
-        return realpathSync(grant.path) === grant.canonicalPath
-          && realpathSync(grant.canonicalPath) === grant.canonicalPath
-          && lstatSync(grant.canonicalPath).isFile();
-      } catch { return false; }
-    });
-    return { file: "bwrap", args: ["--unshare-pid", ...(options.network ? [] : ["--unshare-net"]), "--die-with-parent", "--new-session",
+    const args = ["--unshare-pid", ...(options.network ? [] : ["--unshare-net"]), "--die-with-parent", "--new-session",
       "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp", "--dir", "/var/tmp", "--tmpfs", home,
       ...readOnly.flatMap((dir) => ["--ro-bind", dir, dir]),
       ...links.flatMap((dir) => ["--symlink", readlinkSync(dir), dir]),
-      ...dirs.flatMap((dir) => ["--bind", dir, dir]),
-      ...readFiles.flatMap((grant) => ["--dir", dirname(grant.path), "--ro-bind", grant.canonicalPath, grant.path]),
-      "--setenv", "TMPDIR", "/tmp", "--setenv", "HOME", home,
-      "--chdir", realOrSelf(cwd), "--", "/bin/bash", "-c", command] };
+      ...dirs.flatMap((dir) => ["--bind", dir, dir])];
+    const extraFds: number[] = [];
+    try {
+      for (const grant of options.readFiles ?? []) {
+        let fd: number | undefined;
+        try {
+          fd = openSync(grant.path, fsConstants.O_RDONLY | (fsConstants.O_NONBLOCK ?? 0));
+          if (!fstatSync(fd).isFile() || fdRealPath(fd, grant.path) !== grant.canonicalPath) continue;
+          args.push("--dir", dirname(grant.path), "--ro-bind-fd", String(3 + extraFds.length), grant.path);
+          extraFds.push(fd);
+          fd = undefined;
+        } catch { /* Missing or replaced grants confer no shell access. */ }
+        finally { if (fd !== undefined) closeSync(fd); }
+      }
+      args.push("--setenv", "TMPDIR", "/tmp", "--setenv", "HOME", home,
+        "--chdir", realOrSelf(cwd), "--", "/bin/bash", "-c", command);
+      return { file: "bwrap", args, extraFds };
+    } catch (error) {
+      for (const fd of extraFds) closeSync(fd);
+      throw error;
+    }
   }
   if (kind === "sandbox-exec") {
     const profile = `(version 1)(allow default)(deny file-write*)(allow file-write* ${dirs.map((dir) => `(subpath ${sbString(dir)})`).join(" ")} (literal "/dev/null") (literal "/dev/tty") (regex #"^/dev/fd/"))`;
-    return { file: "/usr/bin/sandbox-exec", args: ["-p", profile, "/bin/bash", "-c", command] };
+    return { file: "/usr/bin/sandbox-exec", args: ["-p", profile, "/bin/bash", "-c", command], extraFds: [] };
   }
-  return { file: plainShell(), args: ["-c", command] };
+  return { file: plainShell(), args: ["-c", command], extraFds: [] };
 }
 
 // ---------- background jobs ----------
@@ -529,74 +541,78 @@ async function runShell(args: Record<string, unknown>, paths: Paths, signal: Abo
   }
   const program = sandboxedShell(command, cwd, [paths.root, ...paths.writeRoots, ...(kind === "sandbox-exec" ? [tmpdir()] : [])], kind,
     { readable: paths.readRoots, readFiles: paths.readFiles, network: args.network === true, env: process.env });
-  if (args.background === true) {
-    prune();
-    if ((jobs.get(scope)?.size ?? 0) >= MAX_JOBS_PER_SCOPE || jobCount() >= MAX_JOBS) {
-      return fail(`Too many background commands are running (at most ${MAX_JOBS_PER_SCOPE} per conversation, ${MAX_JOBS} in all): stop one with kill first.`);
+  try {
+    if (args.background === true) {
+      prune();
+      if ((jobs.get(scope)?.size ?? 0) >= MAX_JOBS_PER_SCOPE || jobCount() >= MAX_JOBS) {
+        return fail(`Too many background commands are running (at most ${MAX_JOBS_PER_SCOPE} per conversation, ${MAX_JOBS} in all): stop one with kill first.`);
+      }
+      const dir = join(paths.root, ".rootclaw", "bg");
+      mkdirSync(dir, { recursive: true });
+      const log = join(dir, `${Date.now()}-${randomBytes(3).toString("hex")}.log`);
+      writeFileSync(log, "");
+      // A pipe, not an inherited file: Windows drops a detached child's file handles, so the log stayed empty.
+      const child = spawn(program.file, program.args, { cwd, env, detached: true, windowsHide: true, stdio: ["ignore", "pipe", "pipe", ...program.extraFds] });
+      const stream = createWriteStream(log, { flags: "a" });
+      const ignore = () => {};
+      stream.on("error", ignore);
+      child.stdout?.on("error", ignore);
+      child.stderr?.on("error", ignore);
+      child.stdout?.pipe(stream, { end: false });
+      child.stderr?.pipe(stream, { end: false });
+      const release = () => stream.end();
+      child.once("exit", release);
+      child.once("error", release);
+      child.unref();
+      if (child.pid) jobs.set(scope, (jobs.get(scope) ?? new Set()).add(child.pid));
+      return ok(`Started in the background${unsandboxed ? ` (${unsandboxed.slice(2)})` : ""}: pid ${child.pid}. Output goes to ${paths.display(log)} (read it with read_file); stop it with \`kill ${child.pid}\`.`);
     }
-    const dir = join(paths.root, ".rootclaw", "bg");
-    mkdirSync(dir, { recursive: true });
-    const log = join(dir, `${Date.now()}-${randomBytes(3).toString("hex")}.log`);
-    writeFileSync(log, "");
-    // A pipe, not an inherited file: Windows drops a detached child's file handles, so the log stayed empty.
-    const child = spawn(program.file, program.args, { cwd, env, detached: true, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
-    const stream = createWriteStream(log, { flags: "a" });
-    const ignore = () => {};
-    stream.on("error", ignore);
-    child.stdout?.on("error", ignore);
-    child.stderr?.on("error", ignore);
-    child.stdout?.pipe(stream, { end: false });
-    child.stderr?.pipe(stream, { end: false });
-    const release = () => stream.end();
-    child.once("exit", release);
-    child.once("error", release);
-    child.unref();
-    if (child.pid) jobs.set(scope, (jobs.get(scope) ?? new Set()).add(child.pid));
-    return ok(`Started in the background${unsandboxed ? ` (${unsandboxed.slice(2)})` : ""}: pid ${child.pid}. Output goes to ${paths.display(log)} (read it with read_file); stop it with \`kill ${child.pid}\`.`);
+    const timeoutMs = Math.min(MAX_SHELL_MS, Math.max(1_000, Number(args.timeout_ms) || DEFAULT_SHELL_MS));
+    return new Promise<ChatToolResult>((done) => {
+      const started = Date.now();
+      const child = spawn(program.file, program.args, { cwd, env, detached: true, stdio: ["ignore", "pipe", "pipe", ...program.extraFds] });
+      const chunks: Buffer[] = [];
+      let captured = 0;
+      let dropped = 0;
+      const take = (chunk: Buffer) => {
+        if (captured >= SHELL_CAPTURE_BYTES) { dropped += chunk.length; return; }
+        const room = SHELL_CAPTURE_BYTES - captured;
+        const part = chunk.length > room ? chunk.subarray(0, room) : chunk;
+        chunks.push(part);
+        captured += part.length;
+        dropped += chunk.length - part.length;
+      };
+      child.stdout!.on("data", take);
+      child.stderr!.on("data", take);
+      let why: "timeout" | "aborted" | null = null;
+      const stop = (reason: "timeout" | "aborted") => {
+        if (why) return;
+        why = reason;
+        killGroup(child.pid, "SIGTERM");
+        setTimeout(() => killGroup(child.pid, "SIGKILL"), 2_000).unref();
+      };
+      const timer = setTimeout(() => stop("timeout"), timeoutMs);
+      const onAbort = () => stop("aborted");
+      if (signal.aborted) onAbort(); else signal.addEventListener("abort", onAbort, { once: true });
+      const finish = (code: number | null, sig: NodeJS.Signals | null, error?: Error) => {
+        clearTimeout(timer);
+        signal.removeEventListener("abort", onAbort);
+        let output = Buffer.concat(chunks).toString("utf8");
+        if (dropped) output += `\n[… ${dropped} more bytes of output not captured]`;
+        const seconds = ((Date.now() - started) / 1000).toFixed(1);
+        const status = error ? `failed to start: ${error.message}`
+          : why === "timeout" ? `killed after the ${timeoutMs} ms timeout`
+          : why === "aborted" ? "killed: the turn was stopped"
+          : sig ? `killed by ${sig}` : `exit code ${code}`;
+        const text = `[${status}; ${seconds}s; cwd ${paths.display(cwd) || "."}${unsandboxed}]\n${output}`;
+        done({ ok: !error && !why && code === 0, text });
+      };
+      child.once("error", (error) => finish(null, null, error));
+      child.once("close", (code, sig) => finish(code, sig));
+    });
+  } finally {
+    for (const fd of program.extraFds) closeSync(fd);
   }
-  const timeoutMs = Math.min(MAX_SHELL_MS, Math.max(1_000, Number(args.timeout_ms) || DEFAULT_SHELL_MS));
-  return new Promise<ChatToolResult>((done) => {
-    const started = Date.now();
-    const child = spawn(program.file, program.args, { cwd, env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
-    const chunks: Buffer[] = [];
-    let captured = 0;
-    let dropped = 0;
-    const take = (chunk: Buffer) => {
-      if (captured >= SHELL_CAPTURE_BYTES) { dropped += chunk.length; return; }
-      const room = SHELL_CAPTURE_BYTES - captured;
-      const part = chunk.length > room ? chunk.subarray(0, room) : chunk;
-      chunks.push(part);
-      captured += part.length;
-      dropped += chunk.length - part.length;
-    };
-    child.stdout!.on("data", take);
-    child.stderr!.on("data", take);
-    let why: "timeout" | "aborted" | null = null;
-    const stop = (reason: "timeout" | "aborted") => {
-      if (why) return;
-      why = reason;
-      killGroup(child.pid, "SIGTERM");
-      setTimeout(() => killGroup(child.pid, "SIGKILL"), 2_000).unref();
-    };
-    const timer = setTimeout(() => stop("timeout"), timeoutMs);
-    const onAbort = () => stop("aborted");
-    if (signal.aborted) onAbort(); else signal.addEventListener("abort", onAbort, { once: true });
-    const finish = (code: number | null, sig: NodeJS.Signals | null, error?: Error) => {
-      clearTimeout(timer);
-      signal.removeEventListener("abort", onAbort);
-      let output = Buffer.concat(chunks).toString("utf8");
-      if (dropped) output += `\n[… ${dropped} more bytes of output not captured]`;
-      const seconds = ((Date.now() - started) / 1000).toFixed(1);
-      const status = error ? `failed to start: ${error.message}`
-        : why === "timeout" ? `killed after the ${timeoutMs} ms timeout`
-        : why === "aborted" ? "killed: the turn was stopped"
-        : sig ? `killed by ${sig}` : `exit code ${code}`;
-      const text = `[${status}; ${seconds}s; cwd ${paths.display(cwd) || "."}${unsandboxed}]\n${output}`;
-      done({ ok: !error && !why && code === 0, text });
-    };
-    child.once("error", (error) => finish(null, null, error));
-    child.once("close", (code, sig) => finish(code, sig));
-  });
 }
 
 // ---------- files ----------
