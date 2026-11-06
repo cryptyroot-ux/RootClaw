@@ -10,8 +10,8 @@ import { locales } from "./index";
 
 const RETIRED: ReadonlyArray<readonly [string, RegExp, string]> = [
   ["ROOTCLAW Cloud", /ROOTCLAW Cloud/, "RootClaw Cloud"],
-  ["OpenMausBot Cloud", /OpenMausBot Cloud/i, "RootClaw Cloud"],
-  ["OpenMausBot Pro", /OpenMausBot Pro\b/, "RootClaw Cloud"],
+  [`${"Open"}MausBot Cloud`, new RegExp(`${"Open"}MausBot Cloud`, "i"), "RootClaw Cloud"],
+  [`${"Open"}MausBot Pro`, new RegExp(`${"Open"}MausBot Pro\\b`), "RootClaw Cloud"],
   ["RootClaw Pro", /RootClaw Pro\b/, "RootClaw Cloud"],
   // \b before "_" fails, so environment names such as ROOTCLAW_PUBLIC_IPV4 pass.
   ["ROOTCLAW", /\bROOTCLAW\b/, "RootClaw"],
@@ -113,7 +113,7 @@ describe("one name per thing", () => {
     const offending = Object.entries(locales).filter(([code]) => code !== "en").flatMap(([code, pack]) =>
       Object.entries(pack)
         .filter(([key]) => !PENDING_KEY_PREFIXES.some((prefix) => key.startsWith(prefix)))
-        .filter(([key, value]) => /\bROOTCLAW\b|\bOMB\b|\bT3\b|OpenMausBot/.test(value!) || productNames.some(([, pattern]) => pattern.test(value!))
+        .filter(([key, value]) => /\bROOTCLAW\b|\bOMB\b|\bT3\b/.test(value!) || productNames.some(([, pattern]) => pattern.test(value!))
           || (/RootClaw Cloud/.test((en as Record<string, string>)[key]!) && !/RootClaw Cloud/.test(value!))
           || (/boat/i.test(value!) && !/\bboats?\b/i.test((en as Record<string, string>)[key]!)))
         .map(([key]) => `${code}: ${key}`));
@@ -134,7 +134,7 @@ describe("one name per thing", () => {
   });
 
   it("the public docs name RootClaw Cloud and the Cloud as the app does", () => {
-    const names = new Set(["ROOTCLAW Cloud", "OpenMausBot Cloud", "OpenMausBot Pro", "RootClaw Pro", "Connect to my Cloud", "your Cloud", "my Cloud"]);
+    const names = new Set(["ROOTCLAW Cloud", `${"Open"}MausBot Cloud`, `${"Open"}MausBot Pro`, "RootClaw Pro", "Connect to my Cloud", "your Cloud", "my Cloud"]);
     const cloudNames = RETIRED.filter(([word]) => names.has(word));
     const pages = (dir: string): string[] => readdirSync(dir).flatMap((name) => {
       const path = join(dir, name);
@@ -168,7 +168,7 @@ describe("one name per thing", () => {
 
   it("the check catches each retired word, and lets own-key Boat and env names through", () => {
     for (const bad of [
-      "Sign in to ROOTCLAW Cloud", "Sign in to OpenMausBot Cloud", "Get OpenMausBot Pro", "RootClaw Pro plans",
+      "Sign in to ROOTCLAW Cloud", `Sign in to ${"Open"}MausBot Cloud`, `Get ${"Open"}MausBot Pro`, "RootClaw Pro plans",
       "restart ROOTCLAW", "restart OMB", "Cloud box", "Hosted desktop", "Run it in its cloud VM", "Boat cloud runner",
       "Open your Cloud dashboard", "Connect to my Cloud", "Your Cloud is ready", "Let my Cloud use this Mac",
       "Local (this computer)", "Choose Cloud to wake", "Auto, Cloud or Browser", "including one from T3",

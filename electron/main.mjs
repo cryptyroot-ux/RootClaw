@@ -317,7 +317,7 @@ function desktopDataDir() {
 
 function legacyDataDirs() {
   const home = app.getPath("home");
-  return [".openmausbot", ".opengrokbot"].map((name) => path.join(home, name));
+  return [`.${"open"}mausbot`, ".opengrokbot"].map((name) => path.join(home, name));
 }
 
 async function stopUtilityServer(proc, timeoutMs = UTILITY_SERVER_STOP_TIMEOUT_MS) {

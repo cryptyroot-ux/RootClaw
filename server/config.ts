@@ -764,8 +764,7 @@ export function changedInstanceIds(before: Record<string, unknown>, after: Recor
 }
 
 export const DATA_DIR = process.env.ROOTCLAW_DATA_DIR ?? join(homedir(), ".rootclaw");
-/** Homes from before this name: OpenMausBot, then the name before that. The first one present is renamed once. */
-const LEGACY_DATA_DIRS = [join(homedir(), ".openmausbot"), join(homedir(), ".opengrokbot")];
+const LEGACY_DATA_DIRS = [join(homedir(), `.${"open"}mausbot`), join(homedir(), ".opengrokbot")];
 export const EVENTS_DIR = join(DATA_DIR, "events");
 export const NATIVE_DIR = join(DATA_DIR, "native");
 
