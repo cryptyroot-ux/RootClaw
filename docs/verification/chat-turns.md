@@ -4,6 +4,7 @@
 
 - Create a bot through the normal profile boundary.
 - Send to its selected task or an explicitly pinned owned task.
+- Read only exact file attachments referenced in that thread, without granting writes.
 - Run two bot tasks independently, with separate models and approval modes.
 - Keep waits, approval responses, and Stop pinned while task selection changes.
 - Distinguish settled, failed, stalled, timed-out, and needs-user outcomes.
@@ -27,6 +28,96 @@ pnpm control:rootclaw messages --bot BOT_ID --limit 10 --url http://127.0.0.1:PO
 The wait result must be `settled`, and the messages result must contain the
 fake engine's bot response. Use `--dry-run` on `send` when checking a target or
 command without starting a turn.
+
+## Thread attachment read access
+
+Use a disposable fixture and synthetic files only. Start it in one terminal:
+
+```sh
+node --experimental-strip-types scripts/control-rootclaw.ts launch
+```
+
+In another terminal, set `URL` and `DATA_DIR` to the values printed by the
+launcher, then create the files and a Full-access fixture bot. Full access lets
+the fake engine exercise `write_file`; the attachment root itself must still
+refuse that write.
+
+```sh
+mkdir -p "$DATA_DIR/attachments"
+ATTACHMENT="$DATA_DIR/attachments/referenced.txt"
+UNREFERENCED="$DATA_DIR/attachments/unreferenced.txt"
+printf 'THREAD_ATTACHMENT_MARKER\n' > "$ATTACHMENT"
+printf 'UNREFERENCED_MARKER\n' > "$UNREFERENCED"
+cat > /tmp/rootclaw-attachment-team.yaml <<'YAML'
+version: 1
+bots:
+  - name: Attachment Probe
+    model: openaiCompat/fixture-model
+    approval: full
+YAML
+pnpm control:rootclaw team apply /tmp/rootclaw-attachment-team.yaml --url "$URL"
+pnpm control:rootclaw bots --url "$URL"
+```
+
+Copy the `Attachment Probe` bot ID from `bots`, then send the attachment tag
+in its own user message. A later turn must still be able to read it.
+
+```sh
+BOT_ID=... # the Attachment Probe id
+ATTACH_MESSAGE=$(printf 'Use this file on my next request.\n\n<attached-file path="%s" name="referenced.txt" />' "$ATTACHMENT")
+pnpm control:rootclaw send --bot "$BOT_ID" --text "$ATTACH_MESSAGE" --url "$URL"
+pnpm control:rootclaw wait --bot "$BOT_ID" --timeout 30 --url "$URL"
+pnpm control:rootclaw send --bot "$BOT_ID" --text "CALL_TOOL read_file {\"path\":\"$ATTACHMENT\"}" --url "$URL"
+pnpm control:rootclaw wait --bot "$BOT_ID" --timeout 30 --url "$URL"
+```
+
+The fake provider's latest request dump contains the native tool result. Check
+that it contains the synthetic marker:
+
+```sh
+node - "$DATA_DIR/fake-claude-dump.json" THREAD_ATTACHMENT_MARKER <<'NODE'
+const fs = require("node:fs");
+const dump = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+const outputs = dump.messages.filter((message) => message.role === "tool").map((message) => String(message.content));
+if (!outputs.some((output) => output.includes(process.argv[3]))) process.exit(1);
+NODE
+```
+
+Read the unreferenced sibling and check that it fails closed:
+
+```sh
+pnpm control:rootclaw send --bot "$BOT_ID" --text "CALL_TOOL read_file {\"path\":\"$UNREFERENCED\"}" --url "$URL"
+pnpm control:rootclaw wait --bot "$BOT_ID" --timeout 30 --url "$URL"
+node - "$DATA_DIR/fake-claude-dump.json" 'outside the workspace' <<'NODE'
+const fs = require("node:fs");
+const dump = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+const outputs = dump.messages.filter((message) => message.role === "tool").map((message) => String(message.content));
+if (!outputs.some((output) => output.includes(process.argv[3]))) process.exit(1);
+NODE
+```
+
+Attempt a write to the referenced file:
+
+```sh
+pnpm control:rootclaw send --bot "$BOT_ID" --text "CALL_TOOL write_file {\"path\":\"$ATTACHMENT\",\"content\":\"SHOULD_NOT_WRITE\"}" --url "$URL"
+```
+
+This refusal is terminal for the mutating tool, so `wait` is expected to report
+`failed` for this last turn. `messages` must show a failed `write_file` activity,
+and `grep -Fx THREAD_ATTACHMENT_MARKER "$ATTACHMENT"` must still succeed. The
+regression test below asserts that the native tool's refusal specifically says
+the attachment root is read-only. Stop the launcher with Ctrl-C when done.
+
+```sh
+pnpm control:rootclaw messages --bot "$BOT_ID" --limit 20 --url "$URL"
+```
+
+The direct-chat and room paths are also covered together by the isolated fake
+engine regression:
+
+```sh
+pnpm exec vitest run server/index.test.ts -t "reads only thread attachments in direct and room turns"
+```
 
 ## Gotchas
 
