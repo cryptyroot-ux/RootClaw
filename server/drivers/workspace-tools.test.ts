@@ -533,6 +533,145 @@ describe("shell", () => {
       expect(stale.text).not.toContain("RETARGETED-SECRET");
     });
   });
+  describe("macOS shell read allowlist", () => {
+    const literal = (path: string) => `(literal ${JSON.stringify(path)})`;
+    const subpath = (path: string) => `(subpath ${JSON.stringify(path)})`;
+    const build = (options: { readable?: readonly string[]; readFiles?: NonNullable<WorkspaceToolsConfig["readFiles"]>; env?: NodeJS.ProcessEnv } = {}) =>
+      sandboxedShell("true", root, [root], "sandbox-exec", {
+        readable: options.readable,
+        readFiles: options.readFiles,
+        env: options.env ?? { HOME: join(base, "home"), PATH: "/usr/bin:/bin", TMPDIR: join(base, "tmp") },
+      }).args[1]!;
+    const rule = (profile: string, operation: string) =>
+      profile.split("\n").map((line) => line.trim()).find((line) => line.startsWith(`(${operation} `)) ?? "";
+
+    it("allows approved roots and exact canonical files but not parents, siblings, or unrelated paths", () => {
+      const store = join(base, "store");
+      const lexicalStore = join(base, "messages", "attachments");
+      mkdirSync(store);
+      mkdirSync(dirname(lexicalStore));
+      symlinkSync(store, lexicalStore);
+      const canonical = join(store, "document.txt");
+      writeFileSync(canonical, "PINNED-ATTACHMENT");
+      const sibling = join(store, "sibling.txt");
+      writeFileSync(sibling, "SIBLING-SECRET");
+      const readRoot = join(base, "skills");
+      mkdirSync(readRoot);
+      const toolchain = join(base, "toolchain", "bin");
+      mkdirSync(toolchain, { recursive: true });
+      const outside = join(base, "outside");
+      mkdirSync(outside);
+      const hostFile = join(outside, "private.txt");
+      writeFileSync(hostFile, "OUTSIDE-SECRET");
+      const grant = { path: join(lexicalStore, "document.txt"), canonicalPath: realpathSync(canonical) };
+      const profile = build({
+        readable: [readRoot],
+        readFiles: [grant],
+        env: { HOME: join(base, "home"), PATH: `${toolchain}:/usr/bin:/bin`, TMPDIR: join(base, "tmp") },
+      });
+      const data = rule(profile, "allow file-read-data");
+
+      expect(profile).toContain("(deny file-read* file-test-existence)");
+      expect(data).toContain(subpath(realpathSync(root)));
+      expect(data).toContain(subpath(realpathSync(readRoot)));
+      expect(data).toContain(subpath(realpathSync(toolchain)));
+      if (existsSync("/usr")) expect(data).toContain(subpath(realpathSync("/usr")));
+      expect(data).toContain(literal(grant.canonicalPath));
+      expect(data).not.toContain(literal(grant.path));
+      expect(data).not.toContain(subpath(dirname(canonical)));
+      expect(data).not.toContain(literal(dirname(canonical)));
+      expect(data).not.toContain(literal(sibling));
+      expect(data).not.toContain(literal(hostFile));
+      expect(data).not.toContain(subpath(outside));
+      expect(profile).not.toContain(subpath(dirname(canonical)));
+      expect(profile).not.toContain("(allow file-read*");
+      expect(profile).not.toContain('(subpath "/")');
+
+      const metadata = profile.split("\n").map((line) => line.trim()).filter((line) => line.startsWith("(allow file-read-metadata"));
+      expect(metadata.length).toBeGreaterThan(0);
+      expect(metadata.join("\n")).toContain(literal(dirname(canonical)));
+      expect(metadata.join("\n")).not.toContain(subpath(dirname(canonical)));
+
+      expect(profile).toContain("(deny file-write*)");
+      const write = rule(profile, "allow file-write*");
+      expect(write).toContain(subpath(realpathSync(root)));
+      expect(write).toContain(literal("/dev/null"));
+      expect(write).toContain(literal("/dev/tty"));
+      expect(write).toContain('(regex #"^/dev/fd/")');
+      expect(write).not.toContain(subpath(store));
+      expect(write).not.toContain(literal(canonical));
+    });
+
+    it.each(["missing", "file symlink", "directory", "store symlink"] as const)("omits a grant replaced by %s", (replacement) => {
+      const store = join(base, "store");
+      const lexicalStore = join(base, "messages", "attachments");
+      mkdirSync(store);
+      mkdirSync(dirname(lexicalStore));
+      symlinkSync(store, lexicalStore);
+      const canonical = join(store, "document.txt");
+      writeFileSync(canonical, "PINNED-ATTACHMENT");
+      const grant = { path: join(lexicalStore, "document.txt"), canonicalPath: realpathSync(canonical) };
+      expect(rule(build({ readFiles: [grant] }), "allow file-read-data")).toContain(literal(grant.canonicalPath));
+
+      const outside = join(base, "outside");
+      mkdirSync(outside);
+      writeFileSync(join(outside, "document.txt"), "REPLACEMENT-SECRET");
+      if (replacement === "missing") rmSync(canonical);
+      if (replacement === "file symlink") {
+        rmSync(canonical);
+        symlinkSync(join(outside, "document.txt"), canonical);
+      }
+      if (replacement === "directory") {
+        rmSync(canonical);
+        mkdirSync(canonical);
+        writeFileSync(join(canonical, "descendant.txt"), "DESCENDANT-SECRET");
+      }
+      if (replacement === "store symlink") {
+        rmSync(lexicalStore);
+        symlinkSync(outside, lexicalStore);
+      }
+
+      const profile = build({ readFiles: [grant] });
+      const data = rule(profile, "allow file-read-data");
+      expect(data).not.toContain(literal(grant.canonicalPath));
+      expect(data).not.toContain(literal(grant.path));
+      expect(data).not.toContain(subpath(dirname(grant.canonicalPath)));
+      expect(profile).not.toContain(subpath(dirname(grant.canonicalPath)));
+      expect(profile).not.toContain(subpath(outside));
+      expect(profile).not.toContain(literal(join(outside, "document.txt")));
+    });
+
+    it.runIf(process.platform === "darwin" && shellSandbox() === "sandbox-exec")("macOS shell confines reads to the pinned attachment", async () => {
+      const store = join(base, "store");
+      mkdirSync(store);
+      const attachment = join(store, "document.txt");
+      writeFileSync(attachment, "PINNED-ATTACHMENT");
+      const sibling = join(store, "sibling.txt");
+      writeFileSync(sibling, "SIBLING-SECRET");
+      const outside = join(base, "outside");
+      mkdirSync(outside);
+      const hostFile = join(outside, "private.txt");
+      writeFileSync(hostFile, "OUTSIDE-SECRET");
+      writeFileSync(join(root, "workspace.txt"), "WORKSPACE-CONTENT");
+      config = { ...config, readFiles: [{ path: attachment, canonicalPath: realpathSync(attachment) }] };
+
+      const read = await run("shell", { command: `cat ${JSON.stringify(attachment)} ${JSON.stringify(join(root, "workspace.txt"))}` });
+      expect(read.ok, read.text).toBe(true);
+      expect(read.text).toContain("PINNED-ATTACHMENT");
+      expect(read.text).toContain("WORKSPACE-CONTENT");
+
+      for (const path of [sibling, hostFile]) {
+        const denied = await run("shell", { command: `cat ${JSON.stringify(path)}` });
+        expect(denied.ok, denied.text).toBe(false);
+        expect(denied.text).not.toContain("SIBLING-SECRET");
+        expect(denied.text).not.toContain("OUTSIDE-SECRET");
+      }
+
+      const write = await run("shell", { command: `echo changed > ${JSON.stringify(attachment)}` });
+      expect(write.ok, write.text).toBe(false);
+      expect(readFileSync(attachment, "utf8")).toBe("PINNED-ATTACHMENT");
+    });
+  });
   it("runs plainly, and says so, without an OS sandbox", () => {
     const plain = sandboxedShell("ls", "/w", ["/w"], null);
     expect(plain.args).toEqual(["-c", "ls"]);

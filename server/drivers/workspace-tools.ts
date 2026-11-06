@@ -375,7 +375,7 @@ function killGroup(pid: number | undefined, signal: NodeJS.Signals) {
 // shell runs under the OS sandbox where there is one: bubblewrap on Linux, sandbox-exec on macOS. Under bubblewrap the
 // command sees only the system toolchain (read-only), the workspace and its writable folders, the read-only skill
 // folders, a private empty /tmp and an empty $HOME, and it has no network unless the call asked for it (`network`,
-// shown on the approval card). sandbox-exec confines writes only. Without a sandbox the
+// shown on the approval card). sandbox-exec now confines reads as well as writes (Task 4). Without a sandbox the
 // shell refuses to run (fail closed); ROOTCLAW_SHELL_SANDBOX=off turns the sandbox off on purpose, and then each result
 // says the command ran unsandboxed.
 type Sandbox = "bwrap" | "sandbox-exec" | null;
@@ -399,9 +399,21 @@ export function shellSandbox(): Sandbox {
 }
 
 const sbString = (path: string) => JSON.stringify(path);
+/** Ancestor directories of a path, including `/`; used for metadata-only allowances. */
+const ancestorsOf = (path: string): string[] => {
+  const result: string[] = [];
+  let current = path;
+  while (true) {
+    if (!result.includes(current)) result.push(current);
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return result;
+};
 
 /** System folders a command needs to run tools, mounted read-only when present. */
-const SYSTEM_DIRS = ["/usr", "/bin", "/sbin", "/lib", "/lib32", "/lib64", "/libx32", "/etc", "/opt", "/nix", "/snap", "/run/systemd/resolve"];
+const SYSTEM_DIRS = ["/usr", "/bin", "/sbin", "/lib", "/lib32", "/lib64", "/libx32", "/etc", "/opt", "/nix", "/snap", "/run/systemd/resolve", "/System", "/Library", "/private/etc", "/private/tmp", "/private/var/db/dyld"];
 /** Toolchain folders that may live under $HOME (named by these variables or on PATH), mounted read-only over the empty
  * $HOME so node, pnpm, cargo… still resolve. */
 const TOOLCHAIN_ENV = ["NVM_DIR", "FNM_DIR", "PNPM_HOME", "COREPACK_HOME", "CARGO_HOME", "RUSTUP_HOME", "GOPATH", "VIRTUAL_ENV", "JAVA_HOME"];
@@ -421,16 +433,16 @@ export interface SandboxOptions {
  * them without spawning. */
 export function sandboxedShell(command: string, cwd: string, writable: readonly string[], kind: Sandbox, options: SandboxOptions = {}): { file: string; args: string[]; extraFds: number[] } {
   const dirs = [...new Set(writable.filter((dir) => existsSync(dir)).map((dir) => realOrSelf(dir)))];
+  const env = options.env ?? process.env;
+  const home = env.HOME || homedir();
+  // A toolchain folder is a specific folder, never "/" or a top-level folder, nor one that holds $HOME: a PATH entry
+  // such as "/" (or a link to it) would otherwise mount the whole filesystem read-only into the sandbox (audit N03).
+  const toolchain = [dirname(process.execPath), ...(env.PATH ?? "").split(":"), ...TOOLCHAIN_ENV.map((key) => env[key] ?? "")]
+    .filter((dir) => dir && isAbsolute(dir) && existsSync(dir))
+    .map((dir) => realOrSelf(resolve(dir)))
+    .filter((dir) => dir.split(sep).filter(Boolean).length >= 2 && !within(dir, resolve(home)) && !within(dir, "/tmp")
+      && !SYSTEM_DIRS.some((system) => within(system, dir)));
   if (kind === "bwrap") {
-    const env = options.env ?? process.env;
-    const home = env.HOME || homedir();
-    // A toolchain folder is a specific folder, never "/" or a top-level folder, nor one that holds $HOME: a PATH entry
-    // such as "/" (or a link to it) would otherwise mount the whole filesystem read-only into the sandbox (audit N03).
-    const toolchain = [dirname(process.execPath), ...(env.PATH ?? "").split(":"), ...TOOLCHAIN_ENV.map((key) => env[key] ?? "")]
-      .filter((dir) => dir && isAbsolute(dir) && existsSync(dir))
-      .map((dir) => realOrSelf(resolve(dir)))
-      .filter((dir) => dir.split(sep).filter(Boolean).length >= 2 && !within(dir, resolve(home)) && !within(dir, "/tmp")
-        && !SYSTEM_DIRS.some((system) => within(system, dir)));
     // Merged-/usr systems make /bin, /lib… symlinks into /usr: those stay symlinks inside the sandbox.
     const links = SYSTEM_DIRS.filter((dir) => { try { return lstatSync(dir).isSymbolicLink(); } catch { return false; } });
     const readOnly = [...new Set([...SYSTEM_DIRS.filter((dir) => existsSync(dir) && !links.includes(dir)), ...toolchain,
@@ -464,7 +476,38 @@ export function sandboxedShell(command: string, cwd: string, writable: readonly 
     }
   }
   if (kind === "sandbox-exec") {
-    const profile = `(version 1)(allow default)(deny file-write*)(allow file-write* ${dirs.map((dir) => `(subpath ${sbString(dir)})`).join(" ")} (literal "/dev/null") (literal "/dev/tty") (regex #"^/dev/fd/"))`;
+    const validReadFiles = (options.readFiles ?? []).filter((grant) => {
+      try {
+        return realpathSync(grant.path) === grant.canonicalPath
+          && realpathSync(grant.canonicalPath) === grant.canonicalPath
+          && lstatSync(grant.canonicalPath).isFile();
+      } catch { return false; }
+    });
+    const macosToolchain = [dirname(process.execPath), ...(env.PATH ?? "").split(":"), ...TOOLCHAIN_ENV.map((key) => env[key] ?? "")]
+      .filter((dir) => dir && isAbsolute(dir) && existsSync(dir))
+      .map((dir) => realOrSelf(resolve(dir)))
+      .filter((dir) => dir.split(sep).filter(Boolean).length >= 2 && !within(dir, resolve(home)));
+    const readDirs = [...new Set([...SYSTEM_DIRS.filter((dir) => existsSync(dir)), ...macosToolchain,
+      ...dirs, ...(options.readable ?? []).filter((dir) => existsSync(dir))].map((dir) => realOrSelf(dir)))];
+    const readRules = [
+      ...readDirs.map((dir) => `(subpath ${sbString(dir)})`),
+      ...validReadFiles.map((grant) => `(literal ${sbString(grant.canonicalPath)})`),
+      `(literal "/dev/null")`, `(literal "/dev/tty")`,
+      `(literal "/dev/urandom")`, `(literal "/dev/random")`,
+      `(subpath "/dev/fd")`,
+    ].join(" ");
+    const metadataAncestors = [...new Set(validReadFiles.flatMap((grant) =>
+      ancestorsOf(grant.canonicalPath).slice(1)))];
+    const metadataRules = metadataAncestors.map((dir) => `(literal ${sbString(dir)})`).join(" ");
+    const profile = [
+      "(version 1)",
+      "(allow default)",
+      "(deny file-read* file-test-existence)",
+      metadataRules ? `(allow file-read-metadata ${metadataRules})` : "",
+      `(allow file-read-data ${readRules})`,
+      "(deny file-write*)",
+      `(allow file-write* ${dirs.map((dir) => `(subpath ${sbString(dir)})`).join(" ")} (literal "/dev/null") (literal "/dev/tty") (regex #"^/dev/fd/"))`,
+    ].filter(Boolean).join("\n");
     return { file: "/usr/bin/sandbox-exec", args: ["-p", profile, "/bin/bash", "-c", command], extraFds: [] };
   }
   return { file: plainShell(), args: ["-c", command], extraFds: [] };
