@@ -1,6 +1,26 @@
 name: VPS server image release
 
 on:
+  pull_request:
+    paths:
+      - .dockerignore
+      - Dockerfile
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - apps/docs/**
+      - cloudflare/**
+      - connector/**
+      - deploy/docker-compose.yml
+      - public/**
+      - scripts/**
+      - server/**
+      - shared/**
+      - skills/**
+      - src/**
+      - tsconfig*.json
+      - vite.config.*
+      - .github/workflows/vps-image-release.yml
   push:
     tags:
       - "v*"
@@ -27,6 +47,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Verify tag, package, and Compose versions
+        if: startsWith(github.ref, 'refs/tags/v')
         run: |
           node --input-type=module -e '
             import { readFileSync } from "node:fs";
@@ -86,6 +107,7 @@ jobs:
             health="$(docker inspect --format '{{.State.Health.Status}}' rootclaw-image-smoke)"
             if [ "$health" = healthy ]; then
               docker exec rootclaw-image-smoke curl --fail --silent --show-error http://127.0.0.1:8799/api/health
+              docker exec rootclaw-image-smoke /opt/rootclaw-browser/chrome --version
               docker exec rootclaw-image-smoke node --input-type=module -e '
                 import { createRequire } from "node:module";
                 const require = createRequire("/app/duckdb/node_modules/rootclaw-duckdb-anchor.js");
