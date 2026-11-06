@@ -219,7 +219,7 @@ describe("message-linked files", () => {
     }
   });
 
-  it("grants read roots only to valid file attachments in user messages", () => {
+  it("collects thread attachment read roots only from valid user file attachments", () => {
     const referenced = join(attachments, "referenced.pdf");
     const sibling = join(attachments, "sibling.pdf");
     const external = join(outside, "secret.pdf");

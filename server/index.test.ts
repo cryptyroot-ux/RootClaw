@@ -4407,10 +4407,9 @@ describe("harness HTTP API", () => {
         : Boolean(state.bots.find((candidate: { id: string }) => candidate.id === bot.id)?.tasks
           ?.find((task: { threadId: string; busy?: boolean }) => task.threadId === threadId)?.busy);
     };
-    const send = async (threadId: string, path: string, text: string, groupId?: string) => {
+    const send = async (threadId: string, route: string, text: string, groupId?: string) => {
       const beforeMessages = await messages(threadId);
       const beforeRequests = fakeEngine.requests.length;
-      const route = groupId ? `/api/groups/${groupId}/messages` : `/api/bots/${bot.id}/messages`;
       expect((await api("POST", route, { text })).status).toBe(202);
       await expect.poll(() => fakeEngine.requests.length > beforeRequests, { timeout: 10_000 }).toBe(true);
       await expect.poll(async () => {
