@@ -31,6 +31,7 @@ import { failoverHold, failoverKind } from "./failover.ts";
 import { classifyError, HttpStatusError, interruptibleDelay, nextRetryDelay, parseRetryAfter, RETRY_MAX_ATTEMPTS } from "./retry.ts";
 import { plainFailureMessage } from "./engine-errors.ts";
 import { toolFailureMessage } from "./tool-failure.ts";
+import { announcesAction } from "./action-announcement.ts";
 import { refusesRequestSize, RequestTooLargeError, sizeChange, smallerResend } from "./chat-size-limit.ts";
 import { completionError, completionUsage, httpErrorDetail, REFUSED_TOOL_CALL_ATTEMPTS, RejectedToolCallError, refusedToolCall, refusedToolCallFailure,
   rejectsReasoningReplay, rejectsToolsParameter, UnsupportedReasoningReplayError, usageFrom, type CompletionJson } from "./openai-chat-errors.ts";
@@ -41,7 +42,8 @@ import { ChatContext } from "./chat-context.ts";
 import { fingerprint, replayDelivered, type DeliveredUserMessage } from "./delivered-replay.ts";
 import { deferTools, lazyToolsEnabled, LOAD_TOOLS_TOOL, loadToolsResult } from "./tool-loading.ts";
 import { chatCompletionRequest, refusedParallelToolCalls, rejectsParallelToolCalls, reuseOrRun, TOOL_LOOP_NOTE, TOOL_LOOP_NOTICE, ToolLoopGuard, UnsupportedParallelToolCallsError } from "./openai-chat-orchestration.ts";
-import { skillReadRoots, WORKSPACE_TOOL_DEFINITIONS, WORKSPACE_TOOLS_PROMPT, workspaceToolReadOnly, stopBackgroundJobs, type WorkspaceToolsConfig, createWorkspaceProvider } from "./workspace-tools.ts";
+import { WORKSPACE_TOOL_DEFINITIONS, WORKSPACE_TOOLS_PROMPT, workspaceToolReadOnly, stopBackgroundJobs, type WorkspaceToolsConfig, createWorkspaceProvider } from "./workspace-tools.ts";
+import { skillReadRoots } from "./skill-read-roots.ts";
 import { computerExecDefinitions, createComputerExecProvider } from "./computer-exec-tools.ts";
 import { SYSTEM_INFO_TOOL, systemInfoDefinitions, createSystemInfoProvider } from "./system-info-tools.ts";
 import { processToolDefinitions, createProcessProvider } from "./process-tools.ts";
@@ -135,18 +137,6 @@ const MAX_DELIVERED_THREADS = 256;
 
 const CORRECTIVE_ROUND = "[RootClaw: a tool call in this turn failed (its result is marked ok:false). Re-run the failed operations with corrected inputs where possible, check the results, then give your final answer. Do not report results you did not get.]";
 const NUDGE_ANNOUNCED_ACTION = "You said what you would do next but called no tool. Use your tools for only the remaining work, or reply with verified results if nothing is left to do. Never repeat an operation that succeeded, was denied, or may already have taken effect; inspect its state instead. Do not retry a destructive operation.";
-
-export function announcesAction(text: string): boolean {
-  const reply = text.trim();
-  if (!reply || reply.length > 4_000 || reply.includes("?")) return false;
-  if (reply.length > 400) {
-    const tail = reply.split(/\n\s*\n/).at(-1)!.trim();
-    return tail.length <= 400 && /^(?:let me|i['\u2019]ll|i will|i(?:['\u2019]m| am) going to)\s+(?:now\s+)?(?:execute|send|type|press|launch|open|check|inspect|read|fetch|run|create|write|verify)\b/i.test(tail);
-  }
-  return /(?:[:\u2014\u2013]|\.\.\.|\u2026)$/.test(reply) ||
-    /^(?:checking|let me(?! know\b)|i'll|i will|i'm going to|i am going to|opening|pulling|looking|searching|navigating|reading|fetching|loading|now (?:i'll|let me|opening|checking|pulling|reading))\b/i.test(reply) ||
-    /^i(?:['\u2019]m| am)\b[^.!?\n]*\band (?:i )?will\s+(?:launch|open|check|pull|look|search|navigate|read|fetch|load|run|inspect)\b/i.test(reply);
-}
 
 const envNumber = (name: string) => {
   const value = Number(process.env[name]);

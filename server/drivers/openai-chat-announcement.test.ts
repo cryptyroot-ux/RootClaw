@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { announcesAction } from "./openai-chat.ts";
+import { announcesAction } from "./action-announcement.ts";
 
 describe("announcesAction", () => {
   it.each([

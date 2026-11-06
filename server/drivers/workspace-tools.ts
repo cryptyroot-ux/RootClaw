@@ -1065,21 +1065,6 @@ export async function executeWorkspaceTool(name: string, args: Record<string, un
   }
 }
 
-/** Skill folders a turn's prompt names (`Read "/abs/…/SKILL.md"`): readable, never writable, so skills work under confinement. */
-export function skillReadRoots(...texts: Array<string | undefined>): string[] {
-  const roots = new Set<string>();
-  for (const text of texts) {
-    if (!text) continue;
-    for (const match of text.matchAll(/Read ("(?:[^"\\]|\\.)*(?:\/|\\\\)SKILL\.md")/g)) {
-      try {
-        const file = JSON.parse(match[1]!) as string;
-        if (isAbsolute(file)) roots.add(dirname(file));
-      } catch {}
-    }
-  }
-  return [...roots];
-}
-
 export const WORKSPACE_TOOLS_PROMPT = "\n\nYou have workspace tools that run directly on this computer: shell, read_file, write_file, edit_file, apply_patch, grep, glob, list_dir, " +
   "git_status, git_diff, git_log, git_commit (never pushes), web_fetch and web_search. They are confined to your workspace folder (plus the skill folders named here, read-only); " +
   "where the OS allows, shell runs sandboxed: it sees only the workspace, the skill folders and the system tools, and has no network unless you set network=true on that call (installs, clones, downloads). " +
