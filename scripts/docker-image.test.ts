@@ -57,6 +57,18 @@ describe("container images", () => {
     expect(chain("server")).toContainEqual({ op: "ARG", args: 'ENGINES=""' });
   });
 
+  it("stages both Linux DuckDB arches and selects only the matching server tree", () => {
+    const build = all.find(stage => stage.name === "build")!;
+    expect(build.steps).toContainEqual({ op: "ARG", args: "TARGETARCH" });
+    const prepare = build.steps.find(step => step.op === "RUN" && step.args.includes("prepare-duckdb.mjs"))!;
+    expect(prepare.args).toContain('ROOTCLAW_DUCKDB_ARCHES="x64,arm64"');
+    expect(prepare.args).toMatch(/case "\$TARGETARCH" in[\s\S]*amd64\).*x64[\s\S]*arm64\).*arm64/);
+    expect(chain("cloud-home")).toContainEqual({ op: "COPY", args: "--from=build /src/dist-native/duckdb/linux-x64 ./duckdb" });
+    expect(chain("server").filter(step => step.op === "COPY" && step.args.includes("/dist-native/duckdb/"))).toEqual([
+      { op: "COPY", args: "--from=build --chown=rootclaw:rootclaw /src/dist-native/duckdb/server ./duckdb" },
+    ]);
+  });
+
   it("puts the browser and the tools beneath the per-commit app files, so a code change leaves them as they were", () => {
     for (const target of ["server", "cloud-home"]) {
       const steps = chain(target);
