@@ -56,6 +56,7 @@ export interface RunBegin { runId: string; threadId: string; botId?: string; ins
 type RuntimeEventLike = { type: string; turnId?: string } & Record<string, unknown>;
 
 export interface RunStore {
+  close(): void;
   begin(input: RunBegin): void;
   observe(event: RuntimeEventLike): void;
   get(id: string): RunRecord | undefined;
@@ -244,6 +245,7 @@ export function createRunStore(options: { dataDir: string; cap?: number; now?: (
     for (const row of rows) runs.set(row.id, rowToRecord(row));
   } catch (error) {
     console.error(`[run-store] SQLite unavailable, falling back to in-memory: ${error instanceof Error ? error.message : String(error)}`);
+    try { db?.close(); } catch {}
     db = null;
     inMemoryFallback = true;
   }
@@ -311,6 +313,12 @@ export function createRunStore(options: { dataDir: string; cap?: number; now?: (
 
   return {
     interruptedAtBoot,
+    close() {
+      const database = db;
+      db = null;
+      inMemoryFallback = true;
+      database?.close();
+    },
     begin(input) {
       const at = now();
       const previous = [...runs.values()].reverse().find((run) => run.threadId === input.threadId && run.botId === input.botId && run.status !== "running");

@@ -267,7 +267,7 @@ describe("lazy tool schemas (fake provider)", () => {
     const toolsFile = join(mkdtempSync(join(tmpdir(), "rc-lazy-")), "tools.json");
     writeFileSync(toolsFile, JSON.stringify(["load", "sql", "show", "describe", "export"].map((name) => ({ name, description: `Data ${name}. Details.`, inputSchema: { type: "object", properties: {} } }))));
     const data = { command: process.execPath, args: ["--experimental-strip-types", "--no-warnings", join(import.meta.dirname, "..", "testing", "fake-mcp-server.ts")], env: { FAKE_MCP_TOOLS_FILE: toolsFile } };
-    const f = await fixture([], [[{ name: "load_tools", input: { names: ["sql"] } }], [{ name: "data_sql", input: {} }, { name: "data_show", input: {} }]]);
+    const f = await fixture([], [[{ name: "load_tools", input: { names: ["sql"] } }], [{ name: "data_sql", input: {} }, { name: "data_show", input: {}, allowUnlisted: true }]]);
     await f.start({ approvalMode: "full", integrations: { data } } as Partial<SendTurnInput>);
     await f.completed();
     const offered = f.streamed().map((body) => (body.tools as { function: { name: string } }[]).map((tool) => tool.function.name));
@@ -280,4 +280,3 @@ describe("lazy tool schemas (fake provider)", () => {
     expect(offered[2]).toContain("data_show");
   });
 });
-

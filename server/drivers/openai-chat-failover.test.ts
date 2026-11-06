@@ -90,15 +90,19 @@ describe("native run record", () => {
     const { setRunRecorder } = await import("./openai-chat.ts");
     const dir = mkdtempSync(join(tmpdir(), "native-runs-"));
     const runs = createRunStore({ dataDir: dir });
+    let reopened: ReturnType<typeof createRunStore> | undefined;
     setRunRecorder(runs);
     try {
       const { done } = await runTurn(() => json(429, { error: { message: "You exceeded your current quota", code: "insufficient_quota" } }), { botId: "b1" });
-      const run = createRunStore({ dataDir: dir }).get(done.turnId!)!;
+      reopened = createRunStore({ dataDir: dir });
+      const run = reopened.get(done.turnId!)!;
       expect(run).toMatchObject({ botId: "b1", threadId: "thread", instanceId: "primary", chain: ["m1"], status: "failed", failover: true });
       expect(run.errors.length).toBe(1);
       expect(run.durationMs).toBeGreaterThanOrEqual(0);
     } finally {
       setRunRecorder(null);
+      reopened?.close();
+      runs.close();
       rmSync(dir, { recursive: true, force: true });
     }
   });

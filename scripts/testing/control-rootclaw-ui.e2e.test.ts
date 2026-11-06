@@ -32,8 +32,8 @@ const LAUNCH_TIMEOUT_MS = forced ? 600_000 : 180_000;
 // agents_list_bots succeeds whatever it is handed; "Bash" is not offered to the native engine, so that step fails.
 // The last call comes in a second round, so its success settles the turn past the earlier failure.
 const TOOL_CALLS = JSON.stringify([
-  { name: "agents_list_bots", input: { command: "pnpm control:rootclaw doctor" } },
-  { name: "Bash", input: { command: "pnpm control:rootclaw ui click --name Missing" } },
+  { name: "agents_list_bots", input: { command: "pnpm control:rootclaw doctor" }, allowUnlisted: true },
+  { name: "Bash", input: { command: "pnpm control:rootclaw ui click --name Missing" }, allowUnlisted: true },
   { name: "agents_list_bots", input: { command: "pnpm control:rootclaw ui flag --set features.showToolCalls=true --dry-run" }, round: 1 },
 ]);
 const REPLY = "hello from the fixture engine"; // every turn's reply, scripted on the native fake below

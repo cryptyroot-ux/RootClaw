@@ -136,6 +136,7 @@ describe("engine eval tasks", () => {
     } finally {
       globalThis.fetch = real;
       setRunRecorder(null);
+      runs.close();
       server.closeAllConnections();
       await new Promise<void>((done) => server.close(() => done()));
     }

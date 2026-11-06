@@ -1,15 +1,15 @@
 // POSIX only: the fake engines are shebang scripts.
 import { spawn, type ChildProcess } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { FAKE_OPENAI_MODEL, startFakeOpenAiChat, type FakeOpenAiChat } from "./testing/fake-openai-chat.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
-const FAKE_CLAUDE = join(SERVER_DIR, "testing", "fake-claude-cli.ts");
 const PORT = 18800 + Math.floor(Math.random() * 10_000);
 const BASE = `http://127.0.0.1:${PORT}`;
 const posixOnly = describe.skipIf(process.platform === "win32");
@@ -19,6 +19,7 @@ posixOnly("bulk delete tasks e2e", () => {
   let home: string;
   let stderr = "";
   let finishGate: string;
+  let fakeChat: FakeOpenAiChat | undefined;
 
   const api = async (method: string, path: string, body?: unknown): Promise<{ status: number; body: any }> => {
     const res = await fetch(`${BASE}${path}`, {
@@ -30,9 +31,9 @@ posixOnly("bulk delete tasks e2e", () => {
   };
   const getBot = async (id: string) => (await api("GET", "/api/bots")).body.bots.find((b: any) => b.id === id);
   const taskIds = async (botId: string): Promise<string[]> => (await getBot(botId)).tasks.map((t: any) => t.threadId);
-  const newBot = async (name: string, selection?: unknown) => {
+  const newBot = async (name: string) => {
     const bot = (await api("POST", "/api/bots")).body.bot;
-    await api("PATCH", `/api/bots/${bot.id}`, { name, ...(selection ? { modelSelection: selection } : {}) });
+    await api("PATCH", `/api/bots/${bot.id}`, { name });
     return bot;
   };
   const newTask = async (botId: string): Promise<string> => (await api("POST", `/api/bots/${botId}/tasks`, {})).body.task.threadId;
@@ -46,20 +47,16 @@ posixOnly("bulk delete tasks e2e", () => {
   };
 
   beforeAll(async () => {
-    chmodSync(FAKE_CLAUDE, 0o755);
     home = mkdtempSync(join(tmpdir(), "rootclaw-bulk-delete-"));
     mkdirSync(join(home, ".rootclaw"), { recursive: true });
     finishGate = join(home, "finish-turn.gate");
+    fakeChat = await startFakeOpenAiChat({ FAKE_CHAT_GATE: finishGate });
     writeFileSync(
       join(home, ".rootclaw", "config.json"),
       JSON.stringify({
-        instances: {
-          claudeSlow: {
-            driver: "claudeAgent",
-            environment: { FAKE_CLAUDE_MODE: "slow", FAKE_CLAUDE_SLOW_FINISH_GATE: finishGate },
-            config: { cli: FAKE_CLAUDE, permissionMode: "bypassPermissions" },
-          },
-        },
+        openaiCompat: { url: fakeChat.url, key: "fixture-only", model: FAKE_OPENAI_MODEL },
+        defaultModelSelection: { instanceId: "openaiCompat", model: FAKE_OPENAI_MODEL },
+        instances: { openaiCompat: { driver: "openai-compat", displayName: "Fixture engine" } },
       }),
     );
     child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
@@ -82,9 +79,10 @@ posixOnly("bulk delete tasks e2e", () => {
   }, 30_000);
 
   afterAll(async () => {
-    writeFileSync(finishGate, "go");
-    await waitForExit(child, { signal: "SIGTERM" });
-    await removeTempDir(home);
+    if (finishGate) writeFileSync(finishGate, "go");
+    if (child) await waitForExit(child, { signal: "SIGTERM" });
+    if (fakeChat) await fakeChat.stop();
+    if (home) await removeTempDir(home);
   });
 
   it("deletes the listed tasks, reports unknown ids per thread, and leaves the rest", async () => {
@@ -120,7 +118,8 @@ posixOnly("bulk delete tasks e2e", () => {
 
   it("refuses a running task per id but still deletes the others", async () => {
     rmSync(finishGate, { force: true });
-    const bot = await newBot("Bulk C", { instanceId: "claudeSlow", model: "claude-fake" });
+    const bot = await newBot("Bulk C");
+    fakeChat!.setBotMode(bot.id, "slow");
     const running = bot.threadId;
     expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "go" })).status).toBe(202);
     await waitUntil(async () => (await getBot(bot.id))?.busy === true, 15_000, "turn never started");
@@ -185,7 +184,8 @@ posixOnly("bulk delete tasks e2e", () => {
 
   it("refuses a channel thread with a running turn per id but still deletes the others", async () => {
     rmSync(finishGate, { force: true });
-    const bot = await newBot("Bulk J", { instanceId: "claudeSlow", model: "claude-fake" });
+    const bot = await newBot("Bulk J");
+    fakeChat!.setBotMode(bot.id, "slow");
     const room = await newRoom("Bulk room busy", bot);
     const second = (await api("POST", `/api/groups/${room.id}/tasks`, {})).body.task.threadId;
     const third = (await api("POST", `/api/groups/${room.id}/tasks`, {})).body.task.threadId;

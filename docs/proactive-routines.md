@@ -80,8 +80,11 @@ there is no brief at all. Its row says
    routine keeps the NOTHING NEW convention in `server/automation-reports.ts`.
 3. **Read-and-draft runs** (`access: "read-and-draft"`), in
    `server/read-and-draft.ts`. Everything is allow-only:
-   - the run runs at Ask, and the server refuses every request in it outright,
-     never as a card;
+   - the run runs at Ask, and the server answers permission requests itself,
+     never as a card: only the native Composio multi-execute gateway reaches the
+     relay, where each connected-app call is checked before generic grant
+     denials; calls allowed by the fence still need the bot's connector grants
+     and scopes, and every other request is refused;
    - its RootClaw routes are conversation reads, its own results, the
      engine's hooks and the connected-apps relay;
    - through the relay it reads Gmail and Google Calendar, and may write one
@@ -93,9 +96,13 @@ there is no brief at all. Its row says
    - its conversation stays out of recall, recent work, `list_threads` and Chief
      notices.
 
-   The model work needs an engine whose every tool use reaches RootClaw's
-   answerer (Claude today). On any other engine the watch prepares no meeting,
-   says so in the brief, and still does what needs no AI.
+   The model work runs only when the server-selected engine has the
+   `openai-compat` driver. Eligibility comes from its server-owned `driverKind`,
+   not user-controlled model text or prompt contents; the configured endpoint
+   does not enforce the fence; RootClaw does. The run uses Ask-level approvals,
+   but the handler refuses every out-of-policy request itself, never as an
+   approval card. On other drivers the watch prepares no meeting, says so in
+   the brief, and still does what needs no AI.
 5. **Helper models sort the inbox** (`server/host/inbox-triage.ts`). With a
    decision model set up (Settings → Decision and extraction: the person's own
    Cloudflare Workers AI or Jev key, or Cloud's included one), new mail is
@@ -105,9 +112,10 @@ there is no brief at all. Its row says
    senders the person recently dismissed. Only important and needs-a-reply
    mail becomes rows; the why is built in plain code from what was read. The
    helper models can't act, so no fence is needed. If they fail, the mail
-   waits for the next check. A full AI turn runs only for meeting prep, or when
-   the person presses Draft a reply. Without any helper model, the AI run sorts
-   mail as above, on Claude only.
+   waits for the next check. With no helper model configured, the watch sorts
+   mail in its `read-and-draft` AI run through the fenced `openai-compat`
+   driver. A full AI turn is also used for meeting prep or when the person
+   presses Draft a reply.
 4. **Deliver to the brief** (`deliver: "brief"`): results become brief rows,
    not chat lines of their own.
 

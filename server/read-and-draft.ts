@@ -1,6 +1,7 @@
 // Security invariant: a read-and-draft routine run is unattended and its prompt carries untrusted mail and invite text
 // beside the person's private data, so it gets no way to act outside or to persist anything. Everything is allow-only:
-// - the engine runs at Ask, and the server answers every request in the run itself: each is refused, never a card;
+// - the engine runs at Ask, and the server answers every request itself, never with a card; only the native Composio
+//   multi-execute gateway is passed through to the connected-app route, where each call is checked;
 // - of RootClaw's own routes it may reach only conversation reads, the paging of its own long results, the engine's
 //   hooks and the connected-apps relay;
 // - through the relay it may only read Gmail and Google Calendar, and write a draft replying in one of the threads its
@@ -13,6 +14,7 @@ import { connectorCallsIn, isReadOnlyTool, KNOWN_READ_SLUGS } from "../shared/ou
 import type { RuntimeEvent } from "../shared/runtime-events.ts";
 import type { ProviderAdapter } from "./contracts.ts";
 import type { DecisionRow } from "./decision-log.ts";
+import { COMPOSIO_MULTI_EXECUTE_TOOL } from "./connector-verdict.ts";
 import { recordsText } from "./records-block.ts";
 import type { RoutineRun } from "./routines.ts";
 
@@ -30,6 +32,7 @@ export const READ_AND_DRAFT_TOOLS: ReadonlySet<string> = new Set(["agents", "com
 
 export const READ_AND_DRAFT_REFUSAL = "This work reads and drafts only: RootClaw refused this. Do not try another way.";
 const RULE = "read-and-draft";
+const COMPOSIO_MULTI_EXECUTE_CHAT_TOOL = `composio_${COMPOSIO_MULTI_EXECUTE_TOOL.toLowerCase()}`;
 
 /** RootClaw's own routes a read-and-draft run may reach. */
 const ROUTES: ReadonlySet<string> = new Set([
@@ -69,6 +72,9 @@ export interface ReadAndDraftDeps {
 }
 
 export interface DraftReply { threadId: string; to?: string }
+
+export interface PreparedConnectorCall { refused: boolean; commit(): boolean }
+export type ConnectorRefusalDisposition = "handled" | "tool-error";
 
 /** The reply a draft call writes, or null when it is not a reply in one thread to one person. */
 export function draftReply(args: unknown): DraftReply | null {
@@ -125,13 +131,18 @@ export function createReadAndDraft(deps: ReadAndDraftDeps) {
     return true;
   };
 
-  /** True when the request is in a read-and-draft run and was refused here, before any grant or card. */
+  /** True when a read-and-draft request was answered here, before any grant or card. */
   function answers(event: RequestOpened, asker: Bot, say: Say): boolean {
     if (!confines(event.threadId)) return false;
     const adapter = deps.adapter(event.providerInstanceId ?? asker.modelSelection.instanceId);
-    say({ role: "bot", kind: "activity", tool: { name: `Refused (reads and drafts only): ${event.summary.slice(0, 120)}`, ok: false } });
-    deps.decide({ threadId: event.threadId, requestId: event.requestId, botId: asker.id, botName: asker.name, tool: event.tool, summary: event.summary, decision: "auto-denied", source: "routine", rule: RULE });
-    const decision = { behavior: event.requestType === "question" ? "answer" as const : "deny" as const, message: READ_AND_DRAFT_REFUSAL };
+    const connectorGateway = event.requestId !== undefined && event.requestType === "permission" &&
+      event.provider === "openai-compat" && event.tool === COMPOSIO_MULTI_EXECUTE_CHAT_TOOL;
+    if (!connectorGateway) say({ role: "bot", kind: "activity", tool: { name: `Refused (reads and drafts only): ${event.summary.slice(0, 120)}`, ok: false } });
+    deps.decide({ threadId: event.threadId, requestId: event.requestId, botId: asker.id, botName: asker.name, tool: event.tool, summary: event.summary,
+      decision: connectorGateway ? "auto-approved" : "auto-denied", source: "routine", rule: RULE });
+    const decision = connectorGateway
+      ? { behavior: "allow" as const }
+      : { behavior: event.requestType === "question" ? "answer" as const : "deny" as const, message: READ_AND_DRAFT_REFUSAL };
     void (async () => {
       try {
         if (event.requestId === undefined || !adapter) throw new Error("no request to answer");
@@ -140,7 +151,7 @@ export function createReadAndDraft(deps: ReadAndDraftDeps) {
         if (event.turnId && !deps.stale(event)) await adapter?.interruptTurn(event.threadId, event.turnId).catch(() => {});
       }
       if (!deps.stale(event)) deps.release(event.threadId);
-    })().catch(() => console.error("[read-and-draft] Could not refuse a request."));
+    })().catch(() => console.error("[read-and-draft] Could not answer a request."));
     return true;
   }
 
@@ -149,25 +160,62 @@ export function createReadAndDraft(deps: ReadAndDraftDeps) {
     return !ROUTES.has(route) && confines(threadId) && refuse(bot, threadId, route);
   }
 
-  /** True when the frame was refused; an allowed draft is counted, so a retry of the run never writes it twice. */
-  function refusesConnectorCall(bot: Pick<Bot, "id" | "name">, threadId: string, frame: unknown): boolean {
+  /** Checks a routine call without spending its draft allowance until outer connector grants have passed. */
+  function prepareConnectorCall(bot: Pick<Bot, "id" | "name">, threadId: string, frame: unknown): PreparedConnectorCall | null {
     const run = runOf(threadId);
-    const looking = run ? null : deps.look?.(threadId) ?? null;
-    if (!run && !looking) return false;
+    if (!run) return null;
     const drafts: DraftReply[] = [];
     const refused = refusedConnectorCall(frame, (reply) => {
       if (drafts.some((one) => one.threadId === reply.threadId)) return false;
-      const ok = run ? run.checkKey !== undefined && deps.mayDraft(run.checkKey, reply.threadId, reply.to) : looking!.draft(reply);
+      const ok = run.checkKey !== undefined && deps.mayDraft(run.checkKey, reply.threadId, reply.to);
       if (ok) drafts.push(reply);
       return ok;
     });
-    if (refused !== null) return refuse(bot, threadId, refused);
-    if (run) for (const reply of drafts) deps.drafted(run.checkKey!, reply.threadId);
-    if (drafts.length) deps.wroteDrafts?.(bot.id, drafts.length);
-    return false;
+    if (refused !== null) {
+      refuse(bot, threadId, refused);
+      return { refused: true, commit: () => false };
+    }
+    let committed = false;
+    return {
+      refused: false,
+      commit() {
+        if (committed) return true;
+        if (drafts.some((reply) => run.checkKey === undefined || !deps.mayDraft(run.checkKey, reply.threadId, reply.to))) {
+          refuse(bot, threadId, DRAFT_TOOL);
+          return false;
+        }
+        committed = true;
+        for (const reply of drafts) deps.drafted(run.checkKey!, reply.threadId);
+        if (drafts.length) deps.wroteDrafts?.(bot.id, drafts.length);
+        return true;
+      },
+    };
   }
 
-  return { confines, answers, refusesRoute, refusesConnectorCall };
+  function refusesConnectorCall(bot: Pick<Bot, "id" | "name">, threadId: string, frame: unknown): ConnectorRefusalDisposition | null {
+    const prepared = prepareConnectorCall(bot, threadId, frame);
+    if (prepared) {
+      if (prepared.refused) return "handled";
+      return prepared.commit() ? null : "handled";
+    }
+    const looking = deps.look?.(threadId) ?? null;
+    if (!looking) return null;
+    const drafts: DraftReply[] = [];
+    const refused = refusedConnectorCall(frame, (reply) => {
+      if (drafts.some((one) => one.threadId === reply.threadId)) return false;
+      const ok = looking.draft(reply);
+      if (ok) drafts.push(reply);
+      return ok;
+    });
+    if (refused !== null) {
+      refuse(bot, threadId, refused);
+      return "tool-error";
+    }
+    if (drafts.length) deps.wroteDrafts?.(bot.id, drafts.length);
+    return null;
+  }
+
+  return { confines, answers, refusesRoute, prepareConnectorCall, refusesConnectorCall };
 }
 
 export type ReadAndDraft = ReturnType<typeof createReadAndDraft>;

@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -40,6 +40,39 @@ describe("the scriptable native fake", () => {
     expect((await turn([...user("go"), called, { role: "tool", content: "{}" }])).text).toBe("Fixture reply: go");
   });
 
+  it("runs an offered scripted tool before gating the final answer", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fake-chat-tool-gate-"));
+    const gate = join(dir, "gate");
+    fake = await startFakeOpenAiChat({
+      FAKE_CHAT_MODE: "slow",
+      FAKE_CHAT_GATE: gate,
+      FAKE_CHAT_TOOL_CALLS: JSON.stringify([{ name: "computer_screenshot" }]),
+    });
+    const tools = [{ type: "function", function: { name: "computer_screenshot", description: "Capture the screen", parameters: { type: "object" } } }];
+    let firstSettled = false;
+    const first = turn(user("inspect"), undefined, { tools }).then((result) => { firstSettled = true; return result; });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const toolReturnedBeforeGate = firstSettled;
+    writeFileSync(gate, "open");
+    expect((await first).calls).toEqual([["computer_screenshot", {}]]);
+    expect(toolReturnedBeforeGate).toBe(true);
+
+    rmSync(gate);
+    let finalSettled = false;
+    const final = turn([...user("inspect"), called, { role: "tool", content: "screen captured" }], undefined, { tools })
+      .then((result) => { finalSettled = true; return result; });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(finalSettled).toBe(false);
+    writeFileSync(gate, "open");
+    expect((await final).text).toBe("Fixture reply: inspect");
+  });
+
+  it("does not emit a scripted tool call the request did not offer", async () => {
+    fake = await startFakeOpenAiChat({ FAKE_CHAT_TOOL_CALLS: JSON.stringify([{ name: "computer_screenshot" }]) });
+    const tools = [{ type: "function", function: { name: "read_file", description: "Read a file", parameters: { type: "object" } } }];
+    expect((await turn(user("inspect"), undefined, { tools })).calls).toEqual([]);
+  });
+
   it("asks for each round's calls once the earlier round has its results", async () => {
     fake = await startFakeOpenAiChat({ FAKE_CHAT_TOOL_CALLS: JSON.stringify([{ name: "a" }, { name: "b", round: 1 }]) });
     expect((await turn(user("go"))).calls).toEqual([["a", {}]]);
@@ -59,7 +92,8 @@ describe("the scriptable native fake", () => {
     writeFileSync(gate, "");
     expect((await pending).text).toBe("Fixture reply: wait");
     writeFileSync(gate, "fail");
-    expect((await turn(user("again"))).status).toBe(500);
+    fake.set({ errorStatus: 400 });
+    expect((await turn(user("again"))).status).toBe(400);
   });
 
   it("streams planned progress before a gated final answer", async () => {

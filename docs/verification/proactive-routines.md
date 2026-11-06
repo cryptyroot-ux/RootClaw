@@ -1,7 +1,7 @@
 # Proactive routines and the brief
 
 What [Proactive routines](../proactive-routines.md) promises, and how to see it
-without a real Google account, a model or the Electron app.
+without a live provider, Google account or Electron app.
 
 ## The end-to-end scenario
 
@@ -9,12 +9,15 @@ without a real Google account, a model or the Electron app.
 pnpm exec vitest run server/proactive-routines.e2e.test.ts
 ```
 
-It launches the same isolated fixture as `control-rootclaw launch`: a temporary home
-and data directory and the fake Claude CLI. It points the fixture at
-`server/testing/fake-connected-apps.ts`, a loopback stand-in for the
-connected-apps service that answers Composio's Gmail and Calendar tools from
-`server/testing/fixtures/`. The fake CLI answers the watch with a scripted JSON
-result picked by a marker in its prompt (`FAKE_CLAUDE_MARKER_REPLIES`).
+The test starts an isolated verification server with a temporary home and data
+directory, a loopback OpenAI-compatible chat provider
+(`server/testing/fake-openai-chat.ts`), and a loopback connected-apps service
+(`server/testing/fake-connected-apps.ts`). The native `openai-compat` driver
+talks to the fake provider; the connected-app relay makes real tool calls to the
+fake Gmail and Google Calendar service, which records their effects. The test
+scripts provider replies and tool calls through `fixture.fakeChat.set()`; it
+does not simulate connected-app tool results. No live provider or account is
+used.
 
 Expected:
 
@@ -25,11 +28,17 @@ Expected:
   opens nothing and starts no AI turn. The first brief, posted by the watch's
   run, carries the intro line, and every later change edits it in place.
 - With nothing connected, a check reads nothing and starts no turn.
-- New mail and a meeting with other people become **one** run. Its prompt
-  holds the mail and the invite in records blocks, and forged markers are
-  defused. It runs at `--permission-mode default`, and its system prompt has no
-  recent work. Only Gmail and Calendar reads reach the service, and none names
-  an account.
+- New mail and a meeting with other people become **one** native run on the
+  server-selected driver (`driverKind: "openai-compat"`). Its prompt holds the
+  mail and invite in records blocks, and forged markers are defused. It runs
+  with Ask-level approvals and no approval cards. The handler passes only the
+  native Composio multi-execute gateway to the per-call fence; that fence
+  refuses every out-of-policy connected-app call before generic grant denials.
+  Calls allowed by the fence still require connector grants and scopes. Other
+  permission requests are refused by the handler. A refusal is returned as a
+  handled result, so the routine can still keep a valid final report. Its
+  system prompt has no recent work. Gmail and Calendar reads reach only the
+  loopback connected-apps service, and none names an account.
 - The 10-minute reminder, the prep card and the brief rows appear in RootClaw's
   chat, and the brief's notification names that chat. The brief is edited in
   place, not posted twice.
@@ -40,12 +49,20 @@ Expected:
   `checkTrouble` and the brief says to reconnect Gmail.
 - A routine of the person's own runs as before: at the bot's own level, as a
   line in the chat.
-- In a read-and-draft run, the fake CLI tries to send, post to another app,
-  draft to a stranger, draft twice and read. Only one reply draft to the
-  thread's sender and the read reach the service. No card is shown, and the
-  refusals are in the decision log. The run mounts only `agents`, `composio`
-  and RootClaw's answerer, and Gmail's answer reaches it as records. A later
-  ordinary turn's conversation search does not find the run.
+- In a read-and-draft run, the native fake provider uses the offered Composio
+  tool to call `GMAIL_CREATE_EMAIL_DRAFT` once for the sender
+  (`ada@example.test`) in the checked thread (`thread-important`), under an
+  explicit connector grant that allows the required reads and draft but not
+  sends. Attempts to
+  send (`GMAIL_SEND_EMAIL`), reply by sending (`GMAIL_REPLY_TO_THREAD`), write
+  other Gmail data (including `GMAIL_DELETE_MESSAGE`), use Slack
+  (`SLACK_SEND_MESSAGE`) or another app, draft to a wrong recipient or add
+  recipients, and draft a second time for that thread are refused by the
+  handler. Exactly the one authorized draft reaches the loopback service; the
+  blocked attempts do not. No approval card is shown, and refusals appear in
+  the decision log under `read-and-draft`. The run mounts only `agents`,
+  `composio` and RootClaw's answerer, and Gmail's answer reaches it as records.
+  A later ordinary turn's conversation search does not find the run.
 
 ## RootClaw as the owner
 
