@@ -377,7 +377,7 @@ function killGroup(pid: number | undefined, signal: NodeJS.Signals) {
 // shell runs under the OS sandbox where there is one: bubblewrap on Linux, sandbox-exec on macOS. Under bubblewrap the
 // command sees only the system toolchain (read-only), the workspace and its writable folders, the read-only skill
 // folders, a private empty /tmp and an empty $HOME, and it has no network unless the call asked for it (`network`,
-// shown on the approval card). sandbox-exec now confines reads as well as writes (Task 4). Without a sandbox the
+// shown on the approval card). sandbox-exec now confines reads as well as writes. Without a sandbox the
 // shell refuses to run (fail closed); ROOTCLAW_SHELL_SANDBOX=off turns the sandbox off on purpose, and then each result
 // says the command ran unsandboxed.
 type Sandbox = "bwrap" | "sandbox-exec" | null;
