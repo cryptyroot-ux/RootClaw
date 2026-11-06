@@ -8495,7 +8495,7 @@ async function startTurn(
         ...settingsTurnFields(cfg, DATA_DIR, false),
         ...budgetFields(bot.id, instance.driverKind, model),
         cwd,
-        workspaceTools: { readRoots: threadAttachmentReadFiles(store.messagesFor(threadId), ATTACHMENTS_DIR).map((grant) => grant.path) },
+        workspaceTools: { readFiles: threadAttachmentReadFiles(store.messagesFor(threadId), ATTACHMENTS_DIR) },
       }, (input) => quickFallback.sendTurn(instance, input, route.quickModel ? { model, own: bot.modelSelection, onFallback: () => store.patchMessage(threadId, userMessage.id, { quickModel: undefined }) } : undefined))), () => companyShutdown || !directTurnClaimExists(bot.id, dispatchClaimId, threadId), async () => {
         await (runningTurnEngines.get(threadId) ?? instance).adapter.interruptTurn(threadId).catch(() => {});
       });
@@ -10430,7 +10430,7 @@ async function runClaimedGroupMemberTurn(
         integrations,
         ...(integrations.browser && browserIsThePlace(roomPlan) ? { preloadBrowserTools: true } : {}),
         ...settingsTurnFields(cfg, DATA_DIR, false),
-        workspaceTools: { readRoots: threadAttachmentReadFiles(store.messagesFor(threadId), ATTACHMENTS_DIR).map((grant) => grant.path) },
+        workspaceTools: { readFiles: threadAttachmentReadFiles(store.messagesFor(threadId), ATTACHMENTS_DIR) },
         ...(instance.instanceId === readyBot.modelSelection.instanceId
           ? memberTurnSelection(readyBot.modelSelection)
           : { model: instance.models.default }),

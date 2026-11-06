@@ -221,7 +221,7 @@ export interface SendTurnInput {
   /** Times an API-model turn that answers after a failed tool call is sent back to re-run it (`loopGuard.correctiveRounds`); never after a denial. */
   toolErrorCorrectiveRounds?: number;
   /** Native workspace tools (shell, files, grep, glob) rooted at `cwd`: extra readable/writable folders, or no confinement. */
-  workspaceTools?: { readRoots?: string[]; writeRoots?: string[]; unrestricted?: boolean };
+  workspaceTools?: { readRoots?: string[]; readFiles?: WorkspaceReadFileGrant[]; writeRoots?: string[]; unrestricted?: boolean };
   /** Native-engine context management inside one turn (mid-turn compaction, tool-output offload). */
   /** Native-engine planner/verifier (engine.planVerify); absent or mode "off" disables both. */
   planVerify?: { mode: "off" | "plan" | "plan+verify"; maxVerifyRetries: number; verifyMinSteps?: number };

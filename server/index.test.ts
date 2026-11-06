@@ -4442,14 +4442,21 @@ describe("harness HTTP API", () => {
       };
       expect(await read(file)).toContain(marker);
       expect(await read(sibling)).toMatch(/outside the workspace/i);
+      const grep = async (path: string) => {
+        const results = await callTool(threadId, route, "grep", { path, pattern: marker }, groupId);
+        return results.join("\n");
+      };
+      expect(await grep(file)).toContain(marker);
+      expect(await grep(sibling)).toMatch(/outside the workspace/i);
       expect(await callTool(threadId, route, "write_file", { path: file, content: "OVERWRITTEN\n" }, groupId)
         .then((results) => results.join("\n"))).toMatch(/read-only/i);
       expect(readFileSync(file, "utf8")).toBe(`${marker}\n`);
+      return file;
     };
 
     try {
       expect((await api("PATCH", `/api/bots/${bot.id}`, { approvalMode: "full" })).status).toBe(200);
-      await verifyThread(bot.threadId, `/api/bots/${bot.id}/messages`, "DIRECT_ATTACHMENT_MARKER");
+      const directAttachment = await verifyThread(bot.threadId, `/api/bots/${bot.id}/messages`, "DIRECT_ATTACHMENT_MARKER");
 
       const created = await api("POST", "/api/groups", {
         name: "Attachment access fixture",
@@ -4458,6 +4465,8 @@ describe("harness HTTP API", () => {
       });
       expect(created.status).toBe(201);
       group = created.body.group;
+      expect(await callTool(group.threadId, `/api/groups/${group.id}/messages`, "read_file", { path: directAttachment }, group.id)
+        .then((results) => results.join("\n"))).toMatch(/outside the workspace/i);
       await verifyThread(group.threadId, `/api/groups/${group.id}/messages`, "ROOM_ATTACHMENT_MARKER", group.id);
     } finally {
       if (group) {

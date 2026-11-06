@@ -119,6 +119,11 @@ engine regression:
 pnpm exec vitest run server/index.test.ts -t "reads only thread attachments in direct and room turns"
 ```
 
+The integration test also covers file-scoped `grep` against the exact attachment
+and its unreferenced sibling. Path replacement, descendants, and shell access are
+covered by automated synthetic-fixture tests in
+`server/drivers/workspace-tools.test.ts`.
+
 ## Gotchas
 
 - Omitting `--task` snapshots the selected task before sending, waiting,

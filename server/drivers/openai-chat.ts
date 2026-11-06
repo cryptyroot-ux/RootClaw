@@ -566,6 +566,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           root: turn.cwd,
           // The skill index names SKILL.md files outside the workspace: those folders become readable (never writable).
           readRoots: [...turn.workspaceTools?.readRoots ?? [], ...skillReadRoots(turn.system, turn.systemStable, turn.text)],
+          readFiles: turn.workspaceTools?.readFiles,
           writeRoots: turn.workspaceTools?.writeRoots,
           unrestricted: turn.workspaceTools?.unrestricted === true || process.env.ROOTCLAW_WORKSPACE_UNRESTRICTED === "1",
           jobScope: turn.threadId,
