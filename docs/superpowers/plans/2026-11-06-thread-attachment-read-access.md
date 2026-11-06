@@ -126,7 +126,7 @@ Launch with `node --experimental-strip-types scripts/control-rootclaw.ts launch`
 
 Expected: the referenced read succeeds; the unreferenced read is denied; and the mutating-tool refusal leaves the synthetic file unchanged. The write attempt may make `wait` report `failed` because that refusal is terminal. The automated regression checks the specific read-only error for both direct and room turns.
 
-- [ ] **Step 5: Commit the verification recipe**
+- [x] **Step 5: Commit the verification recipe**
 
 Run: `git add docs/verification/chat-turns.md && git commit -m "docs: verify thread attachment reads"`
 
