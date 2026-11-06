@@ -94,6 +94,14 @@ describe("the pin", () => {
     expect(targetsFor("linux", {})).toEqual([{ platform: "linux", arch: "x64" }]);
     expect(targetsFor("win32", {})).toEqual([{ platform: "win32", arch: "x64" }]);
   });
+
+  it("stages both Linux architectures when an image build requests them", () => {
+    expect(targetsFor("linux", { ROOTCLAW_DUCKDB_ARCHES: "x64,arm64" })).toEqual([
+      { platform: "linux", arch: "x64" },
+      { platform: "linux", arch: "arm64" },
+    ]);
+    expect(() => targetsFor("linux", { ROOTCLAW_DUCKDB_ARCHES: "x64,amd64" })).toThrow(/unique x64 and arm64/);
+  });
 });
 
 describe("staging from an install", () => {

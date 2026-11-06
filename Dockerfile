@@ -32,6 +32,7 @@ RUN cp /usr/bin/caddy /caddy
 
 FROM node:24-bookworm-slim AS build
 WORKDIR /src
+ARG TARGETARCH
 # pinned to package.json#packageManager; corepack is being removed from Node
 RUN npm install -g pnpm@10.33.0
 # The image never runs Electron, so skip its ~100MB postinstall download.
@@ -50,7 +51,11 @@ COPY . .
 # The Cloud home runs these as root, so nobody else may write them.
 # The Data engine's native modules (server/data/engine.ts), staged like the
 # desktop app's extraResources; the runtime stages copy this tree.
-RUN node scripts/prepare-duckdb.mjs && chmod -R go-w dist-native/duckdb
+RUN ROOTCLAW_DUCKDB_ARCHES="x64,arm64" node scripts/prepare-duckdb.mjs \
+  && case "$TARGETARCH" in amd64) arch=x64 ;; arm64) arch=arm64 ;; *) echo "Unsupported Docker architecture: $TARGETARCH" >&2; exit 1 ;; esac \
+  && rm -rf dist-native/duckdb/server \
+  && cp -a "dist-native/duckdb/linux-$arch" dist-native/duckdb/server \
+  && chmod -R go-w dist-native/duckdb
 RUN pnpm build:server && pnpm exec vite build && chmod -R go-w dist dist-server skills
 
 FROM node:24-bookworm-slim AS runtime
@@ -153,7 +158,7 @@ FROM runtime AS server
 # default: RootClaw's native engine needs none.
 ARG ENGINES=""
 RUN if [ -n "$ENGINES" ]; then HOME=/tmp/rootclaw-build-home npm install -g $ENGINES && rm -rf /tmp/rootclaw-build-home /tmp/node-compile-cache; fi
-COPY --from=build --chown=rootclaw:rootclaw /src/dist-native/duckdb/linux-x64 ./duckdb
+COPY --from=build --chown=rootclaw:rootclaw /src/dist-native/duckdb/server ./duckdb
 COPY --from=build --chown=rootclaw:rootclaw /src/dist-server ./dist-server
 COPY --from=build --chown=rootclaw:rootclaw /src/dist ./dist
 COPY --from=build --chown=rootclaw:rootclaw /src/skills ./skills

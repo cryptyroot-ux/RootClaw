@@ -113,6 +113,13 @@ export async function packedPackage(name, version, cache, scope = SCOPE) {
  *  single-arch), x64 elsewhere, matching electron-builder.yml. */
 export function targetsFor(platform = process.platform, env = process.env) {
   if (platform === "darwin") return resolveCuaMacArches(env).map((arch) => ({ platform, arch }));
+  if (platform === "linux" && env.ROOTCLAW_DUCKDB_ARCHES !== undefined) {
+    const arches = env.ROOTCLAW_DUCKDB_ARCHES.split(",");
+    if (!arches.length || arches.some((arch) => !["x64", "arm64"].includes(arch)) || new Set(arches).size !== arches.length) {
+      throw new Error("ROOTCLAW_DUCKDB_ARCHES must be a comma-separated list of unique x64 and arm64 architectures");
+    }
+    return arches.map((arch) => ({ platform, arch }));
+  }
   return [{ platform, arch: "x64" }];
 }
 

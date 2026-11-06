@@ -57,6 +57,93 @@ describe("container images", () => {
     expect(chain("server")).toContainEqual({ op: "ARG", args: 'ENGINES=""' });
   });
 
+  it("stages both Linux DuckDB arches and selects only the matching server tree", () => {
+    const build = all.find(stage => stage.name === "build")!;
+    expect(build.steps).toContainEqual({ op: "ARG", args: "TARGETARCH" });
+    const prepare = build.steps.find(step => step.op === "RUN" && step.args.includes("prepare-duckdb.mjs"))!;
+    expect(prepare.args).toContain('ROOTCLAW_DUCKDB_ARCHES="x64,arm64"');
+    expect(prepare.args).toMatch(/case "\$TARGETARCH" in[\s\S]*amd64\).*x64[\s\S]*arm64\).*arm64/);
+    expect(chain("cloud-home")).toContainEqual({ op: "COPY", args: "--from=build /src/dist-native/duckdb/linux-x64 ./duckdb" });
+    expect(chain("server").filter(step => step.op === "COPY" && step.args.includes("/dist-native/duckdb/"))).toEqual([
+      { op: "COPY", args: "--from=build --chown=rootclaw:rootclaw /src/dist-native/duckdb/server ./duckdb" },
+    ]);
+  });
+
+  it("uses the versioned public server image for Docker VPS installs", () => {
+    const deploy = parse(readFileSync(new URL("../deploy/docker-compose.yml", import.meta.url), "utf8"));
+    const service = deploy.services.rootclaw;
+    expect(service.image).toBe("ghcr.io/cryptyroot-ux/rootclaw:${ROOTCLAW_IMAGE_TAG:-v0.1.138}");
+    expect(service.build).toBeUndefined();
+    expect(service.init).toBe(true);
+    expect(service.shm_size).toBe("512m");
+    expect(service.restart).toBe("unless-stopped");
+    expect(service.ports).toEqual(["80:80", "443:443"]);
+    expect(service.volumes).toContain("data:/data");
+    expect(service.healthcheck.test.join(" ")).toContain("http://127.0.0.1:8799/api/health");
+    expect(readFileSync(new URL("../deploy/.env.example", import.meta.url), "utf8")).toContain("ROOTCLAW_IMAGE_TAG");
+  });
+
+  it("gates GHCR publication on a matching tagged server image passing both architecture smokes", () => {
+    const source = readFileSync(new URL("../.github/workflows/vps-image-release.yml", import.meta.url), "utf8");
+    const workflow = parse(source);
+    expect(workflow.on.push.tags).toEqual(["v*"]);
+    expect(workflow.permissions).toEqual({ contents: "read" });
+
+    const checks = workflow.jobs.checks;
+    expect(checks.steps.find(step => step.uses?.startsWith("actions/setup-node@"))?.with["node-version"]).toBe(24);
+    expect(checks.steps.some(step => step.run === "pnpm install --frozen-lockfile")).toBe(true);
+    expect(checks.steps.some(step => step.run?.includes("server/read-and-draft.test.ts") && step.run.includes("server/proactive-routines.e2e.test.ts"))).toBe(true);
+    expect(checks.steps.some(step => step.run === "pnpm typecheck")).toBe(true);
+    expect(checks.steps.some(step => step.run === "pnpm lint")).toBe(true);
+    const versionGate = checks.steps.find(step => step.name === "Verify tag, package, and Compose versions")?.run;
+    expect(versionGate).toBeDefined();
+    const versionCode = /node --input-type=module -e '([\s\S]*?)'\s*$/.exec(versionGate!)?.[1];
+    expect(versionCode).toBeDefined();
+
+    const verifyVersions = (tag: string, packageVersion: string, composeVersion: string) => {
+      const root = mkdtempSync(join(tmpdir(), "rootclaw-image-tag-"));
+      temporaryDirectories.push(root);
+      mkdirSync(join(root, "deploy"));
+      writeFileSync(join(root, "package.json"), JSON.stringify({ version: packageVersion }));
+      writeFileSync(join(root, "deploy/docker-compose.yml"), `services:\n  rootclaw:\n    image: ghcr.io/cryptyroot-ux/rootclaw:\${ROOTCLAW_IMAGE_TAG:-v${composeVersion}}\n`);
+      return spawnSync(process.execPath, ["--input-type=module", "-e", versionCode!], {
+        cwd: root,
+        env: { ...process.env, GITHUB_REF_NAME: tag },
+        encoding: "utf8",
+      });
+    };
+    expect(verifyVersions("v1.2.3", "1.2.3", "1.2.3").status).toBe(0);
+    expect(verifyVersions("v1.2.4", "1.2.3", "1.2.3").status).not.toBe(0);
+    expect(verifyVersions("v1.2.3", "1.2.3", "1.2.4").status).not.toBe(0);
+
+    const smoke = workflow.jobs.smoke;
+    expect(smoke.needs).toBe("checks");
+    expect(smoke.strategy.matrix.include.map(arch => arch.platform)).toEqual(["linux/amd64", "linux/arm64"]);
+    const smokeBuild = smoke.steps.find(step => step.uses?.startsWith("docker/build-push-action@"))?.with;
+    expect(smokeBuild).toMatchObject({ target: "server", platforms: "${{ matrix.platform }}", load: true });
+    const smokeRun = smoke.steps.find(step => step.name === "Run image and verify its healthcheck")?.run;
+    expect(smokeRun).toContain("/api/health");
+    expect(smokeRun).not.toContain("--publish");
+    expect(smokeRun).toContain("docker exec rootclaw-image-smoke curl --fail --silent --show-error http://127.0.0.1:8799/api/health");
+    expect(smokeRun).toContain('createRequire("/app/duckdb/node_modules/rootclaw-duckdb-anchor.js")');
+    expect(smokeRun).toContain('await connection.run("SELECT 1")');
+
+    const publish = workflow.jobs.publish;
+    expect(publish.needs).toEqual(["checks", "smoke"]);
+    expect(publish.permissions).toEqual({ contents: "read", packages: "write" });
+    expect(publish.steps.some(step => step.uses?.startsWith("docker/setup-qemu-action@"))).toBe(true);
+    const publishBuild = publish.steps.find(step => step.uses?.startsWith("docker/build-push-action@"))?.with;
+    expect(publishBuild).toMatchObject({
+      target: "server",
+      platforms: "linux/amd64,linux/arm64",
+      tags: "ghcr.io/cryptyroot-ux/rootclaw:${{ github.ref_name }}",
+      push: true,
+    });
+    expect(publishBuild["cache-from"]).toContain("scope=vps-server-amd64");
+    expect(publishBuild["cache-from"]).toContain("scope=vps-server-arm64");
+    expect(source).not.toMatch(/latest|cloud-home|electron|desktop/i);
+  });
+
   it("puts the browser and the tools beneath the per-commit app files, so a code change leaves them as they were", () => {
     for (const target of ["server", "cloud-home"]) {
       const steps = chain(target);
@@ -202,10 +289,10 @@ describe("container images", () => {
       expect(text(file), file).toMatch(/^ARG ENGINES=""$/m);
       expect(text(file).split("\n").filter(line => !/^\s*#/.test(line) && external.test(line)), file).toEqual([]);
     }
-    for (const file of ["../compose.yaml", "../deploy/docker-compose.yml", "../deploy/podman/compose.yaml"]) {
+    for (const file of ["../compose.yaml", "../deploy/podman/compose.yaml"]) {
       expect(parse(text(file)).services.rootclaw.build.args.ENGINES, file).toBe("${ENGINES:-}");
     }
-    for (const file of ["../.env.example", "../deploy/.env.example"]) expect(text(file), file).toMatch(/^ENGINES=$/m);
+    expect(text("../.env.example")).toMatch(/^ENGINES=$/m);
   });
 
   // An init collects browser processes whose parents exit, and Chrome gets the

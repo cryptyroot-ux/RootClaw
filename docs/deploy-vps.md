@@ -130,20 +130,39 @@ One container for the server plus Caddy for HTTPS at `https://rootclaw.example.c
    ```sh
    git clone https://github.com/cryptyroot-ux/RootClaw && cd RootClaw/deploy
    cp .env.example .env
-   nano .env                # DOMAIN=rootclaw.example.com ; ENGINES=
+   nano .env                # set DOMAIN=rootclaw.example.com
    ```
 
-   Leave `ENGINES` empty. It installs agent CLIs into the image at build time, and RootClaw no longer runs them; the example file still lists one.
+   The image is public; no GHCR login is needed. Leave `ROOTCLAW_IMAGE_TAG`
+   unset for the version pinned in Compose. Only set it when you intentionally
+   want another version.
 
-4. **Build and start it** from the clone (no prebuilt image is published: the
-   Docker workflow builds with `push: false`). The first build takes several minutes:
+4. **Pull and start it** from the clone. The first pull downloads the published
+   server image for this VPS's architecture:
 
    ```sh
-   docker compose up -d --build
+   docker compose pull rootclaw
+   docker compose up -d
    docker compose ps        # rootclaw "healthy", caddy "running"
    ```
 
    Caddy requests the certificate on its own; give it a minute. Then `https://rootclaw.example.com` shows a page asking for a pairing code. That is correct: nothing works until you pair.
+
+   To update after a release, from this `deploy` directory, run `git pull`,
+   then `docker compose pull rootclaw` and `docker compose up -d`. The named
+   `/data` volume is retained; do not run `docker compose down -v` when updating.
+
+   To roll back to the preceding release, run both Compose commands with its
+   image tag. For example:
+
+   ```sh
+   ROOTCLAW_IMAGE_TAG=v0.1.137 docker compose pull rootclaw
+   ROOTCLAW_IMAGE_TAG=v0.1.137 docker compose up -d
+   ```
+
+   To keep the rollback across shell sessions, uncomment `ROOTCLAW_IMAGE_TAG`
+   in `.env` and set it to the desired version. Remove that override to follow
+   the Compose-pinned release again.
 
 In this path, every `rootclaw …` command below is run inside the container instead:
 
@@ -280,7 +299,7 @@ nothing is downloaded or upgraded implicitly.
   Check that both builds succeeded before restarting. A service restart by itself
   does not update anything. To pin a particular version, `git checkout` that
   commit before building.
-- **Path B:** `cd RootClaw && git pull && cd deploy && docker compose up -d --build`.
+- **Path B:** `cd RootClaw && git pull && cd deploy && docker compose pull rootclaw && docker compose up -d`.
 
 Routines and queued work survive a restart. A teammate turn running at that moment runs again once at the next start, told to check what it already did, and the bot that asked for it is told. A person's own turn and a running routine are not run again: the conversation says it was interrupted. Update between runs where you can.
 
