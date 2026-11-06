@@ -1,6 +1,6 @@
 // A message file link must never become a general-purpose host file reader: every handle stays inside a root
 // derived from the exact bot message.
-import { constants } from "node:fs";
+import { constants, lstatSync, realpathSync } from "node:fs";
 import { lstat, open, readdir, realpath, stat, type FileHandle } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, posix, relative, resolve, sep, win32 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -231,6 +231,29 @@ export function decodeAttachmentAttribute(value: string): string {
   );
 }
 
+function standaloneAttachmentTags(text: string): Array<{ kind: "image" | "file"; path: string; name?: string }> {
+  const tag = /^<attached-(image|file)[\t ]+path="([^"\r\n]*)"(?:[\t ]+name="([^"\r\n]*)")?[\t ]*\/>$/;
+  const found: Array<{ kind: "image" | "file"; path: string; name?: string }> = [];
+  walkMarkdown(fromMarkdown(text), (node) => {
+    if (node.type !== "html" || !node.value || !node.position) return;
+    const start = node.position.start.offset;
+    const end = node.position.end.offset;
+    if (start === undefined || end === undefined) return;
+    const lineStart = text.lastIndexOf("\n", start - 1) + 1;
+    const nextLine = text.indexOf("\n", end);
+    const lineEnd = nextLine < 0 ? text.length : nextLine;
+    if (text.slice(lineStart, start).trim() || text.slice(end, lineEnd).trim()) return;
+    const match = tag.exec(node.value);
+    if (!match) return;
+    found.push({
+      kind: match[1] as "image" | "file",
+      path: decodeAttachmentAttribute(match[2]!),
+      ...(match[3] !== undefined ? { name: decodeAttachmentAttribute(match[3]) } : {}),
+    });
+  });
+  return found;
+}
+
 function utf8Prefix(value: string, maximumBytes: number): string {
   let bytes = 0;
   let result = "";
@@ -277,30 +300,45 @@ export function messageAttachmentName(text: string, requested: string): string |
     return null;
   }
 
-  const tag = /^<attached-(?:image|file)[\t ]+path="([^"\r\n]*)"(?:[\t ]+name="([^"\r\n]*)")?[\t ]*\/>$/;
-  let found: string | null = null;
-  walkMarkdown(fromMarkdown(text), (node) => {
-    if (found !== null) return;
-    if (node.type !== "html" || !node.value || !node.position) return;
-    const start = node.position.start.offset;
-    const end = node.position.end.offset;
-    if (start === undefined || end === undefined) return;
-    const lineStart = text.lastIndexOf("\n", start - 1) + 1;
-    const nextLine = text.indexOf("\n", end);
-    const lineEnd = nextLine < 0 ? text.length : nextLine;
-    if (text.slice(lineStart, start).trim() || text.slice(end, lineEnd).trim()) return;
-    const match = tag.exec(node.value);
-    if (!match) return;
+  for (const tag of standaloneAttachmentTags(text)) {
     try {
-      if (referencedPathIdentity(decodeAttachmentAttribute(match[1]!)) === wanted) {
-        found = safeDisplayName(match[2]
-          ? decodeAttachmentAttribute(match[2])
-          : decodeAttachmentAttribute(match[1]!));
-      }
+      if (referencedPathIdentity(tag.path) === wanted) return safeDisplayName(tag.name || tag.path);
     } catch {
     }
-  });
-  return found;
+  }
+  return null;
+}
+
+export function threadAttachmentReadRoots(
+  messages: readonly { role: string; text?: string | null }[],
+  attachmentsDir: string,
+): string[] {
+  let root: string;
+  let realRoot: string;
+  try {
+    root = resolve(attachmentsDir);
+    realRoot = realpathSync(root);
+  } catch {
+    return [];
+  }
+
+  const roots = new Set<string>();
+  for (const message of messages) {
+    if (message.role !== "user" || typeof message.text !== "string") continue;
+    for (const tag of standaloneAttachmentTags(message.text)) {
+      if (tag.kind !== "file" || !isAbsolute(tag.path)) continue;
+      const candidate = resolve(tag.path);
+      if (dirname(candidate) !== root) continue;
+      try {
+        if (!lstatSync(candidate).isFile()) continue;
+        const realCandidate = realpathSync(candidate);
+        if (dirname(realCandidate) !== realRoot) continue;
+        roots.add(realCandidate);
+      } catch {
+      }
+    }
+  }
+  return [...roots];
 }
 
 function containedBy(root: string, candidate: string): boolean {

@@ -10,6 +10,7 @@ import {
   messageFileDownloadName,
   messageAttachmentName,
   messageFileRoots,
+  threadAttachmentReadRoots,
   messageImageTargetAt,
   messageReferencesFile,
   listMessageFolder,
@@ -22,12 +23,15 @@ const referencesAttachment = (text: string, requested: string) => messageAttachm
 const suite = mkdtempSync(join(tmpdir(), "rootclaw-message-file-"));
 const workspace = join(suite, "workspace");
 const outside = join(suite, "outside");
+const attachments = join(suite, "attachments");
 
 beforeEach(() => {
   rmSync(workspace, { recursive: true, force: true });
   rmSync(outside, { recursive: true, force: true });
+  rmSync(attachments, { recursive: true, force: true });
   mkdirSync(workspace, { recursive: true });
   mkdirSync(outside, { recursive: true });
+  mkdirSync(attachments, { recursive: true });
 });
 
 afterAll(() => rmSync(suite, { recursive: true, force: true }));
@@ -215,12 +219,40 @@ describe("message-linked files", () => {
     }
   });
 
+  it("grants read roots only to valid file attachments in user messages", () => {
+    const referenced = join(attachments, "referenced.pdf");
+    const sibling = join(attachments, "sibling.pdf");
+    const external = join(outside, "secret.pdf");
+    const directory = join(attachments, "folder");
+    const symlink = join(attachments, "linked.pdf");
+    writeFileSync(referenced, "synthetic attachment");
+    writeFileSync(sibling, "unreferenced attachment");
+    writeFileSync(external, "outside file");
+    mkdirSync(directory);
+    symlinkSync(external, symlink);
+
+    expect(threadAttachmentReadRoots([
+      { role: "user", text: `<attached-file path="${referenced}" name="Report.pdf" />` },
+      { role: "user", text: `<attached-file path="${referenced}" />` },
+      { role: "bot", text: `<attached-file path="${sibling}" />` },
+      { role: "user", text: `Example: <attached-file path="${sibling}" />` },
+      { role: "user", text: `\`<attached-file path="${sibling}" />\`` },
+      { role: "user", text: `<attached-image path="${sibling}" />` },
+      { role: "user", text: `<attached-file path="${join(attachments, "missing.pdf")}" />` },
+      { role: "user", text: `<attached-file path="${external}" />` },
+      { role: "user", text: `<attached-file path="${directory}" />` },
+      { role: "user", text: `<attached-file path="${symlink}" />` },
+      { role: "user", text: `<attached-file path="${sibling}" extra="yes" />` },
+    ], attachments)).toEqual([referenced]);
+  });
+
   it("preserves the sanitized attachment display name", () => {
     const path = "/app/attachments/4e8d.pdf";
     expect(messageAttachmentName(
       `<attached-file path="${path}" name="Quarterly &amp; review.pdf" />`,
       path,
     )).toBe("Quarterly & review.pdf");
+    expect(messageAttachmentName(`<attached-file path="${path}" name="" />`, path)).toBe("4e8d.pdf");
     expect(messageAttachmentName(`<attached-file path="${path}" name="../renamed.pdf" />`, path))
       .toBe("renamed.pdf");
     expect(messageAttachmentName("not an attachment", path)).toBeNull();
