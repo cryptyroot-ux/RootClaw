@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { backgroundJobs, realTarget, sandboxedShell, shellSandbox, stopBackgroundJobs, createWorkspacePaths, executeWorkspaceTool, parseUnifiedDiff, shellEnvironment, workspaceToolReadOnly, workspaceToolView, type WorkspaceToolsConfig } from "./workspace-tools.ts";
@@ -60,8 +60,118 @@ describe("path safety", () => {
     config = { root, writeRoots: [skills] };
     expect((await run("write_file", { path: join(skills, "n.md"), content: "x" })).ok).toBe(true);
   });
+  it("resolves read roots through a symlinked configured store path", async () => {
+    const store = join(base, "attachment-store");
+    const linkedStore = join(base, "linked-attachment-store");
+    mkdirSync(store);
+    writeFileSync(join(store, "report.txt"), "synthetic linked-store attachment");
+    symlinkSync(store, linkedStore);
+    config = { root, readRoots: [linkedStore] };
+
+    expect((await run("read_file", { path: join(linkedStore, "report.txt") })).text)
+      .toContain("synthetic linked-store attachment");
+    expect((await run("write_file", { path: join(linkedStore, "report.txt"), content: "overwrite" })).text)
+      .toMatch(/read-only/);
+  });
   it("unrestricted lifts confinement", () => {
     expect(createWorkspacePaths({ root, unrestricted: true }).resolve("/etc/hosts", "read")).toBe(resolve("/etc/hosts"));
+  });
+});
+
+describe("exact read file grants", () => {
+  let file: string;
+  beforeEach(() => {
+    const store = join(base, "store");
+    mkdirSync(store);
+    file = join(store, "report.txt");
+    writeFileSync(file, "synthetic attachment\nSECOND needle\n");
+    config = { root, readFiles: [{ path: file, canonicalPath: realpathSync(file) }] };
+  });
+
+  it("reads and greps the granted file without granting its parent or sibling", async () => {
+    const read = await run("read_file", { path: file });
+    expect(read.ok, read.text).toBe(true);
+    expect(read.text).toContain("1\tsynthetic attachment");
+    const grep = await run("grep", { path: file, pattern: "second", ignore_case: true, glob: "*.txt" });
+    expect(grep).toEqual({ ok: true, text: `${file}:2:SECOND needle` });
+    const sibling = join(dirname(file), "sibling.txt");
+    writeFileSync(sibling, "private sibling");
+    for (const path of [sibling, dirname(file)]) {
+      expect((await run("read_file", { path })).ok).toBe(false);
+      expect((await run("grep", { path, pattern: "." })).ok).toBe(false);
+    }
+  });
+
+  it("denies writes and directory tools on the granted file", async () => {
+    for (const [name, args] of [
+      ["write_file", { path: file, content: "changed" }],
+      ["edit_file", { path: file, old_string: "synthetic", new_string: "changed" }],
+      ["multi_edit", { edits: [{ path: file, old_string: "synthetic", new_string: "changed" }] }],
+      ["apply_patch", { patch: `--- ${file}\n+++ ${file}\n@@ -1 +1 @@\n-synthetic attachment\n+changed\n` }],
+      ["glob", { path: file, pattern: "**/*" }],
+      ["list_dir", { path: file }],
+    ] as const) expect((await run(name, args)).ok, name).toBe(false);
+    expect(readFileSync(file, "utf8")).toBe("synthetic attachment\nSECOND needle\n");
+  });
+
+  it("does not turn a file replaced by a directory into a subtree grant", async () => {
+    rmSync(file);
+    mkdirSync(file);
+    const child = join(file, "child.txt");
+    writeFileSync(child, "private descendant");
+    for (const path of [file, child]) {
+      for (const name of ["read_file", "grep", "glob", "list_dir"]) {
+        const result = await run(name, { path, pattern: ".*" });
+        expect(result.ok, `${name}: ${result.text}`).toBe(false);
+        expect(result.text).not.toContain("private descendant");
+      }
+      expect((await run("write_file", { path, content: "changed" })).ok).toBe(false);
+    }
+    expect(readFileSync(child, "utf8")).toBe("private descendant");
+  });
+
+  it("uses confined reads for grep and refuses hard links", async () => {
+    linkSync(file, join(base, "another-name.txt"));
+    for (const name of ["read_file", "grep"]) {
+      const result = await run(name, { path: file, pattern: "synthetic" });
+      expect(result.ok, result.text).toBe(false);
+      expect(result.text).toMatch(/hard link/);
+    }
+  });
+
+  it("rejects a pinned attachment replaced with an external symlink", async () => {
+    const outside = join(base, "private.txt");
+    writeFileSync(outside, "private replacement");
+    rmSync(file);
+    symlinkSync(outside, file);
+    for (const name of ["read_file", "grep"]) {
+      const result = await run(name, { path: file, pattern: "." });
+      expect(result.ok).toBe(false);
+      expect(result.text).not.toContain("private replacement");
+    }
+  });
+
+  it("keeps a pinned attachment tied to its symlinked configured store path", async () => {
+    const linked = join(base, "linked-store");
+    symlinkSync(dirname(file), linked);
+    const path = join(linked, "report.txt");
+    config = { root, readFiles: [{ path, canonicalPath: realpathSync(path) }] };
+    for (const name of ["read_file", "grep"]) {
+      const result = await run(name, { path, pattern: "synthetic" });
+      expect(result.ok, result.text).toBe(true);
+      expect(result.text).toContain("synthetic attachment");
+      expect((await run(name, { path: file, pattern: "synthetic" })).ok).toBe(false);
+    }
+    const replacement = join(base, "replacement-store");
+    mkdirSync(replacement);
+    writeFileSync(join(replacement, "report.txt"), "private replacement");
+    rmSync(linked);
+    symlinkSync(replacement, linked);
+    for (const name of ["read_file", "grep"]) {
+      const result = await run(name, { path, pattern: "." });
+      expect(result.ok).toBe(false);
+      expect(result.text).not.toContain("private replacement");
+    }
   });
 });
 
