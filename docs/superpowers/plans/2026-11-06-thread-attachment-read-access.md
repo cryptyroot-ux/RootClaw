@@ -23,7 +23,9 @@
 - An attachment-shaped string in prose, code, a bot message, or an `attached-image` tag grants no file access — pin this in parser tests.
 - Missing, non-regular, symlinked, or outside-store paths grant no access — pin these in root-validation tests.
 - An unreferenced sibling upload stays outside the allowed roots — assert denial in the conversation integration test.
+- A path referenced in another thread stays outside the allowed roots — assert cross-thread denial.
 - A referenced attachment remains read-only — assert a write attempt is refused in the conversation integration test.
+- A symlinked configured attachment store retains its lexical path so workspace path checks allow the same validated attachment.
 
 ---
 
@@ -39,7 +41,7 @@
 
 - [x] **Step 1: Write failing tests**
 
-Add tests proving that a valid file referenced by a user message is returned once (including when referenced by an earlier message), while bot messages, prose/code examples, malformed tags, image tags, outside paths, missing files, directories, and symlinks return no root.
+Add tests proving that a valid file referenced by a user message is returned once (including when referenced by an earlier message), while bot messages, prose/code examples, malformed tags, image tags, outside paths, missing files, directories, and file symlinks return no root. A configured attachment directory reached through a symlink must retain the lexical candidate path after canonical validation.
 
 - [x] **Step 2: Run the tests and verify they fail**
 
@@ -49,7 +51,7 @@ Expected: FAIL because `threadAttachmentReadRoots` is not implemented.
 
 - [x] **Step 3: Implement `threadAttachmentReadRoots` in `server/message-file.ts`**
 
-Use the existing Markdown-aware standalone-tag rules and attribute decoder. Canonicalize the attachments directory and candidate paths; accept only regular files whose direct parent is that directory, and deduplicate without widening to the directory root.
+Use the existing Markdown-aware standalone-tag rules and attribute decoder. Canonicalize the attachments directory and candidate paths for validation; accept only regular files whose canonical direct parent is that directory, retain the validated lexical candidate for workspace containment checks, and deduplicate without widening to the directory root.
 
 - [x] **Step 4: Run the focused tests**
 
@@ -93,7 +95,7 @@ Run: `pnpm exec vitest run server/index.test.ts -t "reads only thread attachment
 
 Expected: PASS for direct and room turns, with unreferenced reads and writes still refused.
 
-- [ ] **Step 5: Commit the turn wiring and regression tests**
+- [x] **Step 5: Commit the turn wiring and regression tests**
 
 Run: `git add server/index.ts server/index.test.ts && git commit -m "fix: let bots read their thread attachments"`
 
