@@ -243,6 +243,7 @@ export function createWorkspacePaths(config: WorkspaceToolsConfig) {
     unrestricted: config.unrestricted === true,
     writeRoots: (config.writeRoots ?? []).map((dir) => resolve(dir)),
     readRoots: (config.readRoots ?? []).map((dir) => resolve(dir)),
+    readFiles: config.readFiles ?? [],
     /** An absolute path the tool may touch, or a WorkspacePathError. Both the spelled path and its real target
      * (after symlinks) must sit inside an allowed root, so neither `..` nor a symlink leads out. */
     resolve(input: unknown, mode: "read" | "write" | "read-directory", fallback?: string): string {
@@ -408,6 +409,8 @@ const TOOLCHAIN_ENV = ["NVM_DIR", "FNM_DIR", "PNPM_HOME", "COREPACK_HOME", "CARG
 export interface SandboxOptions {
   /** Folders the command may read but not write (skills). */
   readable?: readonly string[];
+  /** Exact lexical files whose canonical targets are pinned for read-only access. */
+  readFiles?: readonly WorkspaceReadFileGrant[];
   /** Let the command reach the network (bubblewrap only; it has none otherwise). */
   network?: boolean;
   env?: NodeJS.ProcessEnv;
@@ -432,11 +435,19 @@ export function sandboxedShell(command: string, cwd: string, writable: readonly 
       ...(options.readable ?? []).filter((dir) => existsSync(dir))].map((dir) => realOrSelf(dir)))];
     // Shorter paths first, so a nested mount lands on top of the folder that holds it; writable binds last.
     readOnly.sort((a, b) => a.length - b.length);
+    const readFiles = (options.readFiles ?? []).filter((grant) => {
+      try {
+        return realpathSync(grant.path) === grant.canonicalPath
+          && realpathSync(grant.canonicalPath) === grant.canonicalPath
+          && lstatSync(grant.canonicalPath).isFile();
+      } catch { return false; }
+    });
     return { file: "bwrap", args: ["--unshare-pid", ...(options.network ? [] : ["--unshare-net"]), "--die-with-parent", "--new-session",
       "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp", "--dir", "/var/tmp", "--tmpfs", home,
       ...readOnly.flatMap((dir) => ["--ro-bind", dir, dir]),
       ...links.flatMap((dir) => ["--symlink", readlinkSync(dir), dir]),
       ...dirs.flatMap((dir) => ["--bind", dir, dir]),
+      ...readFiles.flatMap((grant) => ["--dir", dirname(grant.path), "--ro-bind", grant.canonicalPath, grant.path]),
       "--setenv", "TMPDIR", "/tmp", "--setenv", "HOME", home,
       "--chdir", realOrSelf(cwd), "--", "/bin/bash", "-c", command] };
   }
@@ -517,7 +528,7 @@ async function runShell(args: Record<string, unknown>, paths: Paths, signal: Abo
     env.TMPDIR = privateTmp;
   }
   const program = sandboxedShell(command, cwd, [paths.root, ...paths.writeRoots, ...(kind === "sandbox-exec" ? [tmpdir()] : [])], kind,
-    { readable: paths.readRoots, network: args.network === true, env: process.env });
+    { readable: paths.readRoots, readFiles: paths.readFiles, network: args.network === true, env: process.env });
   if (args.background === true) {
     prune();
     if ((jobs.get(scope)?.size ?? 0) >= MAX_JOBS_PER_SCOPE || jobCount() >= MAX_JOBS) {

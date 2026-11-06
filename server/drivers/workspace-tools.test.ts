@@ -370,6 +370,76 @@ describe("shell", () => {
       expect(await run("shell", { command: `echo x > ${JSON.stringify(join(outside, "allowed.txt"))}` })).toMatchObject({ ok: true });
     } finally { rmSync(outside, { recursive: true, force: true }); }
   });
+  describe("exact file shell mounts", () => {
+    function attachment() {
+      const store = join(base, "store");
+      const lexicalStore = join(base, "messages", "attachments");
+      mkdirSync(store);
+      mkdirSync(dirname(lexicalStore));
+      symlinkSync(store, lexicalStore);
+      const canonicalPath = join(store, "document.txt");
+      writeFileSync(canonicalPath, "PINNED-ATTACHMENT");
+      writeFileSync(join(store, "sibling.txt"), "SIBLING-SECRET");
+      return { path: join(lexicalStore, "document.txt"), canonicalPath };
+    }
+
+    it("binds only the pinned canonical file read-only at its lexical message path", () => {
+      const grant = attachment();
+      const { args } = sandboxedShell("true", root, [root], "bwrap", { readFiles: [grant], env: { PATH: "/usr/bin", HOME: join(base, "home") } });
+      const mounts = args.flatMap((arg, index) => arg === "--ro-bind" || arg === "--bind" ? [args.slice(index, index + 3)] : []);
+      expect(mounts).toContainEqual(["--ro-bind", grant.canonicalPath, grant.path]);
+      expect(mounts.filter(([, source]) => source!.startsWith(base))).toEqual([
+        ["--bind", root, root],
+        ["--ro-bind", grant.canonicalPath, grant.path],
+      ]);
+      const destination = args.indexOf(grant.path);
+      expect(args.slice(0, destination).join(" ")).toContain(`--dir ${dirname(grant.path)}`);
+    });
+
+    it.each(["store symlink", "file symlink", "directory", "missing"])("omits a grant replaced by %s", (replacement) => {
+      const grant = attachment();
+      const options = { readFiles: [grant], env: { PATH: "/usr/bin", HOME: join(base, "home") } };
+      expect(sandboxedShell("true", root, [root], "bwrap", options).args).toContain(grant.path);
+      const outside = join(base, "outside");
+      mkdirSync(outside);
+      writeFileSync(join(outside, "document.txt"), "REPLACEMENT-SECRET");
+      if (replacement === "store symlink") {
+        rmSync(dirname(grant.path));
+        symlinkSync(outside, dirname(grant.path));
+      } else {
+        rmSync(grant.canonicalPath);
+        if (replacement === "file symlink") symlinkSync(join(outside, "document.txt"), grant.canonicalPath);
+        if (replacement === "directory") {
+          mkdirSync(grant.canonicalPath);
+          writeFileSync(join(grant.canonicalPath, "descendant.txt"), "DESCENDANT-SECRET");
+        }
+      }
+      const { args } = sandboxedShell("true", root, [root], "bwrap", options);
+      const sources = args.flatMap((arg, index) => arg === "--ro-bind" || arg === "--bind" ? [args[index + 1]] : []);
+      expect(sources.filter((source) => source!.startsWith(base))).toEqual([root]);
+      expect(args).not.toContain(grant.path);
+    });
+
+    it.runIf(shellSandbox() === "bwrap")("confines a confined shell to the read-only attachment through WorkspaceToolsConfig", async () => {
+      const grant = attachment();
+      config = { ...config, readFiles: [grant] };
+      const quoted = JSON.stringify(grant.path);
+      const read = await run("shell", { command: `cat ${quoted}` });
+      expect(read.ok, read.text).toBe(true);
+      expect(read.text).toContain("PINNED-ATTACHMENT");
+      for (const path of [join(dirname(grant.path), "sibling.txt"), grant.canonicalPath, join(grant.path, "descendant.txt")]) {
+        expect((await run("shell", { command: `cat ${JSON.stringify(path)}` })).ok).toBe(false);
+      }
+      expect((await run("shell", { command: `echo changed > ${quoted}` })).ok).toBe(false);
+      expect(readFileSync(grant.canonicalPath, "utf8")).toBe("PINNED-ATTACHMENT");
+      rmSync(dirname(grant.path));
+      symlinkSync(root, dirname(grant.path));
+      writeFileSync(join(root, "document.txt"), "RETARGETED-SECRET");
+      const stale = await run("shell", { command: `cat ${quoted}` });
+      expect(stale.ok).toBe(false);
+      expect(stale.text).not.toContain("RETARGETED-SECRET");
+    });
+  });
   it("runs plainly, and says so, without an OS sandbox", () => {
     const plain = sandboxedShell("ls", "/w", ["/w"], null);
     expect(plain.args).toEqual(["-c", "ls"]);
