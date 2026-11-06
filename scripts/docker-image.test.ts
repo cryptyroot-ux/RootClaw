@@ -69,6 +69,20 @@ describe("container images", () => {
     ]);
   });
 
+  it("uses the versioned public server image for Docker VPS installs", () => {
+    const deploy = parse(readFileSync(new URL("../deploy/docker-compose.yml", import.meta.url), "utf8"));
+    const service = deploy.services.rootclaw;
+    expect(service.image).toBe("ghcr.io/cryptyroot-ux/rootclaw:${ROOTCLAW_IMAGE_TAG:-v0.1.138}");
+    expect(service.build).toBeUndefined();
+    expect(service.init).toBe(true);
+    expect(service.shm_size).toBe("512m");
+    expect(service.restart).toBe("unless-stopped");
+    expect(service.ports).toEqual(["80:80", "443:443"]);
+    expect(service.volumes).toContain("data:/data");
+    expect(service.healthcheck.test.join(" ")).toContain("http://127.0.0.1:8799/api/health");
+    expect(readFileSync(new URL("../deploy/.env.example", import.meta.url), "utf8")).toContain("ROOTCLAW_IMAGE_TAG");
+  });
+
   it("puts the browser and the tools beneath the per-commit app files, so a code change leaves them as they were", () => {
     for (const target of ["server", "cloud-home"]) {
       const steps = chain(target);
@@ -214,10 +228,10 @@ describe("container images", () => {
       expect(text(file), file).toMatch(/^ARG ENGINES=""$/m);
       expect(text(file).split("\n").filter(line => !/^\s*#/.test(line) && external.test(line)), file).toEqual([]);
     }
-    for (const file of ["../compose.yaml", "../deploy/docker-compose.yml", "../deploy/podman/compose.yaml"]) {
+    for (const file of ["../compose.yaml", "../deploy/podman/compose.yaml"]) {
       expect(parse(text(file)).services.rootclaw.build.args.ENGINES, file).toBe("${ENGINES:-}");
     }
-    for (const file of ["../.env.example", "../deploy/.env.example"]) expect(text(file), file).toMatch(/^ENGINES=$/m);
+    expect(text("../.env.example")).toMatch(/^ENGINES=$/m);
   });
 
   // An init collects browser processes whose parents exit, and Chrome gets the
