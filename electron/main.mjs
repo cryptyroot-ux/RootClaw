@@ -317,7 +317,8 @@ function desktopDataDir() {
 
 function legacyDataDirs() {
   const home = app.getPath("home");
-  return [`.${"open"}mausbot`, ".opengrokbot"].map((name) => path.join(home, name));
+  // Legacy data dirs from before the RootClaw rename.
+  return [".openmausbot", ".opengrokbot"].map((name) => path.join(home, name));
 }
 
 async function stopUtilityServer(proc, timeoutMs = UTILITY_SERVER_STOP_TIMEOUT_MS) {
