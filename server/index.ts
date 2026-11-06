@@ -15617,6 +15617,8 @@ const gracefulShutdown = createGracefulShutdown({
         console.error("Session persistence failed during shutdown; account sign-in will be required again.");
         exitCode = 1;
       }
+      try { runStore.close(); }
+      catch (error) { console.error("Run persistence failed during shutdown.", error); exitCode = 1; }
       closeMessageDb();
       mcpOAuth.dispose();
       releaseDataDirLeaseAtExit();

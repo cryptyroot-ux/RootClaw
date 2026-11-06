@@ -23,7 +23,7 @@ vi.mock("@/lib/copy-text", () => ({ copyText: async (text: string) => { copiedTe
 
 const { ApprovalCard } = await import("./ApprovalCard");
 
-const now = Date.now();
+const now = new Date(2026, 0, 15, 12).getTime();
 const bot = { id: "bot-1", name: "Scout", hidden: false };
 const routine = {
   id: "routine-1", name: "Morning brief", prompt: "Summarize the inbox and post the three priorities.", target: "bot", botId: "bot-1", runOn: "rootclaw",
@@ -58,9 +58,11 @@ function click(message: Message, label: string) {
   if (!button) throw new Error(`no ${label} button in ${container.innerHTML}`);
   flushSync(() => button.click());
 }
-afterEach(() => { root?.unmount(); root = null; document.body.innerHTML = ""; });
+afterEach(() => { root?.unmount(); root = null; document.body.innerHTML = ""; vi.useRealTimers(); });
 
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(now);
   fixture.dispatch.mockReset();
   fixture.api.mockReset();
   fixture.api.mockResolvedValue({});

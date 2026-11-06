@@ -38,7 +38,7 @@ const { TriggersPage } = await import("../TriggersPage");
 const { AutomationsCalendar } = await import("./AutomationsCalendar");
 const { automationsFrom } = await import("@/lib/automations");
 
-const now = Date.now();
+const now = new Date(2026, 0, 15, 12).getTime();
 const botA = { id: "bot-a", name: "Scout", threadId: "thread-a", hidden: false, messages: [{ id: "m1", at: now - 5_000 }] } as unknown as Bot;
 const botB = { id: "bot-b", name: "Ledger", threadId: "thread-b", hidden: false, messages: [{ id: "m2", at: now - 50_000 }] } as unknown as Bot;
 const webhook = { id: "hook-1", endpointId: "wh_abc", name: "Sales form leads", prompt: "Draft a follow-up for the lead.", botId: "bot-a", runOn: "rootclaw", enabled: true, createdAt: now, updatedAt: now, deliveryCount: 1 };
@@ -57,12 +57,14 @@ const button = (container: HTMLElement, label: string) => {
   return found;
 };
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(now);
   fixture.dispatch.mockReset();
   fixture.api.mockReset();
   fixture.api.mockResolvedValue({});
   fixture.state = { hydrated: true, bots: [botA, botB], selectedId: "", routines: [], webhooks: [webhook], routineRuns: [], webhookAttempts: [], routinesLoadState: "ready", webhookIngress: { available: true, baseUrl: "http://127.0.0.1:8800" } };
 });
-afterEach(() => { root?.unmount(); root = null; document.body.innerHTML = ""; });
+afterEach(() => { root?.unmount(); root = null; document.body.innerHTML = ""; vi.useRealTimers(); });
 
 describe("+ New", () => {
   it("talks to the bot open now, else the one most recently talked to", () => {

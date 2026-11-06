@@ -13,7 +13,8 @@
 //   gates        folder for `slow`, instead of `gate`: each conversation waits for <gates>/<its working folder's name>.gate,
 //                so a test can release one thread's turn at a time (FAKE_CHAT_GATES)
 //   replies      replies used in order, one per turn's final answer; past the end, the default reply
-//   toolCalls    [{name, input?, round?}] asked for in tool round `round` (default 0) of every turn, before its answer
+//   toolCalls    [{name, input?, round?, allowUnlisted?}] asked for in tool round `round` (default 0); allowUnlisted
+//                makes the fake deliver a scripted call even when that tool was not included in the request
 //   sequence     [[calls], [calls], ...]: streamed request N asks for entry N (empty or past the end: answer). Unlike
 //                `round`, it does not read the history, so it keeps counting after the engine compacts older steps away
 //   routes       [{match, reply?, toolCalls?, mode?}]: the first whose `match` (a regex) finds the user text overrides
@@ -39,7 +40,7 @@ import { ownTurnText } from "./room-handoff-agent.ts";
 export const FAKE_OPENAI_MODEL = "fixture-model";
 
 /** `round` (default 0) is which tool round of the turn asks for the call, so a turn can call, read results, then call again. */
-export interface FakeToolCall { name: string; input?: Record<string, unknown>; round?: number }
+export interface FakeToolCall { name: string; input?: Record<string, unknown>; round?: number; allowUnlisted?: boolean }
 export interface FakeRoute { match: string; reply?: string; toolCalls?: FakeToolCall[]; mode?: FakeMode }
 export type FakeMode = "happy" | "slow" | "hang" | "error";
 export interface FakeScript {
@@ -79,7 +80,7 @@ export function scriptFromEnv(env: NodeJS.ProcessEnv): FakeScript {
   const replies = json<unknown[]>(pick("REPLIES", "REPLIES"));
   if (Array.isArray(replies)) script.replies = replies.map((reply) => Array.isArray(reply) ? reply.join("\n\n") : String(reply));
   const calls = json<FakeToolCall[]>(pick("TOOL_CALLS", "TOOL_CALLS"));
-  if (Array.isArray(calls)) script.toolCalls = calls.map(({ name, input, round }) => ({ name, ...(input ? { input } : {}), ...(typeof round === "number" ? { round } : {}) }));
+  if (Array.isArray(calls)) script.toolCalls = calls.map(({ name, input, round, allowUnlisted }) => ({ name, ...(input ? { input } : {}), ...(typeof round === "number" ? { round } : {}), ...(allowUnlisted ? { allowUnlisted: true } : {}) }));
   const routes = json<FakeRoute[]>(pick("ROUTES", "TEXT_ROUTES"));
   if (Array.isArray(routes)) script.routes = routes;
   const models = json<string[]>(pick("MODELS"));
@@ -212,12 +213,12 @@ export async function startFakeOpenAiChat(env: NodeJS.ProcessEnv = {}): Promise<
     const scripted = body.stream !== true ? []
       : script.sequence ? script.sequence[step] ?? []
       : (route?.toolCalls ?? script.toolCalls ?? []).filter((call) => (call.round ?? 0) === round);
-    const requestedCalls = called ? [{ name: called[1]!, arguments: called[2] ?? "{}" }]
-      : scripted.map((call) => ({ name: call.name, arguments: JSON.stringify(call.input ?? {}) }));
+    const requestedCalls: Array<{ name: string; arguments: string; allowUnlisted?: boolean }> = called ? [{ name: called[1]!, arguments: called[2] ?? "{}" }]
+      : scripted.map((call) => ({ name: call.name, arguments: JSON.stringify(call.input ?? {}), allowUnlisted: call.allowUnlisted }));
     const offered = Array.isArray(body.tools)
       ? new Set(body.tools.map((tool) => (tool as { function?: { name?: unknown } })?.function?.name).filter((name): name is string => typeof name === "string"))
       : null;
-    const calls = !called && offered ? requestedCalls.filter((call) => offered.has(call.name)) : requestedCalls;
+    const calls = !called && offered ? requestedCalls.filter((call) => call.allowUnlisted || offered.has(call.name)) : requestedCalls;
     if (mode === "slow" && body.stream === true && calls.length === 0) {
       const gate = script.gates && __cwd ? join(script.gates, `${basename(__cwd)}.gate`) : script.gate;
       while (!gate || !existsSync(gate)) {

@@ -7,11 +7,16 @@ import { createRunRoutes } from "./runs.ts";
 import { PASS } from "./table.ts";
 
 const dirs: string[] = [];
-afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
+const stores: ReturnType<typeof createRunStore>[] = [];
+afterEach(() => {
+  for (const runs of stores.splice(0)) runs.close();
+  for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+});
 
 function setup() {
   const d = mkdtempSync(join(tmpdir(), "runs-routes-")); dirs.push(d);
   const runs = createRunStore({ dataDir: d });
+  stores.push(runs);
   runs.begin({ runId: "r1", threadId: "seen", botId: "b", model: "m" });
   runs.observe({ type: "turn.completed", turnId: "r1", ok: false, stopReason: "error" });
   runs.begin({ runId: "r2", threadId: "hidden", botId: "b", model: "m" });
