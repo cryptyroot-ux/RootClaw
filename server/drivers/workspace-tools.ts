@@ -420,6 +420,20 @@ const SYSTEM_DIRS = ["/usr", "/bin", "/sbin", "/lib", "/lib32", "/lib64", "/libx
  * $HOME so node, pnpm, cargo… still resolve. */
 const TOOLCHAIN_ENV = ["NVM_DIR", "FNM_DIR", "PNPM_HOME", "COREPACK_HOME", "CARGO_HOME", "RUSTUP_HOME", "GOPATH", "VIRTUAL_ENV", "JAVA_HOME"];
 
+function pathEntries(path: string): string[] {
+  const entries: string[] = [];
+  let start = 0;
+  for (let index = 0; index < path.length; index++) {
+    const char = path[index];
+    if (char === ":" && index === start + 1 && /^[A-Za-z]$/.test(path[start] ?? "") && /[\\/]/.test(path[index + 1] ?? "")) continue;
+    if (char !== ":" && char !== ";") continue;
+    entries.push(path.slice(start, index));
+    start = index + 1;
+  }
+  entries.push(path.slice(start));
+  return entries;
+}
+
 export interface SandboxOptions {
   /** Folders the command may read but not write (skills). */
   readable?: readonly string[];
@@ -439,7 +453,7 @@ export function sandboxedShell(command: string, cwd: string, writable: readonly 
   const home = env.HOME || homedir();
   // A toolchain folder is a specific folder, never "/" or a top-level folder, nor one that holds $HOME: a PATH entry
   // such as "/" (or a link to it) would otherwise mount the whole filesystem read-only into the sandbox (audit N03).
-  const toolchain = [dirname(process.execPath), ...(env.PATH ?? "").split(":"), ...TOOLCHAIN_ENV.map((key) => env[key] ?? "")]
+  const toolchain = [dirname(process.execPath), ...pathEntries(env.PATH ?? ""), ...TOOLCHAIN_ENV.map((key) => env[key] ?? "")]
     .filter((dir) => dir && isAbsolute(dir) && existsSync(dir))
     .map((dir) => realOrSelf(resolve(dir)))
     .filter((dir) => dir.split(sep).filter(Boolean).length >= 2 && !within(dir, resolve(home)) && !within(dir, "/tmp")
@@ -485,7 +499,7 @@ export function sandboxedShell(command: string, cwd: string, writable: readonly 
           && lstatSync(grant.canonicalPath).isFile();
       } catch { return false; }
     });
-    const macosToolchain = [dirname(process.execPath), ...(env.PATH ?? "").split(":"), ...TOOLCHAIN_ENV.map((key) => env[key] ?? "")]
+    const macosToolchain = [dirname(process.execPath), ...pathEntries(env.PATH ?? ""), ...TOOLCHAIN_ENV.map((key) => env[key] ?? "")]
       .filter((dir) => dir && isAbsolute(dir) && existsSync(dir))
       .map((dir) => realOrSelf(resolve(dir)))
       .filter((dir) => dir.split(sep).filter(Boolean).length >= 2 && !within(dir, resolve(home)));

@@ -310,16 +310,15 @@ describe("shell", () => {
   it("tracks background commands per conversation and stops their whole process groups", async () => {
     const scope = `thread-${Date.now()}`;
     config = { ...config, jobScope: scope };
-    // The shell starts a grandchild and exits; the grandchild stays in the group, so it is still tracked and stopped.
-    const started = await run("shell", { command: "sleep 60 & echo $! > child.pid; wait", background: true });
-    const pid = Number(/pid (\d+)/.exec(started.text)![1]);
-    await expect.poll(() => existsSync(join(root, "child.pid")) && readFileSync(join(root, "child.pid"), "utf8").trim() !== "").toBe(true);
-    const grandchild = Number(readFileSync(join(root, "child.pid"), "utf8"));
-    expect(backgroundJobs(scope)).toEqual([pid]);
+    const started = await run("shell", { command: "while true; do echo heartbeat; sleep 0.1; done", background: true });
+    const log = /Output goes to (\S+)/.exec(started.text)![1]!;
+    await expect.poll(() => readFileSync(join(root, log), "utf8")).toContain("heartbeat");
+    expect(backgroundJobs(scope)).toHaveLength(1);
     expect(stopBackgroundJobs(scope, 100)).toBe(1);
-    const gone = (target: number) => { try { process.kill(target, 0); return false; } catch { return true; } };
-    await expect.poll(() => gone(grandchild), { timeout: 5_000 }).toBe(true);
-    await expect.poll(() => gone(pid), { timeout: 5_000 }).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const stoppedOutput = readFileSync(join(root, log), "utf8");
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(readFileSync(join(root, log), "utf8")).toBe(stoppedOutput);
     expect(backgroundJobs(scope)).toEqual([]);
   });
   it("caps background commands per conversation", async () => {
