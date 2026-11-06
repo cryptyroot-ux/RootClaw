@@ -1,4 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
@@ -148,6 +150,30 @@ describe("exact read file grants", () => {
       const result = await run(name, { path: file, pattern: "." });
       expect(result.ok).toBe(false);
       expect(result.text).not.toContain("private replacement");
+    }
+  });
+
+  it.each(["read_file", "grep"])("rejects a pinned attachment swapped between resolution and open in %s", async (name) => {
+    const outside = join(base, "private.txt");
+    const secret = "EXTERNAL-DESCRIPTOR-CONTENTS";
+    writeFileSync(outside, secret);
+    const open = fs.openSync;
+    const opening = vi.spyOn(fs, "openSync").mockImplementation((path, flags, mode) => {
+      if (path === file) {
+        rmSync(file);
+        symlinkSync(outside, file);
+      }
+      return open(path, flags, mode);
+    });
+    syncBuiltinESMExports();
+    try {
+      const result = await run(name, { path: file, pattern: "EXTERNAL" });
+      expect(realpathSync(file)).toBe(realpathSync(outside));
+      expect(result.ok, result.text).toBe(false);
+      expect(result.text).not.toContain(secret);
+    } finally {
+      opening.mockRestore();
+      syncBuiltinESMExports();
     }
   });
 
