@@ -59,6 +59,7 @@ RUN ROOTCLAW_DUCKDB_ARCHES="x64,arm64" node scripts/prepare-duckdb.mjs \
 RUN pnpm build:server && pnpm exec vite build && chmod -R go-w dist dist-server skills
 
 FROM node:24-bookworm-slim AS runtime
+ARG TARGETARCH
 # Install Chrome's Bookworm libraries directly: agent-browser --with-deps
 # invokes sudo even as root, and this image deliberately does not ship sudo.
 # git + curl: agent CLIs shell out to git; curl backs the healthcheck
@@ -71,6 +72,7 @@ RUN apt-get update \
     libfontconfig1 libdbus-1-3 libnss3 libnss3-tools libnspr4 \
     libatk-bridge2.0-0 libdrm2 libxkbcommon0 libatspi2.0-0 libcups2 \
     libxshmfence1 libgbm1 fonts-noto-color-emoji fonts-noto-cjk fonts-freefont-ttf \
+  && if [ "$TARGETARCH" = "arm64" ]; then apt-get install -y --no-install-recommends chromium; fi \
   && rm -rf /var/lib/apt/lists/* \
   && useradd --create-home --home-dir /data --shell /bin/bash rootclaw
 # The bots' browser (docs/plans/browser-engine.md): the pinned agent-browser
@@ -84,8 +86,12 @@ ARG CHROME_CACHE_TAG=""
 # postinstall points it there); the other platforms' binaries are never run.
 RUN echo "agent-browser ${AGENT_BROWSER_VERSION}, Chrome for Testing ${CHROME_CACHE_TAG:-Stable}" \
   && npm install -g --cache /tmp/npm-cache agent-browser@${AGENT_BROWSER_VERSION} \
-  && HOME=/opt/rootclaw-browser agent-browser install \
-  && ln -s /opt/rootclaw-browser/.agent-browser/browsers/chrome-*/chrome /opt/rootclaw-browser/chrome \
+  && if [ "$TARGETARCH" = "arm64" ]; then \
+       ln -s /usr/bin/chromium /opt/rootclaw-browser/chrome; \
+     else \
+       HOME=/opt/rootclaw-browser agent-browser install \
+       && ln -s /opt/rootclaw-browser/.agent-browser/browsers/chrome-*/chrome /opt/rootclaw-browser/chrome; \
+     fi \
   && native="$(readlink -f "$(command -v agent-browser)")" \
   && case "$native" in */agent-browser/bin/agent-browser-linux-*) ;; *) echo "agent-browser is not a native binary: $native" >&2; exit 1;; esac \
   && [ "$(head -c 4 "$native")" = "$(printf '\177ELF')" ] \

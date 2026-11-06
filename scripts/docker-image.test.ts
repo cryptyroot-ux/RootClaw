@@ -86,6 +86,7 @@ describe("container images", () => {
   it("gates GHCR publication on a matching tagged server image passing both architecture smokes", () => {
     const source = readFileSync(new URL("../.github/workflows/vps-image-release.yml", import.meta.url), "utf8");
     const workflow = parse(source);
+    expect(workflow.on.pull_request.paths).toContain("Dockerfile");
     expect(workflow.on.push.tags).toEqual(["v*"]);
     expect(workflow.permissions).toEqual({ contents: "read" });
 
@@ -97,6 +98,7 @@ describe("container images", () => {
     expect(checks.steps.some(step => step.run === "pnpm lint")).toBe(true);
     const versionGate = checks.steps.find(step => step.name === "Verify tag, package, and Compose versions")?.run;
     expect(versionGate).toBeDefined();
+    expect(checks.steps.find(step => step.name === "Verify tag, package, and Compose versions")?.if).toBe("startsWith(github.ref, 'refs/tags/v')");
     const versionCode = /node --input-type=module -e '([\s\S]*?)'\s*$/.exec(versionGate!)?.[1];
     expect(versionCode).toBeDefined();
 
@@ -125,6 +127,7 @@ describe("container images", () => {
     expect(smokeRun).toContain("/api/health");
     expect(smokeRun).not.toContain("--publish");
     expect(smokeRun).toContain("docker exec rootclaw-image-smoke curl --fail --silent --show-error http://127.0.0.1:8799/api/health");
+    expect(smokeRun).toContain("docker exec rootclaw-image-smoke /opt/rootclaw-browser/chrome --version");
     expect(smokeRun).toContain('createRequire("/app/duckdb/node_modules/rootclaw-duckdb-anchor.js")');
     expect(smokeRun).toContain('await connection.run("SELECT 1")');
 
@@ -272,6 +275,16 @@ describe("container images", () => {
     expect(declared).toBeGreaterThan(runtime.findIndex(step => step.op === "RUN" && step.args.startsWith("apt-get update")));
     expect(declared).toBeLessThan(runtime.indexOf(browserRun()));
     expect(browserRun().args).toContain("${CHROME_CACHE_TAG");
+  });
+
+  it("uses Debian Chromium for the server image on ARM64", () => {
+    const runtime = chain("runtime");
+    expect(runtime).toContainEqual({ op: "ARG", args: "TARGETARCH" });
+    const apt = runtime.find(step => step.op === "RUN" && step.args.startsWith("apt-get update"))!;
+    expect(apt.args).toContain('if [ "$TARGETARCH" = "arm64" ]; then apt-get install -y --no-install-recommends chromium; fi');
+    expect(browserRun().args).toContain('if [ "$TARGETARCH" = "arm64" ]');
+    expect(browserRun().args).toContain("ln -s /usr/bin/chromium /opt/rootclaw-browser/chrome");
+    expect(browserRun().args).toContain("ln -s /opt/rootclaw-browser/.agent-browser/browsers/chrome-*/chrome /opt/rootclaw-browser/chrome");
   });
 
   // RootClaw's engine is native: it talks to model providers over their APIs, so no image or compose default installs
