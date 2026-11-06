@@ -424,8 +424,21 @@ describe("shell", () => {
       expect(program.args.flatMap((arg, index) => arg === "--ro-bind-fd" ? [[arg, program.args[index + 1], program.args[index + 2]]] : []))
         .toEqual([["--ro-bind-fd", "3", second.path], ["--ro-bind-fd", "4", third.path]]);
       expect(program.extraFds).toHaveLength(2);
+    });
+
+    it.runIf(shellSandbox() === "bwrap")("executes ordered descriptors in a working bubblewrap sandbox", () => {
+      const stale = attachment();
+      const store = dirname(stale.canonicalPath);
+      const lexical = dirname(stale.path);
+      const second = { path: join(lexical, "second.txt"), canonicalPath: join(store, "second.txt") };
+      const third = { path: join(lexical, "third.txt"), canonicalPath: join(store, "third.txt") };
+      writeFileSync(second.canonicalPath, "SECOND");
+      writeFileSync(third.canonicalPath, "THIRD");
+      rmSync(stale.canonicalPath);
+      const program = build(`cat ${JSON.stringify(second.path)} ${JSON.stringify(third.path)}`, [stale, second, third]);
       const result = spawnSync(program.file, program.args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe", ...program.extraFds] });
-      expect(result.status, result.stderr).toBe(0);
+      expect({ error: result.error?.message, signal: result.signal, status: result.status, stderr: result.stderr })
+        .toEqual({ error: undefined, signal: null, status: 0, stderr: "" });
       expect(result.stdout).toBe("SECONDTHIRD");
     });
 
