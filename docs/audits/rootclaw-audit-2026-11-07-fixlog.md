@@ -32,6 +32,7 @@ Verification is against this base, not the audit's older pinned commit. “Confi
 - Added `skills/ATTRIBUTION-superpowers.md` and an identical copy of the upstream MIT license at `skills/superpowers-LICENSE`; `using-superpowers/SKILL.md` includes a concise RootClaw tool-mapping note.
 - Verification: `pnpm exec vitest run server/skill-library.test.ts` (13 passed), `pnpm typecheck`, `pnpm exec oxlint --deny-warnings server/skill-library.test.ts`; file inventory confirmed no upstream files missing and license bytes identical.
 - Owner-request bundle commit: `2b3b128` (`feat: vendor obra/superpowers skills as default bundled`). PR lookup before push found none; branch push/PR creation follows.
+- The upstream brainstorming companion scripts received behavior-neutral unused-catch-binding cleanup after the pre-push lint hook identified warnings; strict lint passes on all vendored JS/CJS/TS files.
 
 ## CI failure table
 
