@@ -425,7 +425,7 @@ export interface SandboxOptions {
   readable?: readonly string[];
   /** Exact lexical files whose canonical targets are pinned for read-only access. */
   readFiles?: readonly WorkspaceReadFileGrant[];
-  /** Let the command reach the network (bubblewrap only; it has none otherwise). */
+  /** Let the command reach the network; otherwise the OS sandbox denies it. */
   network?: boolean;
   env?: NodeJS.ProcessEnv;
 }
@@ -504,6 +504,7 @@ export function sandboxedShell(command: string, cwd: string, writable: readonly 
     const profile = [
       "(version 1)",
       "(allow default)",
+      options.network ? "(allow network*)" : "(deny network*)",
       "(deny file-read* file-test-existence)",
       metadataRules ? `(allow file-read-metadata ${metadataRules})` : "",
       `(allow file-read-data ${readRules})`,

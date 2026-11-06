@@ -683,7 +683,12 @@ describe("shell", () => {
     // Never the whole filesystem (audit R06b); the network only when the call asks for it (R06c).
     expect(bwrap.args.join(" ")).not.toContain("--ro-bind / /");
     expect(sandboxedShell("ls", root, [root], "bwrap", { network: true }).args).not.toContain("--unshare-net");
-    expect(sandboxedShell("ls", root, [root], "sandbox-exec").args[1]).toContain("(deny file-write*)");
+    const macosOffline = sandboxedShell("ls", root, [root], "sandbox-exec").args[1]!;
+    const macosOnline = sandboxedShell("ls", root, [root], "sandbox-exec", { network: true }).args[1]!;
+    expect(macosOffline).toContain("(deny file-write*)");
+    expect(macosOffline).toContain("(deny network*)");
+    expect(macosOnline).toContain("(allow network*)");
+    expect(macosOnline).not.toContain("(deny network*)");
   });
   it("keeps the server's secrets out of the environment", () => {
     const env = shellEnvironment(root, { PATH: "/bin", GH_TOKEN: "x", OPENAI_API_KEY: "y" });
