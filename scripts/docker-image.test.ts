@@ -123,6 +123,8 @@ describe("container images", () => {
     expect(smokeBuild).toMatchObject({ target: "server", platforms: "${{ matrix.platform }}", load: true });
     const smokeRun = smoke.steps.find(step => step.name === "Run image and verify its healthcheck")?.run;
     expect(smokeRun).toContain("/api/health");
+    expect(smokeRun).not.toContain("--publish");
+    expect(smokeRun).toContain("docker exec rootclaw-image-smoke curl --fail --silent --show-error http://127.0.0.1:8799/api/health");
     expect(smokeRun).toContain('createRequire("/app/duckdb/node_modules/rootclaw-duckdb-anchor.js")');
     expect(smokeRun).toContain('await connection.run("SELECT 1")');
 

@@ -80,13 +80,12 @@ jobs:
           chmod 0777 "$data_dir"
           trap 'docker logs rootclaw-image-smoke 2>&1 || true; docker rm -f rootclaw-image-smoke >/dev/null 2>&1 || true; rm -rf "$data_dir"' EXIT
           docker run --detach --name rootclaw-image-smoke \
-            --publish 127.0.0.1:18799:8799 \
             --mount "type=bind,source=$data_dir,target=/data" \
             "${{ matrix.tag }}"
           for attempt in $(seq 1 90); do
             health="$(docker inspect --format '{{.State.Health.Status}}' rootclaw-image-smoke)"
             if [ "$health" = healthy ]; then
-              curl --fail --silent --show-error http://127.0.0.1:18799/api/health
+              docker exec rootclaw-image-smoke curl --fail --silent --show-error http://127.0.0.1:8799/api/health
               docker exec rootclaw-image-smoke node --input-type=module -e '
                 import { createRequire } from "node:module";
                 const require = createRequire("/app/duckdb/node_modules/rootclaw-duckdb-anchor.js");

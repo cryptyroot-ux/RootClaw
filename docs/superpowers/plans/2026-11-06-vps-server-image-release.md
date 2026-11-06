@@ -142,24 +142,24 @@
 - Consumes: passing Tasks 1–3 and merged read-and-draft fix.
 - Produces: source commit with version `0.1.138`, tag `v0.1.138`, and public GHCR manifest.
 
-- [ ] **Step 1: Bump the application version**
+- [x] **Step 1: Bump the application version**
 
   Change root `package.json` version from `0.1.137` to `0.1.138`; keep it equal to the Compose image default.
 
-- [ ] **Step 2: Run local verification**
+- [x] **Step 2: Run local verification**
 
   Run: `pnpm exec vitest run scripts/docker-image.test.ts server/read-and-draft.test.ts server/proactive-routines.e2e.test.ts`, `pnpm typecheck`, and `pnpm lint`.
   Expected: all commands exit 0.
 
 - [ ] **Step 3: Build and smoke both images locally**
 
-  Run Buildx for `linux/amd64` and `linux/arm64` with target `server`; run each image and verify its healthcheck. Use isolated image builds only; do not connect to a live provider/account.
-  Expected: both platform images start and pass `/api/health`.
+  Build and smoke `linux/amd64` locally with target `server`. This local Buildx daemon has no ARM64 emulation; do not alter its host-level binfmt state. Require the tag workflow's QEMU-backed ARM64 build and smoke to pass before publication. Run each available image in an isolated container and verify its healthcheck and native DuckDB query; do not connect to a live provider/account.
+  Expected: the local amd64 image is healthy and runs a native DuckDB query; before publication, the release workflow confirms the arm64 image is healthy and its native DuckDB query succeeds.
 
-- [ ] **Step 4: Run canonical isolated behavior verification**
+- [x] **Step 4: Run canonical isolated behavior verification**
 
-  Follow `docs/verification/proactive-routines.md` through the shared `control-rootclaw` tool against a disposable fake-engine fixture. Never point it at VPS Live or a live provider.
-  Expected: the documented read-and-draft authorization, refusal, and duplicate-draft checks pass with evidence retained under the fixture's printed log path.
+  Run the canonical `server/proactive-routines.e2e.test.ts` and `server/read-and-draft.test.ts` documented in `docs/verification/proactive-routines.md`. The shared CLI has no routine create/run verbs; use the documented fake-provider and loopback connected-apps fixture rather than raw API calls. Retain the verbose test output under `.rootclaw-scratch`.
+  Expected: the documented read-and-draft authorization, refusal, and duplicate-draft checks pass against the disposable fixture, with test output retained under `.rootclaw-scratch`.
 
 - [ ] **Step 5: Push branch and open a PR**
 
