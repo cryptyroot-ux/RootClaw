@@ -282,9 +282,13 @@ describe("container images", () => {
     expect(runtime).toContainEqual({ op: "ARG", args: "TARGETARCH" });
     const apt = runtime.find(step => step.op === "RUN" && step.args.startsWith("apt-get update"))!;
     expect(apt.args).toContain('if [ "$TARGETARCH" = "arm64" ]; then apt-get install -y --no-install-recommends chromium; fi');
-    expect(browserRun().args).toContain('if [ "$TARGETARCH" = "arm64" ]');
-    expect(browserRun().args).toContain("ln -s /usr/bin/chromium /opt/rootclaw-browser/chrome");
-    expect(browserRun().args).toContain("ln -s /opt/rootclaw-browser/.agent-browser/browsers/chrome-*/chrome /opt/rootclaw-browser/chrome");
+    const browser = browserRun().args;
+    expect(browser).toContain('if [ "$TARGETARCH" = "arm64" ]');
+    const browserHome = browser.indexOf("mkdir -p /opt/rootclaw-browser");
+    expect(browserHome).toBeGreaterThanOrEqual(0);
+    expect(browserHome).toBeLessThan(browser.indexOf("ln -s /usr/bin/chromium /opt/rootclaw-browser/chrome"));
+    expect(browser).toContain("ln -s /usr/bin/chromium /opt/rootclaw-browser/chrome");
+    expect(browser).toContain("ln -s /opt/rootclaw-browser/.agent-browser/browsers/chrome-*/chrome /opt/rootclaw-browser/chrome");
   });
 
   // RootClaw's engine is native: it talks to model providers over their APIs, so no image or compose default installs

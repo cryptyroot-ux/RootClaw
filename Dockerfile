@@ -86,6 +86,7 @@ ARG CHROME_CACHE_TAG=""
 # postinstall points it there); the other platforms' binaries are never run.
 RUN echo "agent-browser ${AGENT_BROWSER_VERSION}, Chrome for Testing ${CHROME_CACHE_TAG:-Stable}" \
   && npm install -g --cache /tmp/npm-cache agent-browser@${AGENT_BROWSER_VERSION} \
+  && mkdir -p /opt/rootclaw-browser \
   && if [ "$TARGETARCH" = "arm64" ]; then \
        ln -s /usr/bin/chromium /opt/rootclaw-browser/chrome; \
      else \
