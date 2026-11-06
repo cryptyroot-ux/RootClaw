@@ -83,6 +83,65 @@ describe("container images", () => {
     expect(readFileSync(new URL("../deploy/.env.example", import.meta.url), "utf8")).toContain("ROOTCLAW_IMAGE_TAG");
   });
 
+  it("gates GHCR publication on a matching tagged server image passing both architecture smokes", () => {
+    const source = readFileSync(new URL("../.github/workflows/vps-image-release.yml", import.meta.url), "utf8");
+    const workflow = parse(source);
+    expect(workflow.on.push.tags).toEqual(["v*"]);
+    expect(workflow.permissions).toEqual({ contents: "read" });
+
+    const checks = workflow.jobs.checks;
+    expect(checks.steps.find(step => step.uses?.startsWith("actions/setup-node@"))?.with["node-version"]).toBe(24);
+    expect(checks.steps.some(step => step.run === "pnpm install --frozen-lockfile")).toBe(true);
+    expect(checks.steps.some(step => step.run?.includes("server/read-and-draft.test.ts") && step.run.includes("server/proactive-routines.e2e.test.ts"))).toBe(true);
+    expect(checks.steps.some(step => step.run === "pnpm typecheck")).toBe(true);
+    expect(checks.steps.some(step => step.run === "pnpm lint")).toBe(true);
+    const versionGate = checks.steps.find(step => step.name === "Verify tag, package, and Compose versions")?.run;
+    expect(versionGate).toBeDefined();
+    const versionCode = /node --input-type=module -e '([\s\S]*?)'\s*$/.exec(versionGate!)?.[1];
+    expect(versionCode).toBeDefined();
+
+    const verifyVersions = (tag: string, packageVersion: string, composeVersion: string) => {
+      const root = mkdtempSync(join(tmpdir(), "rootclaw-image-tag-"));
+      temporaryDirectories.push(root);
+      mkdirSync(join(root, "deploy"));
+      writeFileSync(join(root, "package.json"), JSON.stringify({ version: packageVersion }));
+      writeFileSync(join(root, "deploy/docker-compose.yml"), `services:\n  rootclaw:\n    image: ghcr.io/cryptyroot-ux/rootclaw:\${ROOTCLAW_IMAGE_TAG:-v${composeVersion}}\n`);
+      return spawnSync(process.execPath, ["--input-type=module", "-e", versionCode!], {
+        cwd: root,
+        env: { ...process.env, GITHUB_REF_NAME: tag },
+        encoding: "utf8",
+      });
+    };
+    expect(verifyVersions("v1.2.3", "1.2.3", "1.2.3").status).toBe(0);
+    expect(verifyVersions("v1.2.4", "1.2.3", "1.2.3").status).not.toBe(0);
+    expect(verifyVersions("v1.2.3", "1.2.3", "1.2.4").status).not.toBe(0);
+
+    const smoke = workflow.jobs.smoke;
+    expect(smoke.needs).toBe("checks");
+    expect(smoke.strategy.matrix.include.map(arch => arch.platform)).toEqual(["linux/amd64", "linux/arm64"]);
+    const smokeBuild = smoke.steps.find(step => step.uses?.startsWith("docker/build-push-action@"))?.with;
+    expect(smokeBuild).toMatchObject({ target: "server", platforms: "${{ matrix.platform }}", load: true });
+    const smokeRun = smoke.steps.find(step => step.name === "Run image and verify its healthcheck")?.run;
+    expect(smokeRun).toContain("/api/health");
+    expect(smokeRun).toContain('createRequire("/app/duckdb/node_modules/rootclaw-duckdb-anchor.js")');
+    expect(smokeRun).toContain('await connection.run("SELECT 1")');
+
+    const publish = workflow.jobs.publish;
+    expect(publish.needs).toEqual(["checks", "smoke"]);
+    expect(publish.permissions).toEqual({ contents: "read", packages: "write" });
+    expect(publish.steps.some(step => step.uses?.startsWith("docker/setup-qemu-action@"))).toBe(true);
+    const publishBuild = publish.steps.find(step => step.uses?.startsWith("docker/build-push-action@"))?.with;
+    expect(publishBuild).toMatchObject({
+      target: "server",
+      platforms: "linux/amd64,linux/arm64",
+      tags: "ghcr.io/cryptyroot-ux/rootclaw:${{ github.ref_name }}",
+      push: true,
+    });
+    expect(publishBuild["cache-from"]).toContain("scope=vps-server-amd64");
+    expect(publishBuild["cache-from"]).toContain("scope=vps-server-arm64");
+    expect(source).not.toMatch(/latest|cloud-home|electron|desktop/i);
+  });
+
   it("puts the browser and the tools beneath the per-commit app files, so a code change leaves them as they were", () => {
     for (const target of ["server", "cloud-home"]) {
       const steps = chain(target);

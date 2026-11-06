@@ -110,25 +110,25 @@
 - Consumes: versioned source tag and the architecture-aware Docker `server` target.
 - Produces: public `ghcr.io/cryptyroot-ux/rootclaw:v<package-version>` manifest for `linux/amd64` and `linux/arm64` only after all gates pass.
 
-- [ ] **Step 1: Write workflow contract assertions**
+- [x] **Step 1: Write workflow contract assertions**
 
   Extend `scripts/docker-image.test.ts` to parse and assert the workflow has a `v*` tag trigger, `contents: read`, `packages: write`, a tag/package/Compose version equality gate, the `server` target, both required platforms, and no desktop release or `latest` tag publication.
 
-- [ ] **Step 2: Run the focused test and confirm it fails**
+- [x] **Step 2: Run the focused test and confirm it fails**
 
   Run: `pnpm exec vitest run scripts/docker-image.test.ts`
   Expected: workflow assertions fail because the VPS image release workflow does not exist.
 
-- [ ] **Step 3: Implement workflow gates and architecture smoke jobs**
+- [x] **Step 3: Implement workflow gates and architecture smoke jobs**
 
   Add a tag-triggered workflow that rejects tag/version mismatch, installs Node 24 and pnpm 10, runs server checks, builds and smoke-tests the `server` image for each platform, then publishes one versioned multi-arch manifest to GHCR with the workflow token. Keep publication downstream of both architecture smoke jobs. Do not publish `latest`, desktop artifacts, or `cloud-home`.
 
-- [ ] **Step 4: Run the focused workflow-contract test**
+- [x] **Step 4: Run the focused workflow-contract test**
 
   Run: `pnpm exec vitest run scripts/docker-image.test.ts`
   Expected: PASS and the existing Dockerfile/Compose contracts remain intact.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
   Commit workflow and tests as `ci(vps): publish gated multi-arch server images`.
 
