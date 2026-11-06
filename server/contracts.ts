@@ -89,6 +89,8 @@ export interface TurnImageInput {
   bytes: number;
 }
 
+export type WorkspaceReadFileGrant = { path: string; canonicalPath: string };
+
 // `driver` is any slug: an unknown driver round-trips as an unavailable shadow snapshot.
 export interface InstanceConfig {
   driver: DriverKind;

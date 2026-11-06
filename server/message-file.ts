@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { fromMarkdown } from "mdast-util-from-markdown";
 
 import { windowsPathDestinations } from "../shared/markdown-windows-paths.ts";
+import type { WorkspaceReadFileGrant } from "./contracts.ts";
 import { inSecretFolder, SECRET_FILE_REFUSAL } from "./secret-folder.ts";
 
 export const MESSAGE_FILE_MAX_BYTES = 25 * 1024 * 1024;
@@ -309,10 +310,10 @@ export function messageAttachmentName(text: string, requested: string): string |
   return null;
 }
 
-export function threadAttachmentReadRoots(
+export function threadAttachmentReadFiles(
   messages: readonly { role: string; text?: string | null }[],
   attachmentsDir: string,
-): string[] {
+): WorkspaceReadFileGrant[] {
   let root: string;
   let realRoot: string;
   try {
@@ -322,7 +323,7 @@ export function threadAttachmentReadRoots(
     return [];
   }
 
-  const roots = new Set<string>();
+  const grants = new Map<string, WorkspaceReadFileGrant>();
   for (const message of messages) {
     if (message.role !== "user" || typeof message.text !== "string") continue;
     for (const tag of standaloneAttachmentTags(message.text)) {
@@ -333,12 +334,12 @@ export function threadAttachmentReadRoots(
         if (!lstatSync(candidate).isFile()) continue;
         const realCandidate = realpathSync(candidate);
         if (dirname(realCandidate) !== realRoot) continue;
-        roots.add(realCandidate);
+        grants.set(candidate, { path: candidate, canonicalPath: realCandidate });
       } catch {
       }
     }
   }
-  return [...roots];
+  return [...grants.values()];
 }
 
 function containedBy(root: string, candidate: string): boolean {

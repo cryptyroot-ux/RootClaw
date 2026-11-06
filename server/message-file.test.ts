@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -10,7 +10,7 @@ import {
   messageFileDownloadName,
   messageAttachmentName,
   messageFileRoots,
-  threadAttachmentReadRoots,
+  threadAttachmentReadFiles,
   messageImageTargetAt,
   messageReferencesFile,
   listMessageFolder,
@@ -24,11 +24,13 @@ const suite = mkdtempSync(join(tmpdir(), "rootclaw-message-file-"));
 const workspace = join(suite, "workspace");
 const outside = join(suite, "outside");
 const attachments = join(suite, "attachments");
+const linkedAttachments = join(suite, "linked-attachments");
 
 beforeEach(() => {
   rmSync(workspace, { recursive: true, force: true });
   rmSync(outside, { recursive: true, force: true });
   rmSync(attachments, { recursive: true, force: true });
+  rmSync(linkedAttachments, { recursive: true, force: true });
   mkdirSync(workspace, { recursive: true });
   mkdirSync(outside, { recursive: true });
   mkdirSync(attachments, { recursive: true });
@@ -219,7 +221,7 @@ describe("message-linked files", () => {
     }
   });
 
-  it("collects thread attachment read roots only from valid user file attachments", () => {
+  it("collects thread attachment read files only from valid user file attachments", () => {
     const referenced = join(attachments, "referenced.pdf");
     const sibling = join(attachments, "sibling.pdf");
     const external = join(outside, "secret.pdf");
@@ -231,7 +233,7 @@ describe("message-linked files", () => {
     mkdirSync(directory);
     symlinkSync(external, symlink);
 
-    expect(threadAttachmentReadRoots([
+    expect(threadAttachmentReadFiles([
       { role: "user", text: `<attached-file path="${referenced}" name="Report.pdf" />` },
       { role: "user", text: `<attached-file path="${referenced}" />` },
       { role: "bot", text: `<attached-file path="${sibling}" />` },
@@ -243,7 +245,17 @@ describe("message-linked files", () => {
       { role: "user", text: `<attached-file path="${directory}" />` },
       { role: "user", text: `<attached-file path="${symlink}" />` },
       { role: "user", text: `<attached-file path="${sibling}" extra="yes" />` },
-    ], attachments)).toEqual([referenced]);
+    ], attachments)).toEqual([{ path: referenced, canonicalPath: realpathSync(referenced) }]);
+  });
+
+  it("keeps the configured attachment path when its store is reached through a symlink", () => {
+    symlinkSync(attachments, linkedAttachments);
+    const referenced = join(linkedAttachments, "linked-store.pdf");
+    writeFileSync(referenced, "synthetic attachment through a linked store");
+
+    expect(threadAttachmentReadFiles([
+      { role: "user", text: `<attached-file path="${referenced}" />` },
+    ], linkedAttachments)).toEqual([{ path: referenced, canonicalPath: realpathSync(join(attachments, "linked-store.pdf")) }]);
   });
 
   it("preserves the sanitized attachment display name", () => {
