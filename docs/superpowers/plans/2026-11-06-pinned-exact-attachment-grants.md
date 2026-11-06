@@ -120,27 +120,27 @@ git commit -m "fix: enforce pinned exact workspace read files"
 - Consumes: `WorkspaceReadFileGrant[]` through `WorkspaceToolsConfig.readFiles`.
 - Produces: `sandboxedShell(...): { file: string; args: string[]; extraFds: number[] }`; each exact attachment fd is passed to bubblewrap at child fd `3 + index`, while directory read roots remain path-based mounts.
 
-- [ ] **Step 1: Write the failing bubblewrap mount test**
+- [x] **Step 1: Write the failing bubblewrap mount test**
 
 Assert the generated arguments use `--ro-bind-fd` for the exact pinned file at its lexical message path, never use the attachment pathname as a mount source, never mount the attachment parent, and do not mount a replacement directory or link target. Retarget the lexical store symlink before generating the sandbox command and assert the stale grant is omitted or refused. In a real bubblewrap test, replace the canonical source pathname with an external symlink after `sandboxedShell` has opened and validated the grant but before spawning bubblewrap; assert the shell still reads only the content held by the opened fd and never the replacement target.
 
-- [ ] **Step 2: Run the policy tests and verify the expected failures**
+- [x] **Step 2: Run the policy tests and verify the expected failures**
 
 Run: `pnpm exec vitest run server/drivers/workspace-tools.test.ts -t "exact file shell mounts"`
 
 Expected: FAIL because the current bubblewrap path bind does not pin the source inode across command generation and mount setup.
 
-- [ ] **Step 3: Implement file-only bubblewrap mounts**
+- [x] **Step 3: Implement file-only bubblewrap mounts**
 
 Pass exact grants separately from `SandboxOptions.readable`. Open each lexical grant read-only, verify the opened descriptor resolves to `grant.canonicalPath`, and verify its descriptor is a regular file. Add it to `extraFds` and use `--ro-bind-fd` with the corresponding child descriptor number and the lexical message path. Update both foreground and background `spawn` calls to pass `extraFds` through stdio and close the parent descriptors after spawn setup, including error paths. If descriptor binding is unsupported, fail closed; never fall back to a pathname source. Create empty destination ancestors inside the sandbox as needed, but never bind a host parent directory. Ensure tests close descriptors returned by command generation when they do not spawn a process.
 
-- [ ] **Step 4: Run bubblewrap shell tests**
+- [x] **Step 4: Run bubblewrap shell tests**
 
 Run: `pnpm exec vitest run server/drivers/workspace-tools.test.ts -t "exact file shell mounts|confines a confined shell"`
 
 Expected: the exact synthetic file is mounted read-only from the opened descriptor; its sibling, descendants, stale symlink targets, and outside files are not mounted or readable. The deterministic post-open replacement test still reads the original opened file and never the external replacement.
 
-- [ ] **Step 5: Commit bubblewrap shell confinement**
+- [x] **Step 5: Commit bubblewrap shell confinement**
 
 ```sh
 git add server/drivers/workspace-tools.ts server/drivers/workspace-tools.test.ts

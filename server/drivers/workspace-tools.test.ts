@@ -411,6 +411,24 @@ describe("shell", () => {
       expect(args.slice(0, destination).join(" ")).toContain(`--dir ${dirname(grant.path)}`);
     });
 
+    it("numbers child descriptors in order when an earlier grant is stale", () => {
+      const stale = attachment();
+      const store = dirname(stale.canonicalPath);
+      const lexical = dirname(stale.path);
+      const second = { path: join(lexical, "second.txt"), canonicalPath: join(store, "second.txt") };
+      const third = { path: join(lexical, "third.txt"), canonicalPath: join(store, "third.txt") };
+      writeFileSync(second.canonicalPath, "SECOND");
+      writeFileSync(third.canonicalPath, "THIRD");
+      rmSync(stale.canonicalPath);
+      const program = build(`cat ${JSON.stringify(second.path)} ${JSON.stringify(third.path)}`, [stale, second, third]);
+      expect(program.args.flatMap((arg, index) => arg === "--ro-bind-fd" ? [[arg, program.args[index + 1], program.args[index + 2]]] : []))
+        .toEqual([["--ro-bind-fd", "3", second.path], ["--ro-bind-fd", "4", third.path]]);
+      expect(program.extraFds).toHaveLength(2);
+      const result = spawnSync(program.file, program.args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe", ...program.extraFds] });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toBe("SECONDTHIRD");
+    });
+
     it.each(["store symlink", "file symlink", "directory", "missing"])("omits a grant replaced by %s", (replacement) => {
       const grant = attachment();
       expect(build("true", [grant]).args).toContain(grant.path);

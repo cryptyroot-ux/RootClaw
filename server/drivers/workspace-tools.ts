@@ -417,8 +417,8 @@ export interface SandboxOptions {
 }
 
 /** The program and arguments that run `command` in `cwd`, writing only to `writable`.
- * The caller owns extraFds and keeps them open until the background child starts or the foreground child exits,
- * then closes them; an abandoned command closes them without spawning. */
+ * The caller owns extraFds and closes its copies once the child has inherited them; an abandoned command closes
+ * them without spawning. */
 export function sandboxedShell(command: string, cwd: string, writable: readonly string[], kind: Sandbox, options: SandboxOptions = {}): { file: string; args: string[]; extraFds: number[] } {
   const dirs = [...new Set(writable.filter((dir) => existsSync(dir)).map((dir) => realOrSelf(dir)))];
   if (kind === "bwrap") {
