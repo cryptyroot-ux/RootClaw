@@ -150,3 +150,45 @@ describe("bundled data-dashboards skill", () => {
     expect(Buffer.byteLength(template)).toBeLessThan(APP_LIMITS.htmlBytes / 4);
   });
 });
+
+describe("vendored Superpowers skills", () => {
+  const skills = loadBundledSkills(join(process.cwd(), "skills"));
+  const representativePrompts: Record<string, string> = {
+    brainstorming: "Help me design an approach for a new feature before building it",
+    "diagnosing-superpowers": "Diagnose why a skill is not triggering",
+    "dispatching-parallel-agents": "Fan out these independent subtasks to parallel agents",
+    "executing-plans": "Execute the implementation plan",
+    "finishing-a-development-branch": "Finish this branch and open a PR",
+    "receiving-code-review": "Address this code review feedback",
+    "requesting-code-review": "Request a code review for my PR",
+    "subagent-driven-development": "Implement this with subagent driven development",
+    "systematic-debugging": "Debug this failing test and find the root cause",
+    "test-driven-development": "Use red green refactor and write a test first",
+    "using-git-worktrees": "Create an isolated git worktree for this branch",
+    "using-superpowers": "Which skill should I use for this task?",
+    "verification-before-completion": "Before the PR, verify all tests pass before claiming this is done",
+    "writing-plans": "Write a multi-step implementation plan before coding",
+    "writing-skills": "Author a new SKILL.md for this workflow",
+  };
+
+  it("loads all 15 built-ins for every bot by default and auto-selects them by natural-language relevance", () => {
+    expect(Object.keys(representativePrompts).sort()).toEqual([
+      "brainstorming", "diagnosing-superpowers", "dispatching-parallel-agents", "executing-plans",
+      "finishing-a-development-branch", "receiving-code-review", "requesting-code-review",
+      "subagent-driven-development", "systematic-debugging", "test-driven-development",
+      "using-git-worktrees", "using-superpowers", "verification-before-completion", "writing-plans", "writing-skills",
+    ]);
+    const byId = new Map(skills.map((skill) => [skill.manifest.id, skill]));
+    for (const [id, prompt] of Object.entries(representativePrompts)) {
+      const skill = byId.get(id);
+      expect(skill, id).toBeDefined();
+      expect(skill!.manifest.defaultEnabled, id).toBe(true);
+      expect(skill!.manifest.requiredCapabilities, id).toEqual([]);
+      expect(selectBundledSkills(prompt, [], skills).map((selected) => selected.manifest.id), prompt).toContain(id);
+    }
+    expect(skills.map((skill) => skill.manifest.id).filter((id) => id in representativePrompts).sort())
+      .toEqual(Object.keys(representativePrompts).sort());
+    expect(selectBundledSkills("write a paragraph about photography", [], skills)
+      .filter((skill) => skill.manifest.id in representativePrompts).map((skill) => skill.manifest.id)).toEqual([]);
+  });
+});

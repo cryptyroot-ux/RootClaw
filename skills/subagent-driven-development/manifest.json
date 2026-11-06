@@ -1,0 +1,13 @@
+{
+  "id": "subagent-driven-development",
+  "name": "subagent-driven-development",
+  "version": "7.0.2",
+  "description": "Use when executing implementation plans with independent tasks in the current session",
+  "defaultEnabled": true,
+  "triggerTerms": [
+    "subagent driven",
+    "implement with subagents",
+    "delegate implementation to subagents"
+  ],
+  "requiredCapabilities": []
+}

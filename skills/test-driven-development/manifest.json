@@ -1,12 +1,15 @@
 {
   "id": "test-driven-development",
-  "name": "Test Driven Development",
-  "version": "1.0.0",
+  "name": "test-driven-development",
+  "version": "7.0.2",
   "description": "Use when implementing any feature or bugfix, before writing implementation code",
   "defaultEnabled": true,
   "triggerTerms": [
-    "test driven development",
-    "test-driven-development"
+    "write a test first",
+    "TDD",
+    "red-green-refactor",
+    "before implementing",
+    "test driven development"
   ],
   "requiredCapabilities": []
 }

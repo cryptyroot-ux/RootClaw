@@ -1,0 +1,14 @@
+{
+  "id": "dispatching-parallel-agents",
+  "name": "dispatching-parallel-agents",
+  "version": "7.0.2",
+  "description": "Use when facing 2+ independent tasks that can be worked on without shared state or sequential dependencies",
+  "defaultEnabled": true,
+  "triggerTerms": [
+    "parallel agents",
+    "fan out",
+    "independent subtasks",
+    "work in parallel"
+  ],
+  "requiredCapabilities": []
+}

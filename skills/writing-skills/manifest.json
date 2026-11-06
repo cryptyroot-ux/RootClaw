@@ -1,0 +1,14 @@
+{
+  "id": "writing-skills",
+  "name": "writing-skills",
+  "version": "7.0.2",
+  "description": "Use when creating new skills, editing existing skills, or verifying skills work before deployment",
+  "defaultEnabled": true,
+  "triggerTerms": [
+    "write a skill",
+    "author a skill",
+    "SKILL.md",
+    "create a skill guide"
+  ],
+  "requiredCapabilities": []
+}

@@ -3,9 +3,6 @@ name: verification-before-completion
 description: Use when about to claim work is complete, fixed, or passing, before committing or creating PRs - requires running verification commands and confirming output before making any success claims; evidence before assertions always
 ---
 
-> **RootClaw tool mapping:** "read a file" → `read_file`, "edit a file" → `edit_file`/`apply_patch`, "run a command" → `shell`, "write/create a file" → `write_file`, "search text" → `grep`, "find files" → `glob`, "list directory" → `list_dir`. Use these RootClaw tool names instead of generic read/edit/bash/write.
-
-
 # Verification Before Completion
 
 ## Overview

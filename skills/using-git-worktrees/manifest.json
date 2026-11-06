@@ -1,0 +1,14 @@
+{
+  "id": "using-git-worktrees",
+  "name": "using-git-worktrees",
+  "version": "7.0.2",
+  "description": "Use when starting feature work that needs isolation from current workspace or before executing implementation plans - ensures an isolated workspace exists via native tools or git worktree fallback",
+  "defaultEnabled": true,
+  "triggerTerms": [
+    "git worktree",
+    "isolated branch worktree",
+    "create a worktree",
+    "isolated worktree"
+  ],
+  "requiredCapabilities": []
+}

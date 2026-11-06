@@ -1,12 +1,16 @@
 {
   "id": "systematic-debugging",
-  "name": "Systematic Debugging",
-  "version": "1.0.0",
+  "name": "systematic-debugging",
+  "version": "7.0.2",
   "description": "Use when encountering any bug, test failure, or unexpected behavior, before proposing fixes",
   "defaultEnabled": true,
   "triggerTerms": [
-    "systematic debugging",
-    "systematic-debugging"
+    "bug",
+    "failing test",
+    "unexpected behavior",
+    "debug",
+    "root cause",
+    "regression"
   ],
   "requiredCapabilities": []
 }

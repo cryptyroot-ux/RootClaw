@@ -1,12 +1,15 @@
 {
   "id": "writing-plans",
-  "name": "Writing Plans",
-  "version": "1.0.0",
+  "name": "writing-plans",
+  "version": "7.0.2",
   "description": "Use when you have a spec or requirements for a multi-step task, before touching code",
   "defaultEnabled": true,
   "triggerTerms": [
-    "writing plans",
-    "writing-plans"
+    "implementation plan",
+    "multi-step plan",
+    "write a plan",
+    "before coding",
+    "plan this work"
   ],
   "requiredCapabilities": []
 }

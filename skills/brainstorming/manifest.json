@@ -1,12 +1,17 @@
 {
   "id": "brainstorming",
-  "name": "Brainstorming",
-  "version": "1.0.0",
+  "name": "brainstorming",
+  "version": "7.0.2",
   "description": "You MUST use this before any creative work - creating features, building components, adding functionality, modifying behavior, or planning anything new, in software or out of it (a talk, a business, a renovation).",
   "defaultEnabled": true,
   "triggerTerms": [
-    "brainstorming",
-    "brainstorming"
+    "design",
+    "approach",
+    "before building",
+    "new feature",
+    "what should we build",
+    "lay out options",
+    "brainstorm"
   ],
   "requiredCapabilities": []
 }
