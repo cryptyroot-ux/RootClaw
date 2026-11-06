@@ -421,17 +421,13 @@ const SYSTEM_DIRS = ["/usr", "/bin", "/sbin", "/lib", "/lib32", "/lib64", "/libx
 const TOOLCHAIN_ENV = ["NVM_DIR", "FNM_DIR", "PNPM_HOME", "COREPACK_HOME", "CARGO_HOME", "RUSTUP_HOME", "GOPATH", "VIRTUAL_ENV", "JAVA_HOME"];
 
 function pathEntries(path: string): string[] {
-  const entries: string[] = [];
-  let start = 0;
+  const entries: string[] = []; let start = 0;
   for (let index = 0; index < path.length; index++) {
-    const char = path[index];
-    if (char === ":" && index === start + 1 && /^[A-Za-z]$/.test(path[start] ?? "") && /[\\/]/.test(path[index + 1] ?? "")) continue;
-    if (char !== ":" && char !== ";") continue;
-    entries.push(path.slice(start, index));
-    start = index + 1;
+    if (path[index] === ":" && index === start + 1 && /^[A-Za-z]$/.test(path[start] ?? "") && /[\\/]/.test(path[index + 1] ?? "")) continue;
+    if (path[index] !== ":" && path[index] !== ";") continue;
+    entries.push(path.slice(start, index)); start = index + 1;
   }
-  entries.push(path.slice(start));
-  return entries;
+  entries.push(path.slice(start)); return entries;
 }
 
 export interface SandboxOptions {
