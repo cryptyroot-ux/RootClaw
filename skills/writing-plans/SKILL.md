@@ -3,6 +3,9 @@ name: writing-plans
 description: Use when you have a spec or requirements for a multi-step task, before touching code
 ---
 
+> **RootClaw tool mapping:** "read a file" → `read_file`, "edit a file" → `edit_file`/`apply_patch`, "run a command" → `shell`, "write/create a file" → `write_file`, "search text" → `grep`, "find files" → `glob`, "list directory" → `list_dir`. Use these RootClaw tool names instead of generic read/edit/bash/write.
+
+
 # Writing Plans
 
 ## Overview

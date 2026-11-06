@@ -3,6 +3,9 @@ name: systematic-debugging
 description: Use when encountering any bug, test failure, or unexpected behavior, before proposing fixes
 ---
 
+> **RootClaw tool mapping:** "read a file" → `read_file`, "edit a file" → `edit_file`/`apply_patch`, "run a command" → `shell`, "write/create a file" → `write_file`, "search text" → `grep`, "find files" → `glob`, "list directory" → `list_dir`. Use these RootClaw tool names instead of generic read/edit/bash/write.
+
+
 # Systematic Debugging
 
 ## Overview

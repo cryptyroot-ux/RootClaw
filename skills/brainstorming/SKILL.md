@@ -3,6 +3,9 @@ name: brainstorming
 description: "You MUST use this before any creative work - creating features, building components, adding functionality, modifying behavior, or planning anything new, in software or out of it (a talk, a business, a renovation)."
 ---
 
+> **RootClaw tool mapping:** "read a file" → `read_file`, "edit a file" → `edit_file`/`apply_patch`, "run a command" → `shell`, "write/create a file" → `write_file`, "search text" → `grep`, "find files" → `glob`, "list directory" → `list_dir`. Use these RootClaw tool names instead of generic read/edit/bash/write.
+
+
 # Brainstorming
 
 You are very good at building. You build what you believe your human

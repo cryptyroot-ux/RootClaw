@@ -3,6 +3,9 @@ name: test-driven-development
 description: Use when implementing any feature or bugfix, before writing implementation code
 ---
 
+> **RootClaw tool mapping:** "read a file" → `read_file`, "edit a file" → `edit_file`/`apply_patch`, "run a command" → `shell`, "write/create a file" → `write_file`, "search text" → `grep`, "find files" → `glob`, "list directory" → `list_dir`. Use these RootClaw tool names instead of generic read/edit/bash/write.
+
+
 # Test-Driven Development (TDD)
 
 ## Overview
