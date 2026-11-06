@@ -65,7 +65,11 @@ export class BudgetMeter {
   private warned = false;
   private readonly budget: TurnBudget;
   private readonly price: ModelPrice | null;
-  constructor(budget: TurnBudget, price: ModelPrice | null) { this.budget = budget; this.price = price; }
+  constructor(budget: TurnBudget, price: ModelPrice | null) {
+    if (budget.usd !== undefined && !price) throw new Error("Cannot enforce a USD budget without a model price.");
+    this.budget = budget;
+    this.price = price;
+  }
 
   add(usage: { input: number; output: number }): "ok" | "warn" | "stop" {
     this.spent.tokens += usage.input + usage.output;

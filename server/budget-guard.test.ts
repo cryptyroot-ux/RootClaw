@@ -36,12 +36,12 @@ describe("BudgetMeter: provider-reported usage against the turn's allowance", ()
     expect(meter.stopMessage()).toMatch(/turn token cap of 1,000 tokens/);
   });
 
-  it("prices usage with the model's price for a USD cap, and ignores USD without a price", () => {
+  it("prices usage with the model's price for a USD cap and refuses an unpriced USD budget", () => {
     const priced = new BudgetMeter({ usd: 0.01, warnAtPercent: 80, why: "x" }, { inputPerMillion: 1_000, outputPerMillion: 1_000 });
     expect(priced.add({ input: 5, output: 4 })).toBe("warn");
     expect(priced.add({ input: 2, output: 0 })).toBe("stop");
-    const unpriced = new BudgetMeter({ usd: 0.01, warnAtPercent: 80, why: "x" }, null);
-    expect(unpriced.add({ input: 1e9, output: 1e9 })).toBe("ok");
+    expect(() => new BudgetMeter({ usd: 0.01, warnAtPercent: 80, why: "x" }, null))
+      .toThrow(/Cannot enforce a USD budget without a model price/);
   });
 });
 
