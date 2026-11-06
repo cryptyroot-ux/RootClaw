@@ -110,10 +110,9 @@ One container for the server plus Caddy for HTTPS at `https://rootclaw.example.c
    ```sh
    git clone https://github.com/cryptyroot-ux/RootClaw && cd RootClaw/deploy
    cp .env.example .env
-   nano .env                # DOMAIN=rootclaw.example.com ; ENGINES=
+   nano .env                # DOMAIN=rootclaw.example.com
    ```
 
-   Leave `ENGINES` empty. It installs agent CLIs into the image at build time, and RootClaw no longer runs them; the example file still lists one.
 
 4. **Start it:**
 

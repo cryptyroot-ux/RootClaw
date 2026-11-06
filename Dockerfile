@@ -13,7 +13,6 @@
 # the edge.
 #
 #   docker build -t rootclaw .
-#   docker build --build-arg ENGINES="<npm packages>" -t rootclaw .   # opt-in extra CLIs; none by default
 #   docker build --target cloud-home -t rootclaw-cloud-home .
 #
 # HOME is the /data volume, so RootClaw's own state (~/.rootclaw: config,
@@ -162,10 +161,6 @@ CMD ["node", "/app/dist-server/cloud-home-start.js"]
 
 # The self-hosted server, last so a plain `docker build .` builds it.
 FROM runtime AS server
-# Opt-in extra npm CLIs for bots' shells (space-separated packages). Empty by
-# default: RootClaw's native engine needs none.
-ARG ENGINES=""
-RUN if [ -n "$ENGINES" ]; then HOME=/tmp/rootclaw-build-home npm install -g $ENGINES && rm -rf /tmp/rootclaw-build-home /tmp/node-compile-cache; fi
 COPY --from=build --chown=rootclaw:rootclaw /src/dist-native/duckdb/server ./duckdb
 COPY --from=build --chown=rootclaw:rootclaw /src/dist-server ./dist-server
 COPY --from=build --chown=rootclaw:rootclaw /src/dist ./dist

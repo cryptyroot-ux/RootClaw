@@ -4,8 +4,6 @@ services:
     build:
       context: ../..
       dockerfile: deploy/podman/Containerfile
-      args:
-        ENGINES: ${ENGINES:-}
     image: localhost/rootclaw-podman:${ROOTCLAW_IMAGE_TAG:-local}
     # Collects exited browser processes; Chrome's shared memory as on the
     # desktop containers (docs/browser-packaging.md, "Process hygiene").

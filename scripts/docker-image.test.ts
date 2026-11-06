@@ -53,8 +53,7 @@ describe("container images", () => {
     expect(all.at(-1)!.name).toBe("server");
     expect(all.find(s => s.name === "cloud-home")!.from).toBe("runtime");
     expect(all.find(s => s.name === "server")!.from).toBe("runtime");
-    // the build arg docker-compose.yml passes keeps its name and empty default
-    expect(chain("server")).toContainEqual({ op: "ARG", args: 'ENGINES=""' });
+    expect(chain("server").filter(step => step.op === "ARG" && step.args.startsWith("ENGINES=")).length).toBe(0);
   });
 
   it("stages both Linux DuckDB arches and selects only the matching server tree", () => {
@@ -152,9 +151,9 @@ describe("container images", () => {
       const steps = chain(target);
       const heavy = steps.flatMap((step, i) => (npmInstall(step) ? [i] : []));
       const app = steps.flatMap((step, i) => (step.op === "COPY" && !step.args.includes("--from=edge") ? [i] : []));
-      // agent-browser + Chrome, then pnpm in the Cloud home's tools layer or the server's opt-in ENGINES step, then
+      // agent-browser + Chrome, then pnpm in the Cloud home's tools layer, then
       // the app files (and the Cloud home's Caddyfile)
-      expect(heavy, target).toHaveLength(2);
+      expect(heavy, target).toHaveLength(target === "cloud-home" ? 2 : 1);
       const fromBuild = steps.flatMap((step, i) => (step.op === "COPY" && step.args.includes("--from=build") ? [i] : []));
       expect(fromBuild, target).toHaveLength(4);
       expect(Math.max(...heavy), target).toBeLessThan(Math.min(...app));
@@ -168,7 +167,7 @@ describe("container images", () => {
 
   it("leaves no npm or compile cache in a layer: each install removes its own in the same step", () => {
     const installs = shipped().filter(npmInstall);
-    expect(installs.length).toBeGreaterThanOrEqual(3);
+    expect(installs.length).toBeGreaterThanOrEqual(2);
     for (const { args } of installs) {
       const cache = /--cache (\S+)/.exec(args)?.[1] ?? /\bHOME=(\S+) npm install\b/.exec(args)?.[1];
       expect(cache, args).toMatch(/^\/tmp\//);
@@ -218,6 +217,16 @@ describe("container images", () => {
     const apt = chain("runtime").find(step => step.op === "RUN" && step.args.startsWith("apt-get update"))!;
     expect(apt.args).toContain("bubblewrap");
     expect(apt.args).toContain("bwrap --version");
+  });
+
+  it("builds and asserts the server image in the manual image workflow", () => {
+    const workflow = parse(readFileSync(new URL("../.github/workflows/docker.yml", import.meta.url), "utf8"));
+    const steps = workflow.jobs["build-and-smoke"].steps;
+    expect(steps.find(step => step.name === "Build the server image").run).toContain("docker build --target server");
+    const assertions = steps.find(step => step.name === "Assert the built server image contract").run;
+    expect(assertions).toContain("docker image inspect rootclaw-server:ci");
+    expect(assertions).toContain("docker run --rm --entrypoint bwrap rootclaw-server:ci --version");
+    expect(assertions).toContain("/api/health");
   });
 
   it("hands the Cloud home's server every setting the image's ENV gives it", () => {
@@ -297,25 +306,27 @@ describe("container images", () => {
     expect(browser).toContain("ln -s /opt/rootclaw-browser/.agent-browser/browsers/chrome-*/chrome /opt/rootclaw-browser/chrome");
   });
 
-  // RootClaw's engine is native: it talks to model providers over their APIs, so no image or compose default installs
-  // an external engine CLI (Claude Code, Codex, Grok Build). ENGINES stays an opt-in, empty by default.
-  it("installs no external engine CLI by default in any image or compose file", () => {
+  it("contains no removed engine CLI install path, SDK residue, or build argument", () => {
     const external = /claude-code|@openai\/codex|x\.ai\/cli|\bgrok\b/i;
     for (const target of ["server", "cloud-home"]) {
       const steps = chain(target);
       expect(steps.filter(step => step.op !== "ENV" && external.test(step.args)), target).toEqual([]);
-      expect(steps.filter(step => step.op === "ARG" && /^(CLOUD_HOME_ENGINES|ENGINES_CACHE_TAG|GROK_VERSION)=/.test(step.args)), target).toEqual([]);
+      expect(steps.filter(step => step.op === "ARG" && /^(CLOUD_HOME_ENGINES|ENGINES_CACHE_TAG|GROK_VERSION|ENGINES)=/.test(step.args)), target).toEqual([]);
+      expect(steps.some(step => step.op === "RUN" && /npm install -g \$ENGINES/.test(step.args)), target).toBe(false);
     }
     expect(chain("cloud-home").filter(step => step.op === "ARG" && step.args.startsWith("ENGINES="))).toEqual([]);
     const text = (file: string) => readFileSync(new URL(file, import.meta.url), "utf8");
-    for (const file of ["../deploy/local/Dockerfile", "../deploy/podman/Containerfile"]) {
-      expect(text(file), file).toMatch(/^ARG ENGINES=""$/m);
+    for (const file of ["../Dockerfile", "../deploy/local/Dockerfile", "../deploy/podman/Containerfile"]) {
+      expect(text(file), file).not.toMatch(/^ARG ENGINES=/m);
       expect(text(file).split("\n").filter(line => !/^\s*#/.test(line) && external.test(line)), file).toEqual([]);
     }
     for (const file of ["../compose.yaml", "../deploy/podman/compose.yaml"]) {
-      expect(parse(text(file)).services.rootclaw.build.args.ENGINES, file).toBe("${ENGINES:-}");
+      expect(parse(text(file)).services.rootclaw.build?.args?.ENGINES, file).toBeUndefined();
     }
-    expect(text("../.env.example")).toMatch(/^ENGINES=$/m);
+    expect(text("../.env.example")).not.toMatch(/^ENGINES=/m);
+    expect(JSON.parse(text("../package.json")).dependencies).not.toHaveProperty("@muse-code/sdk");
+    expect(text("../server/legacy-engines.ts")).toContain("MIGRATION DATA ONLY");
+    expect(text("../.github/workflows/docker.yml")).not.toMatch(/CLOUD_HOME_ENGINES|ENGINES_CACHE_TAG|npm view|@anthropic-ai\/claude-code|@openai\/codex/);
   });
 
   // An init collects browser processes whose parents exit, and Chrome gets the

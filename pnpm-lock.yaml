@@ -45,9 +45,6 @@ importers:
       '@lezer/highlight':
         specifier: 1.2.5
         version: 1.2.5
-      '@muse-code/sdk':
-        specifier: 1.4.6
-        version: 1.4.6(@types/node@26.2.0)
       '@novnc/novnc':
         specifier: 1.7.0
         version: 1.7.0
@@ -1567,15 +1564,6 @@ packages:
       react:
         optional: true
       react-dom:
-        optional: true
-
-  '@muse-code/sdk@1.4.6':
-    resolution: {integrity: sha512-pUENCnmn9q4e2xMXicdRbzbSMdH1fiyTIh5fVBXuxNdNP2ZKA0kwQz5fWMxIB8wzxS2ZyH0v27dvfbZuGuoUjg==}
-    engines: {node: '>=20'}
-    peerDependencies:
-      '@types/node': '>=20'
-    peerDependenciesMeta:
-      '@types/node':
         optional: true
 
   '@next/env@16.4.3':
@@ -6552,10 +6540,6 @@ snapshots:
     optionalDependencies:
       react: 19.2.8
       react-dom: 19.2.8(react@19.2.8)
-
-  '@muse-code/sdk@1.4.6(@types/node@26.2.0)':
-    optionalDependencies:
-      '@types/node': 26.2.0
 
   '@next/env@16.4.3': {}
 

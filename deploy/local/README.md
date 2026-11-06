@@ -10,10 +10,8 @@ To customize, copy `.env.example` to `.env` in the repository root.
 The `.env` file is ignored by Git. Shell environment variables take precedence.
 `ROOTCLAW_HTTP_PORT` changes the host port and the default public URL.
 Internal service ports remain fixed inside the shared network namespace.
-RootClaw's engine is native and talks to model providers over their APIs, so
-no external engine CLI is installed. `ENGINES` (empty by default) optionally
-adds space-separated npm packages for bots' shells. Add a provider key in
-Settings → API keys, or with `rootclaw engine set` (below).
+RootClaw's engine is native and talks to model providers over their APIs; add
+a provider key in Settings → API keys, or with `rootclaw engine set` (below).
 
 For Tailscale Serve, set `ROOTCLAW_PUBLIC_URL` to your HTTPS URL and
 `ROOTCLAW_HTTPS_HOST` to its hostname without scheme or path. Configure Tailscale
