@@ -5,6 +5,11 @@ services:
     # desktop containers (docs/browser-packaging.md, "Process hygiene").
     init: true
     shm_size: 512m
+    # The container's rootclaw user needs the host docker group (gid 988 on
+    # this VPS) to reach /var/run/docker.sock for private desktops. Adjust the
+    # gid to match `getent group docker` on the host.
+    group_add:
+      - "988"
     build:
       context: ./deploy/local
       args:
