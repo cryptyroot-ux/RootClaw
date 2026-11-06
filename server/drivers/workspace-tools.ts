@@ -261,7 +261,9 @@ export function createWorkspacePaths(config: WorkspaceToolsConfig) {
       }
       const write = mode === "write";
       if (!lexicalRoots(write).some((dir) => within(dir, absolute))) {
-        throw new WorkspacePathError(`${raw} is outside the workspace (${root})${write && (config.readRoots ?? []).some((dir) => within(resolve(dir), absolute)) ? "; that folder is read-only" : ""}.`);
+        const readOnly = write && ((config.readRoots ?? []).some((dir) => within(resolve(dir), absolute))
+          || (config.readFiles ?? []).some((grant) => resolve(grant.path) === absolute));
+        throw new WorkspacePathError(`${raw} is outside the workspace (${root})${readOnly ? "; that folder is read-only" : ""}.`);
       }
       const real = realTarget(absolute);
       if (!realRoots(write).some((dir) => within(dir, real))) {
