@@ -31,7 +31,7 @@ Verification is against this base, not the audit's older pinned commit. “Confi
 - All 15 manifests set `defaultEnabled: true` and `requiredCapabilities: []`; skills remain relevance-triggered through `selectBundledSkills` rather than injected on unrelated turns. Trigger tests use natural-language prompts for every skill and assert no Superpowers skills appear for an unrelated photography prompt.
 - Added `skills/ATTRIBUTION-superpowers.md` and an identical copy of the upstream MIT license at `skills/superpowers-LICENSE`; `using-superpowers/SKILL.md` includes a concise RootClaw tool-mapping note.
 - Verification: `pnpm exec vitest run server/skill-library.test.ts` (13 passed), `pnpm typecheck`, `pnpm exec oxlint --deny-warnings server/skill-library.test.ts`; file inventory confirmed no upstream files missing and license bytes identical.
-- Commit and PR status to be recorded after the separate owner-request commit and push.
+- Owner-request bundle commit: `2b3b128` (`feat: vendor obra/superpowers skills as default bundled`). PR lookup before push found none; branch push/PR creation follows.
 
 ## CI failure table
 
