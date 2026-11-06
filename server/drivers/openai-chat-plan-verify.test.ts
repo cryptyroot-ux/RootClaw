@@ -24,7 +24,7 @@ const MULTI = "First investigate why the build fails, then fix the config and ru
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
 
-async function fixture(rounds: Array<"plan" | "status" | "answer">, verdicts: string[] = [], failRound = -1) {
+async function fixture(rounds: Array<"plan" | "status" | "answer">, verdicts: string[] = [], failRound = -1, verifyCostUsd = 0) {
   let failed = false;
   const streamed: Body[] = [];
   const checks: Body[] = [];
@@ -36,7 +36,7 @@ async function fixture(rounds: Array<"plan" | "status" | "answer">, verdicts: st
     if (body.stream === false) {
       checks.push(body);
       response.setHeader("content-type", "application/json");
-      response.end(JSON.stringify({ choices: [{ message: { content: verdicts[checks.length - 1] ?? '{"verdict":"pass","missing":[]}' }, finish_reason: "stop" }], usage: { prompt_tokens: 50, completion_tokens: 10 } }));
+      response.end(JSON.stringify({ choices: [{ message: { content: verdicts[checks.length - 1] ?? '{"verdict":"pass","missing":[]}' }, finish_reason: "stop" }], usage: { prompt_tokens: 50, completion_tokens: 10, ...(verifyCostUsd ? { cost: verifyCostUsd } : {}) } }));
       return;
     }
     if (streamed.length === failRound && !failed) { failed = true; response.statusCode = 503; response.end("{}"); return; }
@@ -112,6 +112,13 @@ describe("planner/verifier in a native turn", () => {
     expect(check.max_tokens).toBe(200);
     expect(check.messages).toHaveLength(1);
     expect(String(check.messages[0]!.content)).not.toContain("You are a bot.");
+  });
+
+  it("accounts verifier usage and stops when the provider-reported charge reaches the USD cap", async () => {
+    const f = await fixture(["plan", "answer"], [], -1, 0.02);
+    const done = await f.run({ planVerify: ON, budget: { usd: 0.001, warnAtPercent: 80, why: "turn spend cap", price: { inputPerMillion: 1, outputPerMillion: 1 } } });
+    expect(done).toMatchObject({ ok: true, stopReason: "budget", cost: 0.02 });
+    expect(f.recorder.events.some((event) => event.type === "runtime.notice" && /reached its budget/.test(String((event as { message?: string }).message)))).toBe(true);
   });
 
   it("sends a failed check back once, then ends unverified with a note", async () => {

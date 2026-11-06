@@ -43,6 +43,11 @@ describe("BudgetMeter: provider-reported usage against the turn's allowance", ()
     expect(() => new BudgetMeter({ usd: 0.01, warnAtPercent: 80, why: "x" }, null))
       .toThrow(/Cannot enforce a USD budget without a model price/);
   });
+
+  it("uses provider-reported cost instead of estimating when available", () => {
+    const meter = new BudgetMeter({ usd: 0.01, warnAtPercent: 80, why: "x" }, { inputPerMillion: 1, outputPerMillion: 1 });
+    expect(meter.add({ input: 1, output: 0, costUsd: 0.02 })).toBe("stop");
+  });
 });
 
 describe("BudgetMeter.wouldExceed: pre-call check of the next prompt", () => {

@@ -4,6 +4,7 @@ import type { ModelPrice } from "./prices.ts";
 import { readUsage } from "./usage-ledger.ts";
 
 export interface BudgetCap { tokens?: number; usd?: number }
+export class BudgetLimitReached extends Error {}
 /** What one turn may still spend: the tightest cap, and which one that is. */
 export interface TurnBudget { tokens?: number; usd?: number; warnAtPercent: number; why: string; price?: ModelPrice | null }
 type Spent = { tokens: number; usd: number };
@@ -71,9 +72,11 @@ export class BudgetMeter {
     this.price = price;
   }
 
-  add(usage: { input: number; output: number }): "ok" | "warn" | "stop" {
+  add(usage: { input: number; output: number; costUsd?: number }): "ok" | "warn" | "stop" {
     this.spent.tokens += usage.input + usage.output;
-    if (this.price) this.spent.usd += (usage.input * this.price.inputPerMillion + usage.output * this.price.outputPerMillion) / 1_000_000;
+    const actualCost = usage.costUsd;
+    if (actualCost !== undefined) this.spent.usd += actualCost;
+    else if (this.price) this.spent.usd += (usage.input * this.price.inputPerMillion + usage.output * this.price.outputPerMillion) / 1_000_000;
     const share = Math.max(
       this.budget.tokens !== undefined ? this.spent.tokens / Math.max(this.budget.tokens, 1e-9) : 0,
       this.budget.usd !== undefined && this.price ? this.spent.usd / Math.max(this.budget.usd, 1e-12) : 0,
