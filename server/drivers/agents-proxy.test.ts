@@ -961,12 +961,13 @@ describe("agents-proxy MCP surface", () => {
     const list = await rpc("tools/list");
     const start = list.result.tools.find((tool: { name: string }) => tool.name === "start_thread");
     expect(start.inputSchema.required).toEqual(["title", "message"]);
-    expect(Object.keys(start.inputSchema.properties)).toEqual(["title", "message", "bot_id", "folder"]);
+    expect(Object.keys(start.inputSchema.properties)).toEqual(["title", "message", "bot_id", "folder", "model_selection"]);
     expect(start.inputSchema.properties.bot_id).toEqual({ type: "string", enum: ["bot-asker"], description: "Leave out, or use your own bot ID. For teammates use coordinate_bots." });
     expect(start.description).toContain("Open a separate job on yourself");
     expect(start.description).toContain('use coordinate_bots for teammates (thread "new" opens a fresh thread on them)');
     expect(start.description).toContain("do not retry it");
     expect(start.description).not.toMatch(/\b(delegate_bot|ask_bot)\b/);
+    expect(start.inputSchema.properties.model_selection.required).toEqual(["instanceId", "model"]);
   });
 
   it("start_thread on a teammate is a hand-off into a fresh thread: the receipt's thread and assignment id, no deprecation line", async () => {
@@ -1012,6 +1013,16 @@ describe("agents-proxy MCP surface", () => {
     const failed = await callTool("start_thread", { title: "QA: PR #3", message: "Review the reset fix." });
     expect(failed.result.isError).toBe(true);
     expect(failed.result.content[0].text).toContain("could not start: provider unavailable");
+  });
+
+  it("start_thread forwards a selected model and rejects malformed selections before the request", async () => {
+    const before = threadCalls;
+    const invalid = await callTool("start_thread", { title: "Review", message: "go", model_selection: { model: "m" } });
+    expect(invalid.result.isError).toBe(true);
+    expect(threadCalls).toBe(before);
+    const selection = { instanceId: "provider-1", model: "model-1" };
+    await callTool("start_thread", { title: "Review", message: "go", model_selection: selection });
+    expect(lastThreadBody.modelSelection).toEqual(selection);
   });
 
   it("start_thread refuses a missing title or message locally, and hands a harness refusal to the model", async () => {

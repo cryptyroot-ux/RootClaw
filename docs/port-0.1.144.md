@@ -81,3 +81,27 @@ Target remains `v0.1.144` (`dad50e140ef7f332ef101ae93aff8e9e0a83343b`). Candidat
 - `git diff --check`: passed.
 - Isolated fake-engine fixture: `doctor --url http://127.0.0.1:21216` reported connected and no problems; fixture was stopped afterward.
 - Logo/icon changes and Phase 5 stubs were not touched. No external engines were used.
+
+## Batch 4 — skills and tools
+
+- Target: `v0.1.144` (`dad50e140ef7f332ef101ae93aff8e9e0a83343b`); branch `port/0144-skills-tools`, stacked on `fix/memory-upkeep-lifecycle-test` at PR #34 head `107ebc97da374f6b1a463b54797cc08b0880f12f`.
+
+| Upstream SHA | Ancestry | Decision | Port / reason | Focused tests |
+|---|---|---|---|---|
+| `bd5b2b214f04c0173a936a97408201e1ac55d221` | Ancestor | AMBIL | Skills can be named at the beginning or within a message, multiple skills can run once, and composer suggestions work at the caret while built-ins remain leading-only. Adapted to RootClaw's bot/library/imported/native skills and built-in command set. | `server/skill-command.test.ts`, `server/native-skills.test.ts`, `src/lib/composer-commands.test.ts`, `src/components/Composer.slash.test.ts` (19 passed). |
+| `d58ef29f8e1e5f1a1a710f88a3ab3a68d92d2b59` | Ancestor | AMBIL | Added a social-post preview skill and template; folder-page videos are recorded by file identity and streamed by range only while the same file remains. Video paths are excluded from publishing. Added MiniMock/Lucide notices. | `server/page-files.test.ts`, `server/chat-apps.test.ts`, `server/skill-social-posts.test.ts`, `src/lib/social-posts-template.test.ts` (55 passed). |
+| `ca3b73be3803d7f0c90e458fa380dbf6df483007` | Ancestor | AMBIL | `start_thread` on the same bot can request an available model selection; validation reuses provider/model and proposal rules, and teammates cannot receive the option. Catalog golden updated. | `server/drivers/agents-proxy.test.ts`, `server/drivers/agents-catalog-wire.test.ts` (207 passed). |
+| `9e35731d9d152423f1bbcba83da3b0582f3e921d` | Ancestor | AMBIL | `show_html` and `update_html` accept `frameless`; default framing is unchanged and omitted update options preserve the current frame. RootClaw's existing app renderer already respected `border: false`. | `server/chat-apps.test.ts` (32 passed). |
+| `d602f986086d772dde34c8da82015d09199605b0` | Not an ancestor | LEWATI | Provider-independent email sending is after the target tag; excluded by the ancestry rule. No files changed for this item. | None. |
+
+### Batch 4 verification
+
+- Focused unit tests passed: `server/skill-command.test.ts`, `server/native-skills.test.ts`, `src/lib/composer-commands.test.ts`, `src/components/Composer.slash.test.ts`, `server/page-files.test.ts`, `server/chat-apps.test.ts`, `server/skill-social-posts.test.ts`, and `src/lib/social-posts-template.test.ts` (8 files, 74 tests); `server/drivers/agents-proxy.test.ts` and `server/drivers/agents-catalog-wire.test.ts` passed separately (2 files, 207 tests).
+- `pnpm typecheck`: passed.
+- Touched-file `oxlint --deny-warnings` and `git diff --check`: passed.
+- Isolated fixture launched with `scripts/control-rootclaw.ts launch`; `pnpm control:rootclaw doctor --url http://127.0.0.1:22342` reported connected with no problems; fixture was stopped afterward.
+- CI review found the generated `shared/app-frame/app-host.html` had not been refreshed for the frameless tool schema. Regenerated with `node --experimental-strip-types scripts/build-app-host.ts`; `shared/app-frame/host-page.test.ts` passed (7 tests).
+- Initial PR CI also reported Windows browser S4 tab cleanup failures in `server/browser/cdp/s4-pages.e2e.test.ts`; no browser/CDP files are changed by this batch. Treat that result separately from the app-host generation mismatch and verify on the next CI run.
+- `pnpm audit` ran before any dependency changes; no dependency was added.
+- `server/folder-pages.e2e.test.ts` was attempted once but its dashboard test failed before assertions because the scripted fixture produced no tool evidence. Whether this is a baseline failure is unverified. No fixture or product code changes were made in response; record as a validation limitation.
+- Logo/icon changes and Phase 5 stubs were not touched. No external engines were used.

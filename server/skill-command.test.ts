@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { enabledSkillFile, expandSkillCommandTurnText, installSkill, setSkillEnabled } from "./skills.ts";
 import { workspaceDir } from "./workspace.ts";
-import { BUILT_IN_SLASH_COMMANDS, offersSkillCommand, parseSkillCommand } from "../shared/skill-command.ts";
+import { BUILT_IN_SLASH_COMMANDS, offersSkillCommand, parseSkillCommand, skillMentions } from "../shared/skill-command.ts";
 
 const SKILL = (name: string) =>
   `---\nname: ${name}\ndescription: Writes the weekly standup note.\n---\n\n# Standup\n\nSummarize {input} as three bullets.\n`;
@@ -21,6 +21,7 @@ describe("parseSkillCommand", () => {
     expect(parseSkillCommand("/standup", ["standup"])).toEqual({ name: "standup", request: "" });
     expect(parseSkillCommand("/standup  the billing work\nand more", ["standup"])).toEqual({ name: "standup", request: "the billing work\nand more" });
     expect(parseSkillCommand("  /weekly-2 go", ["weekly-2"])).toEqual({ name: "weekly-2", request: "go" });
+    expect(parseSkillCommand("/standup.", ["standup"])).toEqual({ name: "standup", request: "" });
   });
 
   it("leaves anything else as ordinary text", () => {
@@ -37,6 +38,11 @@ describe("parseSkillCommand", () => {
     }
     expect(offersSkillCommand("standup")).toBe(true);
   });
+
+  it("finds enabled skill commands anywhere without treating paths or punctuation as names", () => {
+    expect(skillMentions("write it with /standup, then /review.")).toEqual(["standup", "review"]);
+    expect(skillMentions("open /standup.txt or notes/standup")).toEqual([]);
+  });
 });
 
 describe("expandSkillCommandTurnText", () => {
@@ -49,6 +55,9 @@ describe("expandSkillCommandTurnText", () => {
     expect(text).toContain("Request: the billing work");
     expect(text).toContain("{input}");
     expect(expandSkillCommandTurnText(bot, "/standup")).toContain("There is no further request");
+    expect(expandSkillCommandTurnText(bot, "write up the billing work with /standup please")).toContain(
+      `Read ${JSON.stringify(file)}`,
+    );
   });
 
   it("passes a disabled skill, an unknown name and plain text through", () => {

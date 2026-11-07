@@ -118,6 +118,19 @@ describe("show_html", () => {
   });
 });
 
+describe("a frameless page", () => {
+  it("keeps its frame by default and only changes it when requested", () => {
+    const { call, row } = setup();
+    call({ tool: "show_html", html: PAGE, title: "Framed" });
+    expect(row("m1").app).toMatchObject({ border: true });
+    call({ tool: "show_html", html: PAGE, title: "Inline", frameless: true });
+    expect(row("m2").app).toMatchObject({ border: false });
+    call({ tool: "update_html", app_id: "m2", html: "<p>New numbers</p>" });
+    expect(row("m2").app).toMatchObject({ border: false, rev: 1 });
+    expect(call({ tool: "show_html", html: PAGE, title: "Bad", frameless: "yes" })).toMatchObject({ ok: false, status: 400 });
+  });
+});
+
 describe("update_html", () => {
   it("replaces the page in place: a new document, the next revision, the title kept unless given, context dropped", () => {
     const { call, row, store } = setup();
