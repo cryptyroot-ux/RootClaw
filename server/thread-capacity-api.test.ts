@@ -298,7 +298,12 @@ describe("per-bot thread capacity through an isolated HTTP fixture (native engin
     expect((await api("PATCH", `/api/bots/${botId}/tasks/${first}`, { approvalMode: "ask" })).status).toBe(200);
     // This turn asks for a shell command at once; under Ask it waits on the person's card, holding its slot.
     // Anchored to the person's words: other threads' prompts quote this message under "Your recent work".
-    fixture.fakeChat.set({ routes: [{ match: "APPROVAL_HOLDS_SLOT\\s*$", mode: "happy", toolCalls: [{ name: "shell", input: { command: "ls -la ./dist" } }] }] });
+    // A failed shell on this loopback model asks for another round in the same turn. That round must finish
+    // here; the default slow gate would keep the slot and the queued thread would never start.
+    fixture.fakeChat.set({ routes: [
+      { match: "APPROVAL_HOLDS_SLOT\\s*$", mode: "happy", toolCalls: [{ name: "shell", input: { command: "ls -la ./dist" } }] },
+      { match: "Do not report results you did not get\\.\\]\\s*$", mode: "happy" },
+    ] });
     expect((await send(botId, first!, "APPROVAL_HOLDS_SLOT")).body.queued).toBeUndefined();
     await expect.poll(async () => (await botState(botId)).tasks.find((task: any) => task.threadId === first).activity, { timeout: 15_000 }).toBe("waiting-on-you");
     expect(await busyThreads(botId)).toEqual([first]);
