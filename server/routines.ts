@@ -9,6 +9,7 @@ import { redactSecretsInText } from "./redact.ts";
 import { activeRunsOf, nextDueOf, wakeHoldOf } from "./routine-due.ts";
 import type { GroupGoalRunStatus } from "../shared/group-goal-run.ts";
 import type { RoutineRequestOperation } from "../shared/routine-request.ts";
+import type { ModelSelection } from "../shared/wire.ts";
 import { intervalAllowsOccurrence, intervalHasRestrictions, isSameLocalDay, latestIntervalOccurrence } from "./routine-intervals.ts";
 import { cloneSchedule, limitResetOccurrence, mergeScheduleUpdate, nextOccurrence, RoutineScheduleError, type RoutineSchedule, type RoutineScheduleInput } from "./routine-schedules.ts";
 import { runsOnce } from "../shared/limit-reset.ts";
@@ -63,6 +64,7 @@ export interface Routine {
   checks?: RoutineCheck[];
   access?: RoutineAccess;
   deliver?: RoutineDelivery;
+  modelSelection?: ModelSelection;
   checkedAt?: number;
   checkTrouble?: string;
   wakeAt?: number;
@@ -177,6 +179,7 @@ export interface RoutineInput {
   checks?: RoutineCheck[] | null;
   access?: RoutineAccess | null;
   deliver?: RoutineDelivery | null;
+  modelSelection?: ModelSelection | null;
   resultsThreadId?: string | null;
 }
 

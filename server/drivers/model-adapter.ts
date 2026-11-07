@@ -40,6 +40,7 @@ export interface Completion {
   finishReason: string | null;
   protocolReasoning: string;
   protocolReasoningDetails: Record<string, unknown>[];
+  responseOutput?: Record<string, unknown>[];
 }
 
 export type DeltaKind = "assistant_text" | "reasoning_text";
