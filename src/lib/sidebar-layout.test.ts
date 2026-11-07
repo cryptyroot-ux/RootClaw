@@ -22,9 +22,17 @@ import {
   userSectionId,
   userSectionName,
   withPrimaryTile,
+  activeBotsFirst,
 } from "./sidebar-layout";
 
 describe("sidebar virtual sections", () => {
+  it("moves active bots to the front of each displayed list without changing saved lists", () => {
+    const parts = { pinnedBots: ["idle", "working"], sectionedBots: ["waiting", "other"], unsectionedBots: ["first", "busy"] };
+    const shown = activeBotsFirst(parts, (bot) => ["working", "waiting", "busy"].includes(bot));
+    expect(shown).toEqual({ pinnedBots: ["working", "idle"], sectionedBots: ["waiting", "other"], unsectionedBots: ["busy", "first"] });
+    expect(parts).toEqual({ pinnedBots: ["idle", "working"], sectionedBots: ["waiting", "other"], unsectionedBots: ["first", "busy"] });
+  });
+
   it("keeps reserved labels separate from identically named user sections", () => {
     for (const name of ["Pinned", "pinned", "channels", "bots", "bot-chats", "Bot Chats"]) {
       const id = userSectionId(name);

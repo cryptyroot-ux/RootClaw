@@ -136,6 +136,14 @@ export function withPrimaryTile<T extends SidebarBot>(parts: ReturnType<typeof p
   return { ...parts, primary, unsectionedChief: null, pinnedBots: others(parts.pinnedBots), unsectionedBots: others(parts.unsectionedBots) };
 }
 
+export function activeBotsFirst<T>(parts: { pinnedBots: T[]; sectionedBots: T[]; unsectionedBots: T[] }, active: (bot: T) => boolean) {
+  const first = (bots: T[]) => {
+    const flags = bots.map(active);
+    return [...bots.filter((_, index) => flags[index]), ...bots.filter((_, index) => !flags[index])];
+  };
+  return { pinnedBots: first(parts.pinnedBots), sectionedBots: first(parts.sectionedBots), unsectionedBots: first(parts.unsectionedBots) };
+}
+
 export function partitionSidebarGroups<T extends SidebarGroup>(groups: T[]) {
   const botChats = groups.filter((group) => Boolean(group.dm));
   const rooms = groups.filter((group) => !group.dm);

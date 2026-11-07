@@ -51,3 +51,33 @@
 - `pnpm exec oxlint --deny-warnings server/drivers/openai-chat-protocol.ts server/drivers/openai-chat-protocol.test.ts`: passed.
 - `git diff --check`: passed.
 - `pnpm exec vitest run server/drivers/openai-chat-protocol.test.ts server/drivers/openai-chat-tools.test.ts server/openai-tools.e2e.test.ts`: the two driver files passed, but the existing end-to-end file had 3 failures (155 passed, 3 failed total). Each failure asserts that the prompt omits `File locations for this bot`; the test file and prompt construction are unchanged by this port. This is recorded as a blocker for claiming the full acceptance flow green; tests were not weakened.
+
+## Batch 3 — core fixes
+
+Target remains `v0.1.144` (`dad50e140ef7f332ef101ae93aff8e9e0a83343b`). Candidate ancestry was checked with `git merge-base --is-ancestor <sha> dad50e140ef7f332ef101ae93aff8e9e0a83343b` against the fetched upstream tag. The upstream tag resolves to the stated target SHA.
+
+| Upstream SHA | Ancestry | Decision | Port / reason | Focused tests |
+|---|---|---|---|---|
+| `ee7d52ce66b6c852aaf6df8c1015c668e3b2c8d0` | Ancestor | AMBIL | Added a RootClaw-named page error boundary with reload action around the app root. | `src/components/PageBoundary.test.ts` (2 passed) |
+| `d5520bd5011b12fa754b10c5acd6b3ec2f155d6c` | Ancestor | AMBIL | Compensate watchdog silence timestamps for long event-loop gaps; ordinary late sweeps still count. | `server/turn-watchdog.test.ts` (19 passed) |
+| `3fd3b547c2e8c03916c6bace4b8f0ac3c9ae2a1f` | Ancestor | AMBIL | Added a narrow done-notice state machine for held teammate/follow-up notices, using RootClaw's coordinator and steer queue. | `server/done-notice.test.ts`, `server/chat-followups.test.ts` (16 passed) |
+| `b1e0ba941e5c0aa5ef4c7543edbab04b98253e80` | Ancestor | AMBIL | Batch upkeep-state mutations across tick/tidy/dream, while flushing capture progress promptly; added write-count regression. | `server/memory-upkeep-writes.test.ts` (1 passed; observed 4 writes before fix) |
+| `f6967835c` | Not verifiable | LEWATI | SHA was unavailable in the fetched tag graph and fetching the short SHA from upstream failed; ancestry could not be established, so excluded as required. | None. |
+| `4fe6439cf875e8a4af19d2d1461cf6fe19f6b844` | Ancestor | AMBIL | Stable-sort working/waiting bots to the top within each displayed sidebar list; drag/drop continues to use saved ordering. | `src/lib/sidebar-layout.test.ts`, `src/components/Sidebar.departments.test.ts` (47 passed) |
+| `ac08cf72a70f4d334ea39e9044ecc514c0c1056c` | Ancestor | LEWATI | Adjusts simple-mode sidebar activity rows based on the upstream waiting/unread task semantics; RootClaw's task activity and selection rules differ, and the change is not required for the core fixes being ported. | None; no code changed for this item. |
+| `823f7e1f3cefcf6dcdcd9ff1af90c20bf9397237` | Ancestor | LEWATI | Requires coordinated changes to runtime ancestry rules, assignment envelopes, notices, and coordinator interfaces across 11 files; no isolated thread-only subset preserves the runtime contract. | None; no code changed for this item. |
+| `ef71364537a635dc6d5ac402cca3550b2f8b7660` | Ancestor | LEWATI | Long tool-output loading changes the wire contract, authenticated routes, companion allowlist, pagination, and multiple chat views; it is a broad feature rather than a clean core-fix patch. | None; no code changed for this item. |
+| `a72d920d155600a4ccaa6b8354d1e0326eed5f0a` | Ancestor | LEWATI | Running-routine sidebar rows require new filtering/rendering states in both simple and advanced modes; deferred as UI-specific behavior outside the selected core-fix set. | None; no code changed for this item. |
+| `73ab955eb4d44eb288e37be109d7525626900343` | Ancestor | LEWATI | Requires a new confinement rule preventing externally driven work from opening threads; this is a separate security-policy change, not the selected core-fix subset. | None; no code changed for this item. |
+| `7d7e7a1c1e400d08e85e493bb0436f19ab9703b5` | Ancestor | LEWATI | Suppresses a routine banner for results-thread conversations; routine navigation behavior is adjacent UI polish, not a core fix in this batch. | None; no code changed for this item. |
+
+### Batch 3 verification
+
+- `pnpm exec vitest run src/components/PageBoundary.test.ts server/turn-watchdog.test.ts server/done-notice.test.ts server/chat-followups.test.ts server/memory-upkeep-writes.test.ts`: passed (5 files, 38 tests).
+- `pnpm typecheck`: passed.
+- `pnpm exec oxlint --deny-warnings` on the touched TS/TSX files: passed.
+- `pnpm exec vitest run src/lib/sidebar-layout.test.ts src/components/Sidebar.departments.test.ts`: passed (2 files, 47 tests); the new ordering regression failed before the helper was added.
+- `pnpm i18n:check`: passed (16 language catalogs valid).
+- `git diff --check`: passed.
+- Isolated fake-engine fixture: `doctor --url http://127.0.0.1:21216` reported connected and no problems; fixture was stopped afterward.
+- Logo/icon changes and Phase 5 stubs were not touched. No external engines were used.

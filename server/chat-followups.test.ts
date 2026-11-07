@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import * as journal from "./message-db.ts";
 import { cancelChannelMessage, drainChannelMessages, queuedChannelMessage, queueChannelMessage, restoreChannelMessages } from "./channel-queue.ts";
-import { cancelSteeredMessage, drainSteeredMessages, queuedSteerSnapshot, queueSteeredMessage, restoreSteeredMessages, type SteerStore } from "./steer-queue.ts";
+import { cancelSteeredMessage, drainSteeredMessages, hasQueuedPersonMessage, queuedSteerSnapshot, queueSteeredMessage, restoreSteeredMessages, type SteerStore } from "./steer-queue.ts";
 import type { BotRecord, Message } from "./store.ts";
 
 afterEach(() => {
@@ -27,6 +27,16 @@ function storeFor(botId: string, threadId: string): SteerStore & { messages: Mes
 }
 
 describe("durable accepted follow-ups", () => {
+  it("distinguishes queued person messages from peer and unattended work", () => {
+    queueSteeredMessage("bot", "thread", "person follow-up");
+    expect(hasQueuedPersonMessage("bot", "thread")).toBe(true);
+    queueSteeredMessage("bot", "other", "peer ask", { peerAsk: { botId: "peer", name: "Peer" } });
+    expect(hasQueuedPersonMessage("bot", "other")).toBe(false);
+    queueSteeredMessage("bot", "third", "unattended", { unattended: true });
+    expect(hasQueuedPersonMessage("bot", "third")).toBe(false);
+    expect(hasQueuedPersonMessage("wrong-bot", "thread")).toBe(false);
+  });
+
   it("restores bot order, receipt, attachments, reply context, unattended provenance and who to bill", async () => {
     const text = 'inspect this\n\n<attached-image path="/fixture/picture.png" name="picture.png" />';
     const first = queueSteeredMessage("bot", "thread", text, {

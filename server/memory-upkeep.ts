@@ -126,11 +126,13 @@ function loadState(): UpkeepState {
   }
 }
 
-function saveState(state: UpkeepState): void {
+function saveState(state: UpkeepState): boolean {
   try {
     mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
     writeFileAtomic(statePath(), `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
+    return true;
   } catch {
+    return false;
   }
 }
 
@@ -282,12 +284,47 @@ export function createMemoryUpkeep(deps: UpkeepDeps): MemoryUpkeep {
   const queue: Waiting[] = [];
   let worker: Promise<void> | null = null;
 
-  const record = (botId: string, patch: { lastTidy?: TidyReport; lastCapture?: CaptureReport; topicCursor?: string; lastDream?: DreamReport; dreamedTo?: number }) => {
+  let known: UpkeepState | null = null;
+  let unsaved = false;
+  const open: { dirty: boolean; flushWhileOpen: boolean }[] = [];
+
+  const loaded = (): UpkeepState => (known ??= loadState());
+
+  function flush(): void {
+    if (!unsaved || !known || !saveState(known)) return;
+    unsaved = false;
+    for (const batch of open) batch.dirty = false;
+  }
+
+  function batched<T>(work: () => Promise<T>, flushWhileOpen = false): Promise<T> {
+    const batch = { dirty: false, flushWhileOpen };
+    open.push(batch);
+    const end = () => {
+      const at = open.lastIndexOf(batch);
+      if (at >= 0) open.splice(at, 1);
+      if (batch.dirty && (batch.flushWhileOpen || !open.length)) flush();
+    };
+    let promise: Promise<T>;
+    try {
+      promise = work();
+    } catch (error) {
+      end();
+      throw error;
+    }
+    return promise.finally(end);
+  }
+
+  const record = (botId: string, patch: { lastTidy?: TidyReport; lastCapture?: CaptureReport; topicCursor?: string; lastDream?: DreamReport; dreamedTo?: number; core?: string[] }) => {
     // a capture or tidy that was out when its bot was deleted leaves nothing behind
     if (!deps.bot(botId)) return;
-    const state = loadState();
+    const state = loaded();
     state.bots[botId] = { ...state.bots[botId], ...patch };
-    saveState(state);
+    unsaved = true;
+    if (!open.length) {
+      flush();
+      return;
+    }
+    for (const batch of open) batch.dirty = true;
   };
 
   const track = <T>(promise: Promise<T>): Promise<T> => {
@@ -466,7 +503,7 @@ export function createMemoryUpkeep(deps: UpkeepDeps): MemoryUpkeep {
       while (!cancelled(started) && queue.length) {
         const call = takeCall();
         try {
-          const report = await captureCall(call.map((entry) => entry.batch));
+          const report = await batched(() => captureCall(call.map((entry) => entry.batch)), true);
           for (const entry of call) entry.done?.resolve(report);
         } catch (error) {
           log(`memory upkeep: capture failed for ${call[0]!.batch.botId}: ${(error as Error).message}`);
@@ -511,7 +548,7 @@ export function createMemoryUpkeep(deps: UpkeepDeps): MemoryUpkeep {
     const engine = deps.engine(botId);
     if (!engine?.generateText) return 0;
     const today = memoryDate(now());
-    const state = loadState();
+    const state = loaded();
     const core = new Set(state.bots[botId]?.core ?? []);
     const first = readRaw(botId, "MEMORY.md") ?? "";
     const candidates = organizeCandidates(first, today, core);
@@ -525,9 +562,7 @@ export function createMemoryUpkeep(deps: UpkeepDeps): MemoryUpkeep {
     const moved = new Set(proposed.map((move) => move.entry.line));
     const moves = proposed.slice(0, MAX_MOVES);
     const judgedCore = candidates.filter((entry) => !moved.has(entry.line)).map((entry) => factIdentity(entry.body));
-    const saved = loadState();
-    saved.bots[botId] = { ...saved.bots[botId], core: [...new Set([...(saved.bots[botId]?.core ?? []), ...judgedCore])].slice(-MAX_CORE) };
-    saveState(saved);
+    record(botId, { core: [...new Set([...(loaded().bots[botId]?.core ?? []), ...judgedCore])].slice(-MAX_CORE) });
     if (!moves.length) return 0;
     return writing(botId, () => {
       const { byTopic } = applyMoves(before, moves);
@@ -617,7 +652,7 @@ export function createMemoryUpkeep(deps: UpkeepDeps): MemoryUpkeep {
     let topicDeferred = 0;
     let topicChecks = 0;
     let topicsDeferred = 0;
-    let topicCursor = loadState().bots[botId]?.topicCursor;
+    let topicCursor = loaded().bots[botId]?.topicCursor;
     const deadline = Date.now() + MODEL_TIMEOUT_MS;
     const topics = listMemoryTopics(botId).filter(topic => topic.name !== ARCHIVE_TOPIC).sort((a, b) => a.name.localeCompare(b.name));
     const cursorAt = topics.findIndex(topic => topic.name === topicCursor) + 1;
@@ -680,14 +715,14 @@ export function createMemoryUpkeep(deps: UpkeepDeps): MemoryUpkeep {
   function tidy(botId: string): Promise<TidyReport> {
     const running = tidying.get(botId);
     if (running) return running;
-    const promise = track(runTidy(botId)).finally(() => tidying.delete(botId));
+    const promise = track(batched(() => runTidy(botId))).finally(() => tidying.delete(botId));
     tidying.set(botId, promise);
     return promise;
   }
 
   /** Reads the chats since the last dream that answered; the first one looks back a week. */
   function dreamSince(botId: string, at: number): number {
-    return loadState().bots[botId]?.dreamedTo ?? at - DREAM_FIRST_LOOKBACK_MS;
+    return loaded().bots[botId]?.dreamedTo ?? at - DREAM_FIRST_LOOKBACK_MS;
   }
 
   async function runDream(botId: string): Promise<DreamReport> {
@@ -764,16 +799,16 @@ export function createMemoryUpkeep(deps: UpkeepDeps): MemoryUpkeep {
     const started = generation;
     const running = dreaming.get(botId);
     if (running?.generation === started) return running.promise;
-    const promise = track(runDream(botId)).finally(() => {
+    const promise = track(batched(() => runDream(botId)).finally(() => {
       if (dreaming.get(botId)?.promise === promise) dreaming.delete(botId);
-    });
+    }));
     dreaming.set(botId, { generation: started, promise });
     return promise;
   }
 
   function dreamDue(botId: string): boolean {
     const current = now();
-    const saved = loadState().bots[botId];
+    const saved = loaded().bots[botId];
     if (deps.dreamer?.() !== botId || !deps.conversations || current.getHours() < deps.tidyHour()) return false;
     if (saved?.lastDream && memoryDate(new Date(saved.lastDream.at)) >= memoryDate(current)) return false;
     return deps.conversations(botId, dreamSince(botId, current.getTime())).length >= DREAM_MIN_CONVERSATIONS;
@@ -782,31 +817,33 @@ export function createMemoryUpkeep(deps: UpkeepDeps): MemoryUpkeep {
   function due(botId: string): boolean {
     const current = now();
     if (current.getHours() < deps.tidyHour()) return false;
-    const last = loadState().bots[botId]?.lastTidy?.at;
+    const last = loaded().bots[botId]?.lastTidy?.at;
     return !last || memoryDate(new Date(last)) < memoryDate(current);
   }
 
   async function tick(): Promise<void> {
     const started = generation;
     if (cancelled(started)) return;
-    for (const bot of deps.bots()) {
-      if (cancelled(started)) return;
-      if (!upkeepEnabled(bot) || deps.busy(bot.id)) continue;
-      if (due(bot.id)) {
+    await batched(async () => {
+      for (const bot of deps.bots()) {
+        if (cancelled(started)) return;
+        if (!upkeepEnabled(bot) || deps.busy(bot.id)) continue;
+        if (due(bot.id)) {
+          try {
+            await tidy(bot.id);
+          } catch (error) {
+            log(`memory upkeep: tidy failed for ${bot.id}: ${(error as Error).message}`);
+          }
+        }
+        if (cancelled(started)) return;
         try {
-          await tidy(bot.id);
+          if (deps.busy(bot.id) || !dreamDue(bot.id)) continue;
+          await dream(bot.id);
         } catch (error) {
-          log(`memory upkeep: tidy failed for ${bot.id}: ${(error as Error).message}`);
+          log(`memory upkeep: dream failed for ${bot.id}: ${(error as Error).message}`);
         }
       }
-      if (cancelled(started)) return;
-      try {
-        if (deps.busy(bot.id) || !dreamDue(bot.id)) continue;
-        await dream(bot.id);
-      } catch (error) {
-        log(`memory upkeep: dream failed for ${bot.id}: ${(error as Error).message}`);
-      }
-    }
+    });
   }
 
   return {
@@ -824,20 +861,21 @@ export function createMemoryUpkeep(deps: UpkeepDeps): MemoryUpkeep {
       buffer.dropBot(botId);
       dropQueued(botId);
       dropPending(botId);
-      const state = loadState();
+      const state = loaded();
       if (!state.bots[botId]) return;
       delete state.bots[botId];
-      saveState(state);
+      unsaved = true;
+      flush();
     },
     capture: (batch) => new Promise<CaptureReport>((resolve, reject) => enqueue({ batch, done: { resolve, reject } })),
     tidy,
     dream,
     ideas(botId) {
-      const last = loadState().bots[botId]?.lastDream;
+      const last = loaded().bots[botId]?.lastDream;
       return last && now().getTime() - last.at < IDEAS_FOR_MS ? { ideas: last.ideas, conversations: last.conversations } : { ideas: [], conversations: 0 };
     },
     status(botId) {
-      const { lastTidy, lastCapture, lastDream } = loadState().bots[botId] ?? {};
+      const { lastTidy, lastCapture, lastDream } = loaded().bots[botId] ?? {};
       return { ...(lastTidy ? { lastTidy } : {}), ...(lastCapture ? { lastCapture } : {}), ...(lastDream ? { lastDream } : {}), modelSteps: Boolean(deps.engine(botId)?.generateText) };
     },
     tick,
