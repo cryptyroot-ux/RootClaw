@@ -1,0 +1,15 @@
+{
+  "id": "using-superpowers",
+  "name": "using-superpowers",
+  "version": "7.0.2",
+  "description": "Use when starting any conversation - establishes how to find and use skills, requiring skill invocation before ANY response including clarifying questions",
+  "defaultEnabled": true,
+  "triggerTerms": [
+    "use skills",
+    "which skill",
+    "what skill should I use",
+    "which workflow",
+    "how should we proceed"
+  ],
+  "requiredCapabilities": []
+}

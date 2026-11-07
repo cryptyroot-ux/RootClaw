@@ -110,8 +110,10 @@ describe("vitest shard balance", () => {
     // The Windows and macOS CI shards run this file with ROOTCLAW_VITEST_E2E=host.
     vi.stubEnv("ROOTCLAW_VITEST_E2E", "");
     const lines: string[] = [];
-    await new DurationSequencer(context(2, 4, (line) => lines.push(line))).shard(specs(FILES));
-    expect(lines).toEqual([expect.stringMatching(new RegExp(`^duration-sequencer: shard 2/4 runs \\d+ of ${FILES.length} files, ~\\d+s recorded; ${Object.keys(WEIGHTS).length} of ${Object.keys(WEIGHTS).length} weighted files found$`))]);
+    const unitFiles = FILES.filter((file) => !/\.e2e\.test\.[cm]?[jt]s$/.test(file));
+    const unitWeights = Object.keys(WEIGHTS).filter((file) => !/\.e2e\.test\.[cm]?[jt]s$/.test(file)).length;
+    await new DurationSequencer(context(2, 4, (line) => lines.push(line))).shard(specs(unitFiles));
+    expect(lines).toEqual([expect.stringMatching(new RegExp(`^duration-sequencer: shard 2/4 runs \\d+ of ${unitFiles.length} files, ~\\d+s recorded; ${unitWeights} of ${unitWeights} weighted files found$`))]);
 
     lines.length = 0;
     vi.stubEnv("ROOTCLAW_VITEST_E2E", "host");

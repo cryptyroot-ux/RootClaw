@@ -39,7 +39,6 @@ ROOTCLAW_WEBHOOK_PORT=28800
 ROOTCLAW_HTTP_PORT=28880
 ROOTCLAW_PUBLIC_URL=http://localhost:28880
 ROOTCLAW_HTTPS_HOST=https-disabled.invalid
-ENGINES=
 EOF
 PODMAN_COMPOSE_PROVIDER=podman-compose podman compose --env-file .env.fixture -f compose.yaml up -d --no-build
 ```

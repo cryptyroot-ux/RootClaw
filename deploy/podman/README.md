@@ -26,7 +26,6 @@ that WSL can access through `/mnt/c`, `/mnt/d`, etc. From the repository root:
 
 ```powershell
 .\deploy\podman\rootclaw.ps1 setup
-# Edit deploy/podman/.env. Set ENGINES to the npm CLI packages you want to use.
 .\deploy\podman\rootclaw.ps1 up -d --build
 .\deploy\podman\rootclaw.ps1 ps
 ```
@@ -50,14 +49,12 @@ ranges using your distribution's instructions. Run as a regular user:
 ```sh
 cd deploy/podman
 sh setup.sh
-# Edit .env; for example ENGINES=@anthropic-ai/claude-code @openai/codex
 PODMAN_COMPOSE_PROVIDER=podman-compose podman compose --env-file .env -f compose.yaml up -d --build
 ```
 
 This recipe targets Podman 5.8.3 / podman-compose 1.6.0 and Linux x86_64. The
 remote client is checksum-pinned; the renderer and server both build from your
-checkout. Engine installation is opt-in through `ENGINES`; pin package versions
-there when reproducibility is required. The live acceptance environment is a
+checkout. The live acceptance environment is a
 Windows WSL2 machine. Native Linux, SELinux-enforcing systems, ARM64, macOS, and non-systemd
 hosts need separate validation; the Containerfile explicitly rejects non-x86_64.
 SELinux-enforcing systems need an appropriate socket/bind policy, not blanket label
@@ -66,10 +63,9 @@ Podman restart service configured according to the host's administration policy.
 
 ## Engines and desktops
 
-Open <http://localhost:8080>. Sign the selected engines in inside the container,
-for example `rootclaw.ps1 exec rootclaw claude`. Their logins persist under `ROOTCLAW_DATA_ROOT`.
-For the Linux commands, substitute the `podman compose --env-file .env -f
-compose.yaml` prefix for `rootclaw.ps1`.
+Open <http://localhost:8080> and configure model provider credentials in Settings.
+They persist under `ROOTCLAW_DATA_ROOT`. For the Linux commands, substitute the
+`podman compose --env-file .env -f compose.yaml` prefix for `rootclaw.ps1`.
 
 In **App Settings -> Local VM**, prepare the managed image, select **Per bot**,
 and set the maximum number of desktops. Give each bot **Local VM** as its computer,
@@ -99,8 +95,8 @@ directly. For public-domain HTTPS, use the existing Docker deployment or design
 and verify an authenticated edge for this recipe.
 
 The app's socket grants control of **all containers owned by that rootless user**.
-Use a dedicated machine/user. This is not complete isolation of each agent CLI:
-CLIs execute in the shared app container. Desktop containers receive only their
+Use a dedicated machine/user. Bots execute under the shared app-container user,
+so this is not complete isolation between bots. Desktop containers receive only their
 own workspace, never the socket. The web Computer preview and bot actions go
 through the server. Direct "Open desktop" URLs use host-local dynamic noVNC ports;
 manual noVNC access from another device needs a separate authenticated relay.

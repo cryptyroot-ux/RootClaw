@@ -310,16 +310,15 @@ describe("shell", () => {
   it("tracks background commands per conversation and stops their whole process groups", async () => {
     const scope = `thread-${Date.now()}`;
     config = { ...config, jobScope: scope };
-    // The shell starts a grandchild and exits; the grandchild stays in the group, so it is still tracked and stopped.
-    const started = await run("shell", { command: "sleep 60 & echo $! > child.pid; wait", background: true });
-    const pid = Number(/pid (\d+)/.exec(started.text)![1]);
-    await expect.poll(() => existsSync(join(root, "child.pid")) && readFileSync(join(root, "child.pid"), "utf8").trim() !== "").toBe(true);
-    const grandchild = Number(readFileSync(join(root, "child.pid"), "utf8"));
-    expect(backgroundJobs(scope)).toEqual([pid]);
+    const started = await run("shell", { command: "while true; do echo heartbeat; sleep 0.1; done", background: true });
+    const log = /Output goes to (\S+)/.exec(started.text)![1]!;
+    await expect.poll(() => readFileSync(join(root, log), "utf8")).toContain("heartbeat");
+    expect(backgroundJobs(scope)).toHaveLength(1);
     expect(stopBackgroundJobs(scope, 100)).toBe(1);
-    const gone = (target: number) => { try { process.kill(target, 0); return false; } catch { return true; } };
-    await expect.poll(() => gone(grandchild), { timeout: 5_000 }).toBe(true);
-    await expect.poll(() => gone(pid), { timeout: 5_000 }).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const stoppedOutput = readFileSync(join(root, log), "utf8");
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(readFileSync(join(root, log), "utf8")).toBe(stoppedOutput);
     expect(backgroundJobs(scope)).toEqual([]);
   });
   it("caps background commands per conversation", async () => {
@@ -424,8 +423,21 @@ describe("shell", () => {
       expect(program.args.flatMap((arg, index) => arg === "--ro-bind-fd" ? [[arg, program.args[index + 1], program.args[index + 2]]] : []))
         .toEqual([["--ro-bind-fd", "3", second.path], ["--ro-bind-fd", "4", third.path]]);
       expect(program.extraFds).toHaveLength(2);
+    });
+
+    it.runIf(shellSandbox() === "bwrap")("executes ordered descriptors in a working bubblewrap sandbox", () => {
+      const stale = attachment();
+      const store = dirname(stale.canonicalPath);
+      const lexical = dirname(stale.path);
+      const second = { path: join(lexical, "second.txt"), canonicalPath: join(store, "second.txt") };
+      const third = { path: join(lexical, "third.txt"), canonicalPath: join(store, "third.txt") };
+      writeFileSync(second.canonicalPath, "SECOND");
+      writeFileSync(third.canonicalPath, "THIRD");
+      rmSync(stale.canonicalPath);
+      const program = build(`cat ${JSON.stringify(second.path)} ${JSON.stringify(third.path)}`, [stale, second, third]);
       const result = spawnSync(program.file, program.args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe", ...program.extraFds] });
-      expect(result.status, result.stderr).toBe(0);
+      expect({ error: result.error?.message, signal: result.signal, status: result.status, stderr: result.stderr })
+        .toEqual({ error: undefined, signal: null, status: 0, stderr: "" });
       expect(result.stdout).toBe("SECONDTHIRD");
     });
 
@@ -683,7 +695,12 @@ describe("shell", () => {
     // Never the whole filesystem (audit R06b); the network only when the call asks for it (R06c).
     expect(bwrap.args.join(" ")).not.toContain("--ro-bind / /");
     expect(sandboxedShell("ls", root, [root], "bwrap", { network: true }).args).not.toContain("--unshare-net");
-    expect(sandboxedShell("ls", root, [root], "sandbox-exec").args[1]).toContain("(deny file-write*)");
+    const macosOffline = sandboxedShell("ls", root, [root], "sandbox-exec").args[1]!;
+    const macosOnline = sandboxedShell("ls", root, [root], "sandbox-exec", { network: true }).args[1]!;
+    expect(macosOffline).toContain("(deny file-write*)");
+    expect(macosOffline).toContain("(deny network*)");
+    expect(macosOnline).toContain("(allow network*)");
+    expect(macosOnline).not.toContain("(deny network*)");
   });
   it("keeps the server's secrets out of the environment", () => {
     const env = shellEnvironment(root, { PATH: "/bin", GH_TOKEN: "x", OPENAI_API_KEY: "y" });

@@ -1,0 +1,14 @@
+{
+  "id": "requesting-code-review",
+  "name": "requesting-code-review",
+  "version": "7.0.2",
+  "description": "Use when completing tasks, implementing major features, or before merging to verify work meets requirements",
+  "defaultEnabled": true,
+  "triggerTerms": [
+    "request a code review",
+    "review my PR",
+    "review this branch",
+    "ask for code review"
+  ],
+  "requiredCapabilities": []
+}

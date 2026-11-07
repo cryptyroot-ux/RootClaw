@@ -1,12 +1,16 @@
 {
   "id": "verification-before-completion",
-  "name": "Verification Before Completion",
-  "version": "1.0.0",
+  "name": "verification-before-completion",
+  "version": "7.0.2",
   "description": "Use when about to claim work is complete, fixed, or passing, before committing or creating PRs - requires running verification commands and confirming output before making any success claims; evidence before assertions always",
   "defaultEnabled": true,
   "triggerTerms": [
-    "verification before completion",
-    "verification-before-completion"
+    "claim complete",
+    "ready to merge",
+    "all tests pass",
+    "before PR",
+    "done fixing",
+    "verify before finishing"
   ],
   "requiredCapabilities": []
 }

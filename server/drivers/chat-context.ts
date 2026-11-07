@@ -1,7 +1,8 @@
 // Context budget, compaction and offloading for a single turn's model requests.
 // Extracted from server/drivers/openai-chat.ts to keep that file under the ratchet cap.
 import type { ChatToolSession } from "./chat-mcp-tools.ts";
-import type { ModelAdapter, OpenAIChatMessage } from "./model-adapter.ts";
+import type { ModelAdapter, OpenAIChatMessage, Usage } from "./model-adapter.ts";
+import { BudgetLimitReached } from "../budget-guard.ts";
 import type { TokenCalibration, TurnContextSettings } from "./turn-context.ts";
 import {
   compactTurnMessages,
@@ -47,6 +48,7 @@ export interface ChatContextDeps {
   planHint: string;
   requestsLeft: () => number;
   consumeRequest: () => void;
+  recordUsage: (usage: Usage) => "ok" | "warn" | "stop";
   driverKind: string;
   currentRound?: number;
 }
@@ -89,6 +91,7 @@ export class ChatContext {
   private get planHint() { return this.deps.planHint; }
   private get requestsLeft() { return this.deps.requestsLeft; }
   private get consumeRequest() { return this.deps.consumeRequest; }
+  private get recordUsage() { return this.deps.recordUsage; }
 
   sizeNow(): number {
     return this.calibration.apply(estimateRequestTokens(this.messages, this.tools.definitions, this.model, this.adapter.protocol));
@@ -134,7 +137,7 @@ export class ChatContext {
           if (maxTokens < minOutputTokens(this.window)) throw new Error("no room left for a summary");
           if (this.requestsLeft() <= 1) throw new Error("no request left for a summary");
           this.consumeRequest();
-          const { text, reasoning } = await this.adapter.complete({
+          const completion = await this.adapter.complete({
             messages: [{ role: "user", content: prompt }],
             model: summaryModel,
             stream: false,
@@ -142,6 +145,8 @@ export class ChatContext {
             tools: [],
             maxTokens,
           });
+          if (completion.usage && this.recordUsage(completion.usage) === "stop") throw new BudgetLimitReached();
+          const { text, reasoning } = completion;
           return text.trim() ? text : reasoning;
         },
         signal: this.abort.signal,

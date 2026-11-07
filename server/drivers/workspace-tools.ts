@@ -420,12 +420,22 @@ const SYSTEM_DIRS = ["/usr", "/bin", "/sbin", "/lib", "/lib32", "/lib64", "/libx
  * $HOME so node, pnpm, cargo… still resolve. */
 const TOOLCHAIN_ENV = ["NVM_DIR", "FNM_DIR", "PNPM_HOME", "COREPACK_HOME", "CARGO_HOME", "RUSTUP_HOME", "GOPATH", "VIRTUAL_ENV", "JAVA_HOME"];
 
+function pathEntries(path: string): string[] {
+  const entries: string[] = []; let start = 0;
+  for (let index = 0; index < path.length; index++) {
+    if (path[index] === ":" && index === start + 1 && /^[A-Za-z]$/.test(path[start] ?? "") && /[\\/]/.test(path[index + 1] ?? "")) continue;
+    if (path[index] !== ":" && path[index] !== ";") continue;
+    entries.push(path.slice(start, index)); start = index + 1;
+  }
+  entries.push(path.slice(start)); return entries;
+}
+
 export interface SandboxOptions {
   /** Folders the command may read but not write (skills). */
   readable?: readonly string[];
   /** Exact lexical files whose canonical targets are pinned for read-only access. */
   readFiles?: readonly WorkspaceReadFileGrant[];
-  /** Let the command reach the network (bubblewrap only; it has none otherwise). */
+  /** Let the command reach the network; otherwise the OS sandbox denies it. */
   network?: boolean;
   env?: NodeJS.ProcessEnv;
 }
@@ -439,7 +449,7 @@ export function sandboxedShell(command: string, cwd: string, writable: readonly 
   const home = env.HOME || homedir();
   // A toolchain folder is a specific folder, never "/" or a top-level folder, nor one that holds $HOME: a PATH entry
   // such as "/" (or a link to it) would otherwise mount the whole filesystem read-only into the sandbox (audit N03).
-  const toolchain = [dirname(process.execPath), ...(env.PATH ?? "").split(":"), ...TOOLCHAIN_ENV.map((key) => env[key] ?? "")]
+  const toolchain = [dirname(process.execPath), ...pathEntries(env.PATH ?? ""), ...TOOLCHAIN_ENV.map((key) => env[key] ?? "")]
     .filter((dir) => dir && isAbsolute(dir) && existsSync(dir))
     .map((dir) => realOrSelf(resolve(dir)))
     .filter((dir) => dir.split(sep).filter(Boolean).length >= 2 && !within(dir, resolve(home)) && !within(dir, "/tmp")
@@ -485,7 +495,7 @@ export function sandboxedShell(command: string, cwd: string, writable: readonly 
           && lstatSync(grant.canonicalPath).isFile();
       } catch { return false; }
     });
-    const macosToolchain = [dirname(process.execPath), ...(env.PATH ?? "").split(":"), ...TOOLCHAIN_ENV.map((key) => env[key] ?? "")]
+    const macosToolchain = [dirname(process.execPath), ...pathEntries(env.PATH ?? ""), ...TOOLCHAIN_ENV.map((key) => env[key] ?? "")]
       .filter((dir) => dir && isAbsolute(dir) && existsSync(dir))
       .map((dir) => realOrSelf(resolve(dir)))
       .filter((dir) => dir.split(sep).filter(Boolean).length >= 2 && !within(dir, resolve(home)));
@@ -504,6 +514,7 @@ export function sandboxedShell(command: string, cwd: string, writable: readonly 
     const profile = [
       "(version 1)",
       "(allow default)",
+      options.network ? "(allow network*)" : "(deny network*)",
       "(deny file-read* file-test-existence)",
       metadataRules ? `(allow file-read-metadata ${metadataRules})` : "",
       `(allow file-read-data ${readRules})`,
@@ -1062,21 +1073,6 @@ export async function executeWorkspaceTool(name: string, args: Record<string, un
   } catch (error) {
     return fail(`${name} failed: ${error instanceof Error ? error.message : String(error)}`);
   }
-}
-
-/** Skill folders a turn's prompt names (`Read "/abs/…/SKILL.md"`): readable, never writable, so skills work under confinement. */
-export function skillReadRoots(...texts: Array<string | undefined>): string[] {
-  const roots = new Set<string>();
-  for (const text of texts) {
-    if (!text) continue;
-    for (const match of text.matchAll(/Read ("(?:[^"\\]|\\.)*(?:\/|\\\\)SKILL\.md")/g)) {
-      try {
-        const file = JSON.parse(match[1]!) as string;
-        if (isAbsolute(file)) roots.add(dirname(file));
-      } catch {}
-    }
-  }
-  return [...roots];
 }
 
 export const WORKSPACE_TOOLS_PROMPT = "\n\nYou have workspace tools that run directly on this computer: shell, read_file, write_file, edit_file, apply_patch, grep, glob, list_dir, " +

@@ -127,7 +127,7 @@
 
 - [ ] **Step 4: Review the final diff and commit/push.**
 
-  Inspect for accidental weakening of `server/read-and-draft.ts`, user changes, or inclusion of the unrelated untracked `docs/superpowers/plans/2026-11-05-openmausbot-vps-team.md`. Commit only requested feature/design/plan changes, then push the current branch; allow the repository pre-push checks to run.
+  Inspect for accidental weakening of `server/read-and-draft.ts`, user changes, or inclusion of the unrelated untracked VPS-team plan. Commit only requested feature/design/plan changes, then push the current branch; allow the repository pre-push checks to run.
 
 - [ ] **Step 5: Create a PR.**
 

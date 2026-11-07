@@ -23,7 +23,6 @@ ROOTCLAW_WEBHOOK_PORT=8800
 ROOTCLAW_HTTP_PORT=8080
 ROOTCLAW_PUBLIC_URL=http://localhost:8080
 ROOTCLAW_HTTPS_HOST=https-disabled.invalid
-ENGINES=
 EOF
 fi
 echo 'Ready: edit .env, then PODMAN_COMPOSE_PROVIDER=podman-compose podman compose --env-file .env -f compose.yaml up -d --build'

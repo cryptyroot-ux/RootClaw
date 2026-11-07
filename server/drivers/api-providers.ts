@@ -38,7 +38,6 @@ interface Spec {
   /** GET the provider's catalog: [id, label] pairs, chat models only. */
   catalog: (url: string, key: string) => Promise<Array<{ id: string; label: string }>>;
   /** A sign-in token (OAuth) that stands in for the key; the key still wins when both are set. */
-  token?: (environment: Record<string, string>) => string;
 }
 
 const json = async (url: string, headers: Record<string, string>) => {
@@ -76,7 +75,7 @@ function apiProvider(spec: Spec): ProviderDriver<ApiProviderConfig> {
       const env = input.environment;
       // The server's own variable goes only to the provider's own host.
       const apiKey = (config.key || env[config.apiKeyEnv ?? spec.keyEnv] || (config.url === spec.defaultUrl ? process.env[config.apiKeyEnv ?? spec.keyEnv] : "") || "").trim()
-        || (spec.token?.(env) ?? "");
+        || "";
       const withConfigured = (options: ModelCatalog["options"]): ModelCatalog => {
         const list = config.model && !options.some((o) => o.id === config.model) ? [{ id: config.model, label: config.model }, ...options] : options;
         const preferred = config.model ?? spec.models.default;
@@ -131,11 +130,10 @@ export const GeminiDriver = apiProvider({
   models: { default: "gemini-3.8-flash", options: [
     { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash" }, { id: "gemini-4-argon", label: "Gemini 4 Argon" }, { id: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash-Lite" },
   ] },
-  // Google sign-in (OAuth, the person's own client) stands in when no API key is saved; the key always works too.
-  token: (env) => env.GOOGLE_OAUTH_REFRESH_TOKEN ?? "",
-  adapter: (url, key, env) => env.GOOGLE_OAUTH_REFRESH_TOKEN && key === env.GOOGLE_OAUTH_REFRESH_TOKEN && env.GOOGLE_OAUTH_CLIENT_ID
+  // Google OAuth is valid for inference, but refresh tokens are not Gemini API keys and must not be used for catalog calls.
+  adapter: (url, key, env) => !key && env.GOOGLE_OAUTH_REFRESH_TOKEN && env.GOOGLE_OAUTH_CLIENT_ID
     ? createGeminiAdapter({ url, projectId: env.GOOGLE_CLOUD_PROJECT,
-      accessToken: googleAccessToken({ clientId: env.GOOGLE_OAUTH_CLIENT_ID, ...(env.GOOGLE_OAUTH_CLIENT_SECRET ? { clientSecret: env.GOOGLE_OAUTH_CLIENT_SECRET } : {}) }, key) })
+      accessToken: googleAccessToken({ clientId: env.GOOGLE_OAUTH_CLIENT_ID, ...(env.GOOGLE_OAUTH_CLIENT_SECRET ? { clientSecret: env.GOOGLE_OAUTH_CLIENT_SECRET } : {}) }, env.GOOGLE_OAUTH_REFRESH_TOKEN) })
     : createGeminiAdapter({ url, apiKey: key }),
   catalog: async (url, key) => rows((await json(`${url}/models?pageSize=200`, { "x-goog-api-key": key })).models)
     .filter((row) => rows(row.supportedGenerationMethods).length === 0 || (row.supportedGenerationMethods as string[]).includes("generateContent"))

@@ -188,5 +188,5 @@ dev setup, tests and what makes a PR easy to merge. Report security problems pri
 
 ## License
 
-RootClaw is released under the [Apache License 2.0](LICENSE). It is derived from
-[OpenMausBot](https://github.com/milind-soni/OpenMausBot); see [NOTICE](NOTICE) for attributions.
+RootClaw is released under the [Apache License 2.0](LICENSE). See [NOTICE](NOTICE)
+for upstream attributions.

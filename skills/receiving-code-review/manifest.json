@@ -1,0 +1,14 @@
+{
+  "id": "receiving-code-review",
+  "name": "receiving-code-review",
+  "version": "7.0.2",
+  "description": "Use when receiving code review feedback, before implementing suggestions, especially if feedback seems unclear or technically questionable - requires technical rigor and verification, not performative agreement or blind implementation",
+  "defaultEnabled": true,
+  "triggerTerms": [
+    "code review feedback",
+    "address review feedback",
+    "respond to review comments",
+    "reviewer requested"
+  ],
+  "requiredCapabilities": []
+}

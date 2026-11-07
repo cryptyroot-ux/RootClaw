@@ -317,6 +317,7 @@ function desktopDataDir() {
 
 function legacyDataDirs() {
   const home = app.getPath("home");
+  // Legacy data dirs from before the RootClaw rename.
   return [".openmausbot", ".opengrokbot"].map((name) => path.join(home, name));
 }
 

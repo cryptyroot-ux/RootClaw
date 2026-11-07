@@ -1,0 +1,15 @@
+{
+  "id": "executing-plans",
+  "name": "executing-plans",
+  "version": "7.0.2",
+  "description": "Use when executing an implementation plan in the current session as the implementer yourself — your human partner chose inline execution, or no subagent tool is available",
+  "defaultEnabled": true,
+  "triggerTerms": [
+    "execute the implementation plan",
+    "execute the plan",
+    "follow the plan",
+    "implement the plan",
+    "carry out this plan"
+  ],
+  "requiredCapabilities": []
+}

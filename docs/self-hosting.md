@@ -238,9 +238,6 @@ What the stack does, so you can adapt it:
 
 - [`Dockerfile`](../Dockerfile) builds the UI and the self-contained
   server bundle, and runs them as an unprivileged user with `HOME=/data`.
-  `--build-arg ENGINES="…"` (or `ENGINES=` in `.env`) still bakes npm
-  packages into the image; RootClaw no longer runs agent CLIs, so leave it
-  empty (the example `.env` still lists one).
 - [`deploy/docker-compose.yml`](../deploy/docker-compose.yml) runs Caddy
   **in the server's network namespace**, so Caddy reaches the server on
   `127.0.0.1` and the server never binds anything public.
@@ -252,9 +249,8 @@ What the stack does, so you can adapt it:
 Upgrade with `git pull && docker compose up -d --build`. State (chats, routines,
 saved provider keys, paired sessions) is on the `data` volume; back that up.
 
-A build keeps the Chrome (and any `ENGINES`) it
-installed first, because those layers sit beneath the app and stay cached
-across code changes. To pick up the current ones, rebuild with a new tag:
+A build keeps the Chrome it installed first, because those layers sit beneath
+the app and stay cached across code changes. To pick up the current one, rebuild with a new tag:
 
 ```sh
 docker compose build --build-arg CHROME_CACHE_TAG=$(date +%F) rootclaw && docker compose up -d

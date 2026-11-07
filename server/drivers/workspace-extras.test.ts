@@ -4,7 +4,8 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync,
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { executeWorkspaceTool, skillReadRoots, workspaceToolReadOnly, workspaceToolView, validateWorkspaceArgs, type WorkspaceToolsConfig } from "./workspace-tools.ts";
+import { executeWorkspaceTool, workspaceToolReadOnly, workspaceToolView, validateWorkspaceArgs, type WorkspaceToolsConfig } from "./workspace-tools.ts";
+import { skillReadRoots } from "./skill-read-roots.ts";
 import { shellSandbox } from "./workspace-tools.ts";
 import { htmlToText, privateAddress } from "./web-tools.ts";
 
