@@ -19,7 +19,7 @@ import { promptHalves, volatileContextNote, withContextNote } from "./prompt-spl
 import { createChatToolApproval, refusal } from "./chat-tool-approval.ts";
 import { ChatProtocolError, ChatReasoningDetails, ChatToolCalls, INVALID_TOOL_NAME, MalformedToolCallError, object, syntheticToolCallId, type ChatToolCall } from "./openai-chat-protocol.ts";
 import { appendNative } from "./native.ts";
-import type { Completion, ModelAdapter, OpenAIChatMessage, Usage } from "./model-adapter.ts";
+import type { Completion, ModelAdapter, OpenAIChatMessage } from "./model-adapter.ts";
 import { createImageFallback, TEXT_ONLY_ATTACHMENT_NOTE, TEXT_ONLY_SCREENSHOT_NOTE, type VisionInput } from "./image-fallback.ts";
 import { BudgetLimitReached, BudgetMeter } from "../budget-guard.ts";
 import { TurnUsage } from "./turn-usage.ts";
@@ -61,6 +61,7 @@ import { KEY_REJECTED_REASON, keyRejected, noteKeyAccepted, noteKeyRejected, rej
 import { fenceUntrustedToolOutput } from "./fence-markers.ts";
 import { createModelRoutes, ModelRouteRefused, noRouteLeft, readResponsesStream, responsesRequest, routeRefusal, type ModelRoute, type ResponseItem } from "./openai-responses.ts";
 import { TextCallHoldback, textToolCalls } from "./chat-text-tool-calls.ts";
+import { readChatCompletionStream } from "./openai-chat-stream.ts";
 
 import { Agent, fetch as fetchWithoutLimits } from "undici";
 
@@ -350,94 +351,13 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         };
       }
 
-      if (!response.body) {
-        throw new Error(options.noBodyError ?? `${options.httpErrorLabel} returned no response body`);
-      }
-      let text = "";
-      let reasoning = "";
-      let protocolReasoning = "";
-      let usage: Usage | null = null;
-      let finishReason: string | null = null;
-      let malformedFrame = false;
-      let sawChoice = false;
-      const calls = new ChatToolCalls();
-      const details = new ChatReasoningDetails();
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      const consumeDataLine = (line: string, atEof = false): boolean => {
-        if (!line.startsWith("data:")) return false;
-        const data = line.slice(5).trim();
-        if (data === "[DONE]") return true;
-        let chunk: CompletionJson;
-        try {
-          chunk = JSON.parse(data) as CompletionJson;
-        } catch {
-          // A tail left when the socket closed is an incomplete frame (stop, abort, drop), not a malformed one.
-          if (!atEof) malformedFrame = true;
-          return false;
-        }
-        const chunkError = completionError(chunk, "streaming completion error");
-        if (chunkError) throw chunkError;
-        const choice = chunk.choices?.find((row) => row.index === undefined || row.index === 0);
-        const delta = choice?.delta;
-        if (object(delta)) sawChoice = true;
-        if (delta?.function_call) throw new ChatProtocolError("legacy function_call is unsupported; use structured tool_calls");
-        calls.add(delta?.tool_calls, true);
-        details.add(delta?.reasoning_details);
-        if (choice?.finish_reason) finishReason = choice.finish_reason;
-        const reasoningPart = delta?.reasoning_content ?? delta?.reasoning;
-        if (typeof reasoningPart === "string") protocolReasoning += reasoningPart;
-        const reasoningDelta = options.reasoning && typeof reasoningPart === "string"
-          ? reasoningPart
-          : "";
-        const contentDelta = options.contentText ? options.contentText(delta?.content) : typeof delta?.content === "string" ? delta.content : "";
-        if (reasoningDelta) {
-          reasoning += reasoningDelta;
-          onDelta?.(reasoningDelta, "reasoning_text");
-        }
-        if (contentDelta) {
-          text += contentDelta;
-          onDelta?.(contentDelta, "assistant_text");
-        }
-        const tokenUsage = completionUsage(chunk);
-        if (tokenUsage) usage = usageFrom(tokenUsage);
-        return false;
-      };
-      try {
-        readLoop: for (;;) {
-          const { done, value } = await reader.read();
-          if (done) {
-            buffer += decoder.decode();
-            const line = buffer.trim();
-            if (line && line !== "data: [DONE]") consumeDataLine(line, true);
-            // MiniMax's api.minimax.io/v1 closes the connection after the
-            // finish_reason chunk and never sends `[DONE]`.
-            if (buffer.trim() === "data: [DONE]" || finishReason) break;
-            if (!sawChoice) {
-              let body: CompletionJson | undefined;
-              try { body = JSON.parse(buffer) as CompletionJson; } catch { body = undefined; }
-              const bodyError = body ? completionError(body, "completion error") : null;
-              if (bodyError) throw bodyError;
-            }
-            throw new ChatProtocolError("Stream ended before completion");
-          }
-          resetIdleTimer();
-          buffer += decoder.decode(value, { stream: true });
-          if (buffer.length > 2_000_000) throw new ChatProtocolError("provider stream frame exceeded the size limit");
-          let newline: number;
-          while ((newline = buffer.indexOf("\n")) !== -1) {
-            const line = buffer.slice(0, newline).trim();
-            buffer = buffer.slice(newline + 1);
-            if (consumeDataLine(line)) break readLoop;
-          }
-        }
-      } finally {
-        await reader.cancel().catch(() => {});
-      }
+      const completion = await readChatCompletionStream(response.body, {
+        reasoning: Boolean(options.reasoning), contentText: options.contentText,
+        noBodyError: options.noBodyError ?? `${options.httpErrorLabel} returned no response body`,
+        onDelta, onBytes: resetIdleTimer,
+      });
       activeSignal.throwIfAborted();
-      if (!sawChoice) throw new ChatProtocolError("provider returned no streaming completion choice");
-      return { text, reasoning, usage, toolCalls: calls.finish(finishReason, malformedFrame), finishReason, protocolReasoning, protocolReasoningDetails: details.blocks };
+      return completion;
     } finally {
       if (idleTimer) clearTimeout(idleTimer);
       if (liveness) clearInterval(liveness);

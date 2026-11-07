@@ -223,3 +223,9 @@ export interface RoutineInput {
   /** Omission preserves routing; null resets it to the bot's main thread. */
   resultsThreadId?: string | null;
 }
+import type { ModelSelection } from "./wire.ts";
+export type { ModelSelection } from "./wire.ts";
+
+export interface RoutineModelSelection<T = ModelSelection> {
+  modelSelection?: T;
+}

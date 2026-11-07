@@ -9,13 +9,12 @@ import { redactSecretsInText } from "./redact.ts";
 import { activeRunsOf, nextDueOf, wakeHoldOf } from "./routine-due.ts";
 import type { GroupGoalRunStatus } from "../shared/group-goal-run.ts";
 import type { RoutineRequestOperation } from "../shared/routine-request.ts";
-import type { ModelSelection } from "../shared/wire.ts";
 import { intervalAllowsOccurrence, intervalHasRestrictions, isSameLocalDay, latestIntervalOccurrence } from "./routine-intervals.ts";
 import { cloneSchedule, limitResetOccurrence, mergeScheduleUpdate, nextOccurrence, RoutineScheduleError, type RoutineSchedule, type RoutineScheduleInput } from "./routine-schedules.ts";
 import { runsOnce } from "../shared/limit-reset.ts";
 import {
   isRoutineProblemRun, type RoutineAccess, type RoutineCheck, type RoutineContextAttachment, type RoutineDelivery, type RoutineIntervalWindow, type RoutineRetryCause,
-  type RoutineRunReport, type RoutineRunStatus, type RoutineRunTrigger,
+  type ModelSelection, type RoutineModelSelection, type RoutineRunReport, type RoutineRunStatus, type RoutineRunTrigger,
 } from "../shared/routines.ts";
 import type { PartPair, RoutinePart } from "./package-parts.ts";
 import {
@@ -45,7 +44,7 @@ export type RoutineTarget = "bot" | "room-goal";
 export type RoutineGoalStatus = Exclude<GroupGoalRunStatus, "working">;
 
 
-export interface Routine {
+export interface Routine extends RoutineModelSelection {
   id: string;
   name: string;
   prompt: string;
@@ -64,7 +63,6 @@ export interface Routine {
   checks?: RoutineCheck[];
   access?: RoutineAccess;
   deliver?: RoutineDelivery;
-  modelSelection?: ModelSelection;
   checkedAt?: number;
   checkTrouble?: string;
   wakeAt?: number;
@@ -161,7 +159,7 @@ export interface RoutineRequestCommit {
 type RoutineRequestCommitFor<Action extends RoutineRequestOperation["action"]> =
   Omit<RoutineRequestCommit, "action"> & { action: Action };
 
-export interface RoutineInput {
+export interface RoutineInput extends RoutineModelSelection<ModelSelection | null> {
   name: string;
   prompt: string;
   target?: RoutineTarget;
@@ -179,7 +177,6 @@ export interface RoutineInput {
   checks?: RoutineCheck[] | null;
   access?: RoutineAccess | null;
   deliver?: RoutineDelivery | null;
-  modelSelection?: ModelSelection | null;
   resultsThreadId?: string | null;
 }
 
