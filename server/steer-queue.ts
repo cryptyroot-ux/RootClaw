@@ -155,6 +155,11 @@ export function hasQueuedSteeredMessages(botId: string, threadId: string): boole
   return entry?.botId === botId && entry.items.length > 0;
 }
 
+export function hasQueuedPersonMessage(botId: string, threadId: string): boolean {
+  const entry = queues.get(threadId);
+  return entry?.botId === botId && entry.items.some((item) => !item.peerAsk && !item.unattended && !item.relay && !item.fromApp);
+}
+
 export function isSteeredMessageQueued(botId: string, threadId: string, queueId: string): boolean {
   const entry = queues.get(threadId);
   return entry?.botId === botId && entry.items.some((item) => item.messageId === queueId);

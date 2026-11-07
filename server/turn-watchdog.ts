@@ -19,6 +19,7 @@ export function stallLimitMs(raw: string | undefined, fallback: number): number 
 }
 
 const parked = (turn: WatchedTurn): boolean => turn.waitingOnHuman || turn.waitingOnComputer;
+const SUSPENDED_SWEEPS = 3;
 
 export interface TurnWatchdogOptions {
   stallMs: number;
@@ -45,7 +46,13 @@ export class TurnWatchdog {
 
   start(): void {
     if (this.timer) return;
-    this.timer = setInterval(() => this.sweep(), this.opts.checkMs);
+    let lastTickAt = Date.now();
+    this.timer = setInterval(() => {
+      const at = Date.now();
+      const gap = at - lastTickAt;
+      lastTickAt = at;
+      this.sweep(gap > SUSPENDED_SWEEPS * this.opts.checkMs ? gap : 0);
+    }, this.opts.checkMs);
     this.timer.unref?.();
   }
 
@@ -110,9 +117,10 @@ export class TurnWatchdog {
     return false;
   }
 
-  sweep(): void {
+  sweep(suspendedMs = 0): void {
     const at = this.now();
     for (const turn of this.turns.values()) {
+      if (suspendedMs) turn.lastEventAt = Math.min(at, turn.lastEventAt + suspendedMs);
       if (parked(turn)) continue;
       const silentMs = turn.runningTools.size > 0 ? Math.max(this.opts.stallMs, this.opts.toolStallMs) : this.opts.stallMs;
       if (at - turn.lastEventAt < silentMs) continue;
