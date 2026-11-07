@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { modelSwitchNeedsAsk, type ApprovalMode } from "../shared/approval-mode.ts";
 import type { ModelSelection } from "../shared/wire.ts";
+import type { Routine as SharedRoutine, RoutineInput as SharedRoutineInput } from "../shared/routines.ts";
 import { ROUTINE_MODEL_PERMISSIONS, routineModelRefusal, routineThreadModel, type RoutineModelChecks } from "./routine-input.ts";
 
 const HAIKU = { instanceId: "claude", model: "claude-3-haiku" };
@@ -36,5 +37,19 @@ describe("a routine's model and its bot's permissions", () => {
   it("falls back to the bot's model when permissions changed after the routine was saved", () => {
     expect(routineThreadModel({ botId: "full", modelSelection: HAIKU }, checks)).toEqual(HAIKU);
     expect(routineThreadModel({ botId: "custom", modelSelection: HAIKU }, checks)).toBeUndefined();
+  });
+
+  it("exposes model selection through the shared routine wire shapes", () => {
+    const schedule = { type: "once" as const, at: 1 };
+    const input: SharedRoutineInput = {
+      name: "Daily check", prompt: "Review inbox", botId: "bot", schedule, modelSelection: HAIKU,
+    };
+    const routine: SharedRoutine = {
+      id: "routine", name: input.name, prompt: input.prompt, target: "bot", botId: input.botId,
+      runOn: "rootclaw", enabled: true, schedule, durationMinutes: 30, modelSelection: HAIKU,
+      nextRunAt: 1, createdAt: 1, updatedAt: 1,
+    };
+    expect(input.modelSelection).toEqual(HAIKU);
+    expect(routine.modelSelection).toEqual(HAIKU);
   });
 });
