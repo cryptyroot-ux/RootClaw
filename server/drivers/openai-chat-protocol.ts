@@ -3,6 +3,7 @@ export interface ChatToolCall {
   id: string;
   type: "function";
   function: { name: string; arguments: string };
+  extra_content?: Record<string, unknown>;
 }
 
 /** Calls one model reply may carry (its index bound). */
@@ -82,6 +83,12 @@ export class ChatToolCalls {
           call.function[field] += fn[field];
           if (field === "arguments") this.argumentChars += fn[field].length;
         }
+      }
+      const extraContent = object(delta.extra_content);
+      if (extraContent) {
+        const previous = call.extra_content ? JSON.stringify(call.extra_content).length : 0;
+        call.extra_content = extraContent;
+        this.argumentChars += JSON.stringify(extraContent).length - previous;
       }
       if (call.function.name.length > 64 || this.argumentChars > MAX_ARGUMENT_CHARS) {
         throw new ChatProtocolError("provider tool calls exceeded the size limit");
