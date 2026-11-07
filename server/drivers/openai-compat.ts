@@ -285,6 +285,7 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
       computerUse: true,
       imageInput: (model) => visionInput(isOpenRouterUrl(config.url) ? "openrouter" : config.catalog === "openai" ? "openai" : undefined, model),
       nudgeAnnouncedAction: true,
+      localModel: onThisNetwork(config.url),
       models: () => catalog,
       refreshModels: fetchModels,
       requestBody: (model, messages, stream) => ({

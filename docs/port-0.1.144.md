@@ -82,6 +82,34 @@ Target remains `v0.1.144` (`dad50e140ef7f332ef101ae93aff8e9e0a83343b`). Candidat
 - Isolated fake-engine fixture: `doctor --url http://127.0.0.1:21216` reported connected and no problems; fixture was stopped afterward.
 - Logo/icon changes and Phase 5 stubs were not touched. No external engines were used.
 
+## Catch-up: remaining v0.1.144 candidates
+
+- Target: `v0.1.144` (`dad50e140ef7f332ef101ae93aff8e9e0a83343b`); branch `port/0144-catchup`, stacked on `port/0144-skills-tools`.
+- Candidate ancestry was checked against the target tag; `f6967835c` and `f6af8a06e` are post-tag and excluded. This catch-up supersedes the earlier Batch 2 defer for `637161105`, after its behavior was isolated behind the local-network runtime path and covered by focused integration tests.
+
+| Upstream SHA | Ancestry | Decision | Port / reason | Focused tests |
+|---|---|---|---|---|
+| `637161105062b5609d02a4f9cc14767482a3a10d` | Ancestor | AMBIL | Recovered local-model text tool calls through RootClaw's existing validation, approval, and tool execution path; held possible markup from streamed output; re-asked once for unreadable calls; added local repeat guard and corrective rounds. Enabled only for OpenAI-compatible endpoints on the local network. | `server/drivers/chat-text-tool-calls.test.ts`, `server/drivers/chat-repeat-guard.test.ts`, `server/drivers/openai-chat-local-model.test.ts` |
+| `9022b06ba82e178fd1c0601171c7a04de2e1c34e` | Ancestor | LEWATI | Adds model cloning/context provisioning, lifecycle, and memory policy across injection and registry. RootClaw has no isolated provisioning contract; importing it would add engine lifecycle behavior beyond this catch-up's proven chat-path changes. | None; no code changed. |
+| `4776d25b079881f8118559c08d7dbd8ccd8d9665` | Ancestor | LEWATI | Auto-enables the agents tool bridge for local engines. RootClaw's bridge is explicitly opt-in and its permission decision depends on engine-owned tool policy; changing the default is a separate security decision. | None; no code changed. |
+| `3c165f55d0dac30418dc8da3385c715a53d094be` | Ancestor | SUDAH ADA | OpenAI-compatible instances already accept `replyWaitMinutes` and apply it to the runtime timeout (`server/drivers/openai-compat.ts`). No additional settings/UI port needed. | Existing compat tests; no new code. |
+| `a47625150b24dccf9582ba65163046d0bd3c14c3` | Ancestor | SUDAH ADA / LEWATI | RootClaw already bounds and validates MCP tool definitions, schemas, and runtime calls with its own policy; upstream's broader tool-budget redesign is not a safe incremental transplant into that contract. | None; no code changed. |
+| `ac08cf72a70f4d334ea39e9044ecc514c0c1056c` | Ancestor | LEWATI | Adjusts simple-mode sidebar activity rendering; RootClaw's activity/selection semantics differ and this is outside the selected driver catch-up. | None; no code changed. |
+| `823f7e1f3cefcf6dcdcd9ff1af90c20bf9397237` | Ancestor | LEWATI | Requires coordinated runtime ancestry, assignment-envelope, notice, and coordinator contract changes across multiple layers; no isolated thread-only port preserves the current contract. | None; no code changed. |
+| `ef71364537a635dc6d5ac402cca3550b2f8b7660` | Ancestor | LEWATI | Adds long tool-output loading across the wire contract, authenticated routes, companion allowlist, and chat views; too broad for a minimal catch-up. | None; no code changed. |
+| `a72d920d155600a4ccaa6b8354d1e0326eed5f0a` | Ancestor | LEWATI | Running-routine sidebar rendering is UI-specific and outside this driver catch-up. | None; no code changed. |
+| `7d7e7a1c1e400d08e85e493bb0436f19ab9703b5` | Ancestor | LEWATI | Routine result-thread banner behavior is UI polish outside this catch-up. | None; no code changed. |
+| `73ab955eb4d44eb288e37be109d7525626900343` | Ancestor | LEWATI | Adds a separate confinement policy for externally opened threads, not required for the selected driver catch-up. | None; no code changed. |
+
+### Catch-up verification
+
+- `server/drivers/openai-chat-local-model.test.ts`, `server/drivers/openai-responses.test.ts`, `server/drivers/chat-repeat-guard.test.ts`, and `server/drivers/chat-text-tool-calls.test.ts`: passed (4 files, 79 tests).
+- `server/routine-model.test.ts` and `server/routines.test.ts`: passed (2 files, 197 tests).
+- `pnpm typecheck`: passed.
+- Touched-driver `oxlint --deny-warnings` and `git diff --check`: passed.
+- Isolated fixture launched with `node --experimental-strip-types scripts/control-rootclaw.ts launch`; `pnpm control:rootclaw doctor --url http://127.0.0.1:22243` reported connected and no problems; fixture was stopped afterward.
+- No dependencies added; no full Vitest suite run.
+
 ## Batch 4 — skills and tools
 
 - Target: `v0.1.144` (`dad50e140ef7f332ef101ae93aff8e9e0a83343b`); branch `port/0144-skills-tools`, stacked on `fix/memory-upkeep-lifecycle-test` at PR #34 head `107ebc97da374f6b1a463b54797cc08b0880f12f`.
