@@ -1,12 +1,18 @@
-// A tool call a local model wrote as text instead of as a structured call. Local servers turn this text into tool_calls
-// only when their chat template and parser match the model, and when they do not the call reaches us as the reply: Qwen
-// through Ollama's /v1, a GGUF with a stock template, a server started without --jinja.
+// Text recovery: at most one complete call at the end of the reply, otherwise nothing runs.
 //
-// The forms are the ones the servers' own parsers read: `<tool_call>{json}</tool_call>` (Hermes and Qwen templates),
-// `<function=name><parameter=key>…` (Qwen coder templates) and a reply that is nothing but one JSON call. This is stricter
-// than those parsers, which take a tag anywhere in the output: the calls must end the reply and name an offered tool, so
-// a reply that quotes a call and goes on talking stays a reply. Reasoning is never read. A recovered call then takes the
-// same schema check and approval as any other.
+// Think prefix: from the start, drop whitespace and complete `<think>…</think>` blocks.
+// The first `</think>` closes the block. Quotes inside it are not tracked, and the
+// opener is forgotten when the block ends. A later or bare `</think>` does not
+// discard earlier text.
+//
+// The call, after optional prose, is exactly one of:
+// `<tool_call>` + one JSON object + `</tool_call>`,
+// `<tool_call>` + one `<function=name>…</function>` + `</tool_call>`,
+// `<function=name>…</function>`,
+// or a reply that is only one JSON object or one fenced JSON object.
+// Both close tags are required. Text inside JSON strings and `<parameter>` bodies
+// is data, not another call. A second call, a mix, a missing close, or a call
+// that begins inside an unclosed quotation is not recovered.
 import { randomUUID } from "node:crypto";
 import type { ChatToolCall } from "./openai-chat-protocol.ts";
 import { object } from "./openai-chat-protocol.ts";
@@ -16,64 +22,22 @@ export interface OfferedTool {
 }
 
 export type TextToolCalls =
-  /** `text` is what the model said before the calls. */
+  /** `text` is what the model said before the call. */
   | { kind: "calls"; calls: ChatToolCall[]; text: string }
   /** It tried to call a tool and the call cannot be read: worth one request to send it again. */
   | { kind: "unreadable"; text: string };
 
-const MAX_CALLS = 32;
 const OPEN_TAG = "<tool_call>";
 const CLOSE_TAG = "</tool_call>";
 const OPEN_FUNCTION = "<function=";
-const THINK_END = "</think>";
-
 const FUNCTION_CLOSE = "</function>";
 const THINK_OPEN = "<think>";
-const FUNCTION_BLOCK = /^<function=([^>\s]+)\s*>([\s\S]*?)<\/function>\s*$/;
-const PARAMETER = /<parameter=([^>\s]+)\s*>([\s\S]*?)(?:<\/parameter>|(?=<parameter=)|$)/g;
+const THINK_END = "</think>";
+const PARAMETER_CLOSE = "</parameter>";
 const FENCED_JSON = /^```(?:json)?\s*\n?([\s\S]*?)\n?```$/;
 
 type Quote = '"' | "'" | null;
-
-/** `'` between letters is a contraction, not a quotation. */
-function openQuote(text: string, index: number): Quote {
-  const mark = text[index];
-  if (mark === '"') return '"';
-  if (mark === "'" && (index === 0 || !/[A-Za-z0-9]/.test(text[index - 1]!))) return "'";
-  return null;
-}
-
-/** Index of `needle` outside `"..."` and `'...'`. A backslash keeps the next character. */
-function outsideQuotes(text: string, needle: string, from = 0): number {
-  let quote: Quote = null;
-  for (let i = from; i < text.length; i++) {
-    if (quote) {
-      if (text[i] === "\\") { i++; continue; }
-      if (text[i] === quote) quote = null;
-      continue;
-    }
-    const opened = openQuote(text, i);
-    if (opened) { quote = opened; continue; }
-    if (text.startsWith(needle, i)) return i;
-  }
-  return -1;
-}
-
-/** Index of `needle` outside a JSON string. Prose quotes are not special here. */
-function outsideJsonStrings(text: string, needle: string): number {
-  let inString = false;
-  for (let i = 0; i < text.length; i++) {
-    const mark = text[i];
-    if (inString) {
-      if (mark === "\\") { i++; continue; }
-      if (mark === '"') inString = false;
-      continue;
-    }
-    if (mark === '"') { inString = true; continue; }
-    if (text.startsWith(needle, i)) return i;
-  }
-  return -1;
-}
+type OneCall = ChatToolCall | "trailing" | "bad";
 
 function parsedObject(text: string): Record<string, unknown> | undefined {
   try { return object(JSON.parse(text)); } catch { return undefined; }
@@ -104,87 +68,43 @@ function jsonCall(body: string, offered: ReadonlyMap<string, OfferedTool>): Chat
   return args ? toCall(parsed.name, args) : undefined;
 }
 
-function functionCall(body: string, offered: ReadonlyMap<string, OfferedTool>): ChatToolCall | undefined {
-  const block = FUNCTION_BLOCK.exec(body);
-  const tool = block ? offered.get(block[1]!) : undefined;
-  if (!block || !tool) return undefined;
-  const args: Record<string, unknown> = {};
-  for (const [, key, raw] of block[2]!.matchAll(PARAMETER)) args[key!] = parameterValue(tool, key!, raw!);
-  return toCall(block[1]!, args);
+function openQuote(text: string, index: number): Quote {
+  const mark = text[index];
+  if (mark === '"') return '"';
+  if (mark === "'" && (index === 0 || !/[A-Za-z0-9]/.test(text[index - 1]!))) return "'";
+  return null;
 }
 
-type CallBodies = { ok: true; bodies: string[] } | { ok: false };
-
-/** A closed coder block, or failure when the tag is unclosed or swallows a later call. */
-function takeFunction(text: string): { body: string; rest: string } | undefined {
-  const close = text.indexOf(FUNCTION_CLOSE);
-  const nested = text.indexOf(OPEN_FUNCTION, OPEN_FUNCTION.length);
-  const tool = text.indexOf(OPEN_TAG);
-  if (close === -1 || (nested !== -1 && nested < close) || (tool !== -1 && tool < close)) return undefined;
-  const end = close + FUNCTION_CLOSE.length;
-  return { body: text.slice(0, end), rest: text.slice(end) };
-}
-
-/** One `<tool_call>` body. JSON strings may contain tags; those tags are not calls. */
-function takeToolCall(text: string): { body: string; rest: string; form: "json" | "coder" } | undefined {
-  const trimmed = text.trimStart();
-  if (trimmed.startsWith(OPEN_TAG)) return undefined;
-  if (trimmed.startsWith(OPEN_FUNCTION)) {
-    const coder = takeFunction(trimmed);
-    if (!coder) return undefined;
-    const after = coder.rest.trimStart();
-    if (after.startsWith(CLOSE_TAG)) return { body: coder.body, rest: after.slice(CLOSE_TAG.length), form: "coder" };
-    if (after === "") return { body: coder.body, rest: "", form: "coder" };
-    return undefined;
+/** The first `</think>` ends the block. Nothing inside the block is a call or a quote. */
+function stripThinkPrefix(text: string): string {
+  let start = 0;
+  while (start < text.length) {
+    let at = start;
+    while (at < text.length && /\s/.test(text[at]!)) at++;
+    if (!text.startsWith(THINK_OPEN, at)) break;
+    const close = text.indexOf(THINK_END, at + THINK_OPEN.length);
+    if (close === -1) break;
+    start = close + THINK_END.length;
   }
-  const close = outsideJsonStrings(text, CLOSE_TAG);
-  if (close === -1) {
-    if (outsideJsonStrings(text, OPEN_TAG) !== -1 || outsideJsonStrings(text, OPEN_FUNCTION) !== -1) return undefined;
-    return { body: text, rest: "", form: "json" };
-  }
-  const innerTool = outsideJsonStrings(text, OPEN_TAG);
-  const innerFunction = outsideJsonStrings(text, OPEN_FUNCTION);
-  if ((innerTool !== -1 && innerTool < close) || (innerFunction !== -1 && innerFunction < close)) return undefined;
-  return { body: text.slice(0, close), rest: text.slice(close + CLOSE_TAG.length), form: "json" };
+  return text.slice(start);
 }
 
-/** Complete calls only. Undefined when prose follows; `{ ok: false }` when the syntax is mixed or unfinished. */
-function taggedBodies(text: string): CallBodies | undefined {
-  const bodies: string[] = [];
-  let form: "json" | "coder" | undefined;
-  let rest = text;
-  while (rest.trim()) {
-    rest = rest.trimStart();
-    if (rest.startsWith(OPEN_FUNCTION)) {
-      if (form === "json") return { ok: false };
-      const coder = takeFunction(rest);
-      if (!coder) return { ok: false };
-      form = "coder";
-      bodies.push(coder.body);
-      rest = coder.rest;
+function unmatchedQuote(text: string): boolean {
+  let quote: Quote = null;
+  for (let i = 0; i < text.length; i++) {
+    if (quote) {
+      if (text[i] === "\\") { i++; continue; }
+      if (text[i] === quote) quote = null;
       continue;
     }
-    if (!rest.startsWith(OPEN_TAG)) return undefined;
-    const call = takeToolCall(rest.slice(OPEN_TAG.length));
-    if (!call || (form && form !== call.form)) return { ok: false };
-    form = call.form;
-    bodies.push(call.body);
-    rest = call.rest;
+    const opened = openQuote(text, i);
+    if (opened) quote = opened;
   }
-  return { ok: true, bodies };
+  return quote !== null;
 }
 
-function firstCallAt(text: string): number {
-  return outsideQuotes(text, OPEN_TAG) === -1 && outsideQuotes(text, OPEN_FUNCTION) === -1
-    ? -1
-    : Math.min(...[outsideQuotes(text, OPEN_TAG), outsideQuotes(text, OPEN_FUNCTION)].filter((at) => at !== -1));
-}
-
-/** Drops text through a real `<think>…</think>` pair. A quoted or bare `</think>` does not. */
-function withoutThinking(text: string): string {
+function thinkMarkerOutsideQuotes(text: string): boolean {
   let quote: Quote = null;
-  let thinkAt = -1;
-  let closeAt = -1;
   for (let i = 0; i < text.length; i++) {
     if (quote) {
       if (text[i] === "\\") { i++; continue; }
@@ -193,39 +113,150 @@ function withoutThinking(text: string): string {
     }
     const opened = openQuote(text, i);
     if (opened) { quote = opened; continue; }
-    if (text.startsWith(THINK_OPEN, i)) thinkAt = i;
-    else if (text.startsWith(THINK_END, i) && thinkAt !== -1 && thinkAt < i) closeAt = i;
+    if (text.startsWith(THINK_OPEN, i) || text.startsWith(THINK_END, i)) return true;
   }
-  return closeAt === -1 ? text : text.slice(closeAt + THINK_END.length);
+  return false;
+}
+
+function firstTagOutsideQuotes(text: string): number {
+  let quote: Quote = null;
+  for (let i = 0; i < text.length; i++) {
+    if (quote) {
+      if (text[i] === "\\") { i++; continue; }
+      if (text[i] === quote) quote = null;
+      continue;
+    }
+    const opened = openQuote(text, i);
+    if (opened) { quote = opened; continue; }
+    if (text.startsWith(OPEN_TAG, i) || text.startsWith(OPEN_FUNCTION, i)) return i;
+  }
+  return -1;
+}
+
+function endOfJsonValue(text: string): number {
+  if (!text.startsWith("{")) return -1;
+  let depth = 0;
+  let inString = false;
+  for (let i = 0; i < text.length; i++) {
+    const mark = text[i]!;
+    if (inString) {
+      if (mark === "\\") { i++; continue; }
+      if (mark === '"') inString = false;
+      continue;
+    }
+    if (mark === '"') { inString = true; continue; }
+    if (mark === "{") depth++;
+    else if (mark === "}") {
+      depth--;
+      if (depth === 0) return i + 1;
+    }
+  }
+  return -1;
+}
+
+/** The matching `</parameter>`. A `<parameter=` inside the body is text, so it does not end the value. */
+function parameterEnd(text: string, from: number): number {
+  let depth = 1;
+  let i = from;
+  while (i < text.length) {
+    const close = text.indexOf(PARAMETER_CLOSE, i);
+    if (close === -1) return -1;
+    const open = text.indexOf("<parameter=", i);
+    if (open !== -1 && open < close) {
+      depth++;
+      i = open + "<parameter=".length;
+      continue;
+    }
+    depth--;
+    if (depth === 0) return close;
+    i = close + PARAMETER_CLOSE.length;
+  }
+  return -1;
+}
+
+/** One `<function=…>…</function>`. The name is the outer tag. Parameter text is not another call. */
+function readFunction(text: string): { name: string; args: Record<string, string>; length: number } | undefined {
+  const open = /^<function=([^>\s]+)\s*>/.exec(text);
+  if (!open) return undefined;
+  let i = open[0].length;
+  const args: Record<string, string> = {};
+  while (i < text.length) {
+    while (i < text.length && /\s/.test(text[i]!)) i++;
+    if (text.startsWith(FUNCTION_CLOSE, i)) return { name: open[1]!, args, length: i + FUNCTION_CLOSE.length };
+    const param = /^<parameter=([^>\s]+)\s*>/.exec(text.slice(i));
+    if (!param) return undefined;
+    const valueAt = i + param[0].length;
+    const close = parameterEnd(text, valueAt);
+    if (close === -1) return undefined;
+    args[param[1]!] = text.slice(valueAt, close);
+    i = close + PARAMETER_CLOSE.length;
+  }
+  return undefined;
+}
+
+function coderCall(name: string, rawArgs: Record<string, string>, offered: ReadonlyMap<string, OfferedTool>): ChatToolCall | undefined {
+  const tool = offered.get(name);
+  if (!tool) return undefined;
+  const args: Record<string, unknown> = {};
+  for (const [key, raw] of Object.entries(rawArgs)) args[key] = parameterValue(tool, key, raw);
+  return toCall(name, args);
+}
+
+function afterCall(rest: string, call: ChatToolCall | undefined): OneCall {
+  if (!call) return "bad";
+  if (rest.trim() === "") return call;
+  const more = rest.trimStart();
+  if (more.startsWith(OPEN_TAG) || more.startsWith(OPEN_FUNCTION)) return "bad";
+  return "trailing";
+}
+
+/** One closed call that finishes `text`, or why it is not that. */
+function oneClosedCall(text: string, offered: ReadonlyMap<string, OfferedTool>): OneCall {
+  if (text.startsWith(OPEN_TAG)) {
+    const inner = text.slice(OPEN_TAG.length);
+    const trimmed = inner.trimStart();
+    const lead = inner.length - trimmed.length;
+    if (trimmed.startsWith(OPEN_FUNCTION)) {
+      const fn = readFunction(trimmed);
+      if (!fn) return "bad";
+      let i = lead + fn.length;
+      while (i < inner.length && /\s/.test(inner[i]!)) i++;
+      if (!inner.startsWith(CLOSE_TAG, i)) return "bad";
+      return afterCall(inner.slice(i + CLOSE_TAG.length), coderCall(fn.name, fn.args, offered));
+    }
+    if (!trimmed.startsWith("{")) return "bad";
+    const jsonEnd = endOfJsonValue(trimmed);
+    if (jsonEnd < 0) return "bad";
+    let i = lead + jsonEnd;
+    while (i < inner.length && /\s/.test(inner[i]!)) i++;
+    if (!inner.startsWith(CLOSE_TAG, i)) return "bad";
+    return afterCall(inner.slice(i + CLOSE_TAG.length), jsonCall(trimmed.slice(0, jsonEnd), offered));
+  }
+  if (text.startsWith(OPEN_FUNCTION)) {
+    const fn = readFunction(text);
+    if (!fn) return "bad";
+    return afterCall(text.slice(fn.length), coderCall(fn.name, fn.args, offered));
+  }
+  return "bad";
 }
 
 /** Null when the reply is a reply. */
 export function textToolCalls(reply: string, tools: readonly OfferedTool[]): TextToolCalls | null {
   const offered = new Map(tools.map((tool) => [tool.function.name, tool]));
-  const text = withoutThinking(reply).trim();
-  // A reply that is one JSON value is only that value. A tag inside an argument is not a second call.
+  const text = stripThinkPrefix(reply).trim();
   if (text.startsWith("{") || FENCED_JSON.test(text)) {
     const fenced = FENCED_JSON.exec(text)?.[1];
-    const call = jsonCall(fenced ?? text, offered);
+    const call = jsonCall((fenced ?? text).trim(), offered);
     return call ? { kind: "calls", calls: [call], text: "" } : null;
   }
-  const at = firstCallAt(text);
+  const at = firstTagOutsideQuotes(text);
   if (at === -1) return null;
   const said = text.slice(0, at).trimEnd();
-  const parsed = taggedBodies(text.slice(at));
-  // Calls followed by more words: an example or a quotation, not a request to run something.
-  if (!parsed || !parsed.ok) return parsed ? { kind: "unreadable", text: said } : null;
-  const bodies = parsed.bodies;
-  if (!bodies.length || bodies.length > MAX_CALLS) return null;
-  const calls: ChatToolCall[] = [];
-  for (const body of bodies) {
-    // Only a body that is the coder form is one. `<function=` inside JSON arguments stays argument text.
-    const trimmed = body.trim();
-    const call = trimmed.startsWith(OPEN_FUNCTION) ? functionCall(trimmed, offered) : jsonCall(trimmed, offered);
-    if (!call) return { kind: "unreadable", text: said };
-    calls.push(call);
-  }
-  return { kind: "calls", calls, text: said };
+  if (unmatchedQuote(said) || thinkMarkerOutsideQuotes(said)) return null;
+  const parsed = oneClosedCall(text.slice(at).trimStart(), offered);
+  if (parsed === "trailing") return null;
+  if (parsed === "bad") return { kind: "unreadable", text: said };
+  return { kind: "calls", calls: [parsed], text: said };
 }
 
 const MARKERS = [OPEN_TAG, OPEN_FUNCTION];
@@ -236,6 +267,14 @@ function partialMarkerLength(text: string): number {
     if (MARKERS.some((marker) => marker.startsWith(tail))) return length;
   }
   return 0;
+}
+
+function earliestTag(text: string): number {
+  const tool = text.indexOf(OPEN_TAG);
+  const fn = text.indexOf(OPEN_FUNCTION);
+  if (tool === -1) return fn;
+  if (fn === -1) return tool;
+  return Math.min(tool, fn);
 }
 
 /** Keeps a call out of the streamed reply: words before it show as they arrive, and from where a call might start the
@@ -249,7 +288,7 @@ export class TextCallHoldback {
     const start = this.seen.trimStart();
     // A reply opening like this may be one bare JSON call, which is only known at the end.
     if (!start || start.startsWith("{") || "```".startsWith(start.slice(0, 3)) || start.startsWith("```")) return "";
-    const at = firstCallAt(this.seen);
+    const at = earliestTag(this.seen);
     const end = at !== -1 ? at : this.seen.length - partialMarkerLength(this.seen);
     if (end <= this.shown) return "";
     const visible = this.seen.slice(this.shown, end);
