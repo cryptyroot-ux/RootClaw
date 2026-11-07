@@ -175,26 +175,37 @@ describe("a tool call a local model wrote as text", () => {
   });
 });
 
-describe("a local model repeating itself", () => {
-  it("stops running a call that keeps failing the same way, tells the model, then ends the turn", async () => {
+describe("local model turns use RootClaw's loop guard", () => {
+  it("keeps RootClaw's existing loop limit for a repeated mutating call", async () => {
+    let id = 0;
+    const f = await fixture((_body, response) => structured(response, "audit_write", `call-${++id}`));
+    await f.start();
+    expect(await f.completed()).toMatchObject({ ok: true, stopReason: "tool_loop" });
+    expect(f.effects()).toHaveLength(3);
+    expect(f.requests).toHaveLength(4);
+    expect(f.requests[3]!.messages.at(-1)).toMatchObject({ role: "user", content: expect.stringContaining("tools are off") });
+  });
+
+  it("stops running an identical failing call at the shared loop limit", async () => {
     let id = 0;
     const f = await fixture((_body, response) => structured(response, "audit_fail", `call-${++id}`));
     await f.start();
     const completed = await f.completed();
-    expect(completed).toMatchObject({ ok: false, stopReason: "incomplete_action" });
+    expect(completed).toMatchObject({ ok: true, stopReason: "tool_loop" });
     expect(f.effects()).toHaveLength(3);
-    expect(JSON.stringify(f.requests[3]!.messages.at(-1))).toContain("will not run again");
-    expect(JSON.stringify(f.requests[4]!.messages.at(-1))).toContain("was not run");
-    expect(f.recorder.events).toContainEqual(expect.objectContaining({ type: "runtime.error", message: expect.stringContaining("audit_fail") }));
+    expect(f.requests).toHaveLength(4);
+    expect(JSON.stringify(f.requests[3]!.messages.at(-1))).toContain("tools are off");
+    expect(f.recorder.events.some((event) => event.type === "runtime.error")).toBe(false);
   });
 
-  it("ends a turn stuck on one unchanging answer", async () => {
+  it("stops a repeated successful call without running it indefinitely", async () => {
     let id = 0;
     const f = await fixture((_body, response) => structured(response, "audit_status", `call-${++id}`));
     await f.start();
-    expect(await f.completed()).toMatchObject({ ok: false, stopReason: "incomplete_action" });
-    expect(f.effects()).toHaveLength(10);
-    expect(JSON.stringify(f.requests[3]!.messages.at(-1))).toContain("same result");
+    expect(await f.completed()).toMatchObject({ ok: true, stopReason: "tool_loop" });
+    expect(f.effects()).toHaveLength(3);
+    expect(f.requests).toHaveLength(4);
+    expect(JSON.stringify(f.requests[3]!.messages.at(-1))).toContain("tools are off");
   });
 
   it("gets a failed call corrected, without being configured to", async () => {

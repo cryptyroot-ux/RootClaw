@@ -60,7 +60,6 @@ import { classifyContinuable, writeTurnHandoff } from "../turn-continuation.ts";
 import { KEY_REJECTED_REASON, keyRejected, noteKeyAccepted, noteKeyRejected, rejectsKey } from "../key-rejections.ts";
 import { fenceUntrustedToolOutput } from "./fence-markers.ts";
 import { createModelRoutes, ModelRouteRefused, noRouteLeft, readResponsesStream, responsesRequest, routeRefusal, type ModelRoute, type ResponseItem } from "./openai-responses.ts";
-import { ChatRepeatGuard } from "./chat-repeat-guard.ts";
 import { TextCallHoldback, textToolCalls } from "./chat-text-tool-calls.ts";
 
 import { Agent, fetch as fetchWithoutLimits } from "undici";
@@ -595,7 +594,6 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
       const seenCalls = new Set<string>();
       const callSignatures = new Map<string, string>();
       const loopGuard = new ToolLoopGuard();
-      const repeats = options.localModel ? new ChatRepeatGuard() : undefined;
       let unreadable = false;
       let askedAgain = false;
       // The planner's state lives outside the try so a failover can hand the plan to the next model in the chain.
@@ -1138,7 +1136,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           const runCall = async (call: ChatToolCall) => {
             let result: ChatToolResult;
             let started = false;
-            let fatal: Error | undefined, title = call.function.name, skipRepeatCount = false;
+            let fatal: Error | undefined, title = call.function.name;
             // A call that runs a command carries it as the activity's summary, so the run card can list its steps.
             let command: string | undefined, outwardActions: OutwardCommandAction[] = [];
             const commandSummary = () => ({ ...(command ? { summary: command } : {}), ...(outwardActions.length ? { outwardActions } : {}) });
@@ -1226,8 +1224,6 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
                 started = true;
                 result = readToolOutput(args as Record<string, unknown>, { dir: ctx.offloadDir, threadId: turn.threadId });
               } else {
-                const refused = repeats?.refuses(call.function.name, call.function.arguments);
-                if (refused) { skipRepeatCount = true; throw new Error(refused); }
                 session.validate(call.function.name, args);
                 const shown = session.view(call.function.name, args as Record<string, unknown>); title = shown.title;
                 const shownPreview = shown.input === args ? inputPreview : preview(shown.input);
@@ -1269,8 +1265,6 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             }
             if (!started) emit({ ...base(turn.threadId, turnId), type: "item.started", itemType: "tool", itemId: call.id, ...commandSummary(), title: call.function.name });
             let text = safeText(result.text);
-            const repeatNote = skipRepeatCount ? undefined : repeats?.noteAfter(call.function.name, call.function.arguments, result);
-            if (repeatNote) text = `${text}\n\n${repeatNote}`;
             const offloaded = offloadOn && call.function.name !== READ_TOOL_OUTPUT_TOOL
               ? offloadToolOutput(text, { dir: ctx.offloadDir, threadId: turn.threadId, callId: call.id, thresholdBytes: ctx.offloadBytes })
               : null;
@@ -1296,15 +1290,14 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
               // outside a repo, or read_file on a missing file, is often the point); the model sees the error either way.
               if (!result.ok && call.function.name !== UPDATE_PLAN_TOOL && !readOnlyTool(call.function.name)) { toolFailed = true; failedCalls.push(title); }
               messages.push({ role: "tool", tool_call_id: call.id, content });
-              if (!options.localModel && loopGuard.commit(call, readOnlyTool(call.function.name), content, round + 1)) emit({ ...base(turn.threadId, turnId), type: "runtime.notice", message: TOOL_LOOP_NOTICE });
+              if (loopGuard.commit(call, readOnlyTool(call.function.name), content, round + 1)) emit({ ...base(turn.threadId, turnId), type: "runtime.notice", message: TOOL_LOOP_NOTICE });
               screenshotParts.push(...chatToolImages(call.id, result.images));
               abort.signal.throwIfAborted();
               if (fatal) throw fatal;
-              if (repeats?.stopped) { stopReason = "incomplete_action"; throw new ChatProtocolError(repeats.stopped); }
             },
           });
           if (screenshotParts.length) { messages.push({ role: "user", content: screenshotParts }); pruneScreenshots(messages); }
-          if (!options.localModel && loopGuard.closing) messages.push({ role: "user", content: TOOL_LOOP_NOTE });
+          if (loopGuard.closing) messages.push({ role: "user", content: TOOL_LOOP_NOTE });
           // After the batch ran (so this round's calls saw the tool as offered):
           if (planOnly) {
             planOnlyRounds++;
