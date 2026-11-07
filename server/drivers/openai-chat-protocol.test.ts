@@ -73,6 +73,22 @@ describe("complete chat tool calls", () => {
 describe("streamed tool calls without an index (Gemini's OpenAI-compatible endpoint)", () => {
   const whole = (id: string, name: string, args = "{}") => ({ id, type: "function", function: { name, arguments: args } });
 
+  it("keeps Gemini thought signatures with calls", () => {
+    const calls = new ChatToolCalls();
+    const extra_content = { google: { thought_signature: "c2ln" } };
+    calls.add([{ ...completeCall, extra_content }], true);
+    expect(calls.finish("stop", false)).toEqual([{ ...completeCall, extra_content }]);
+  });
+
+  it("counts a signature repeated on each streamed chunk only once", () => {
+    const calls = new ChatToolCalls();
+    const extra_content = { google: { thought_signature: "s".repeat(100_000) } };
+    calls.add([{ index: 0, ...completeCall, extra_content }], true);
+    calls.add([{ index: 0, extra_content }], true);
+    calls.add([{ index: 0, extra_content }], true);
+    expect(calls.finish("stop", false)).toEqual([{ ...completeCall, extra_content }]);
+  });
+
   it("keeps two whole calls sent in one chunk", () => {
     const calls = new ChatToolCalls();
     calls.add([whole("function-call-1", "open_url", '{"url":"https://example.com"}'), whole("function-call-2", "open_url", '{"url":"https://example.org"}')], true);
