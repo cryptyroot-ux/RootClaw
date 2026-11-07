@@ -14,6 +14,7 @@ import { forgetKey, keyRejected } from "../key-rejections.ts";
 import { removeTempDir } from "../testing/cleanup.ts";
 import { recordEvents } from "../testing/events.ts";
 import { isOpenAIChatModel, OpenAICompatDriver } from "./openai-compat.ts";
+import { learnContextWindow } from "../context-budget.ts";
 import { createModelRoutes, isOpenAIAddress, responsesRequest, routeRefusal } from "./openai-responses.ts";
 
 const OPENAI = "https://api.openai.com/v1";
@@ -224,6 +225,21 @@ describe("the Responses request", () => {
       ],
     });
   });
+
+  it("sends a closing tool_choice and a 512-token ceiling on the Responses fields", () => {
+    const body = responsesRequest({
+      model: MODEL,
+      summaries: false,
+      replay: () => undefined,
+      toolChoice: "none",
+      maxTokens: 512,
+      tools: [{ type: "function", function: { name: "audit_write", description: "Writes", parameters: { type: "object" } } }],
+      messages: [{ role: "user", content: "Answer from what you have." }],
+    });
+    expect(body.tool_choice).toBe("none");
+    expect(body.max_output_tokens).toBe(512);
+    expect(body.tools).toEqual([{ type: "function", name: "audit_write", description: "Writes", parameters: { type: "object" }, strict: false }]);
+  });
 });
 
 describe("a model that refuses tools over Chat Completions, at OpenAI's address", () => {
@@ -271,6 +287,30 @@ describe("a model that refuses tools over Chat Completions, at OpenAI's address"
 });
 
 describe("tool rounds over Responses", () => {
+  it("asks the closing Responses request for no tools and forwards the reply ceiling", async () => {
+    const f = await fixture((call, response) => {
+      if (call.path.endsWith("/chat/completions")) return reject(response, 400, refusalOf(MODEL));
+      const responses = f.calls.filter((entry) => entry.path.endsWith("/responses")).length;
+      if (responses >= 4) return answer(response, "Final answer.");
+      const id = `call_${responses}`;
+      const item = callItem("audit_write", '{"name":"receipt","value":"done"}', id, `fc_${responses}`);
+      events(response, [created, done(item, 0), completed([item])]);
+    });
+    learnContextWindow(f.instance.instanceId, MODEL, 8_192);
+    const { end } = await f.turn();
+    const responses = f.calls.filter((call) => call.path.endsWith("/responses"));
+    expect(end).toMatchObject({ ok: true, stopReason: "tool_loop" });
+    expect(responses).toHaveLength(4);
+    expect(responses.slice(0, 3).every((call) => call.body.tools?.length && call.body.tool_choice === undefined)).toBe(true);
+    expect(responses[3]!.body.tools?.length).toBeGreaterThan(0);
+    expect(responses[3]!.body.tool_choice).toBe("none");
+    for (const call of responses) {
+      expect(call.body.max_output_tokens).toEqual(expect.any(Number));
+      expect(call.body.max_output_tokens).toBeGreaterThanOrEqual(256);
+      expect(call.body.max_output_tokens).toBeLessThan(8_192);
+    }
+  });
+
   it("replays every output item of the round and stores nothing upstream", async () => {
     const f = await fixture((call, response, nth) => {
       if (call.path.endsWith("/chat/completions")) return reject(response, 400, refusalOf(MODEL));

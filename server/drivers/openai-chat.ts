@@ -256,7 +256,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
 
       const { payload: chatPayload, parallel } = chatCompletionRequest(options.requestBody(model, messages, stream), { tools, toolChoice, maxTokens, model, allowParallel: parallelToolCalls });
       const payload = route === "responses"
-        ? JSON.stringify(responsesRequest({ model, messages, tools, replay: (message) => responseOutputs.get(message), summaries: routes.summaries(model) }))
+        ? JSON.stringify(responsesRequest({ model, messages, tools, toolChoice, maxTokens, replay: (message) => responseOutputs.get(message), summaries: routes.summaries(model) }))
         : route === "chat-reasoning-off"
           ? JSON.stringify({ ...JSON.parse(chatPayload), reasoning_effort: "none" })
           : chatPayload;

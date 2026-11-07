@@ -114,6 +114,8 @@ export function responsesRequest(input: {
   tools: readonly ChatToolDefinition[];
   replay: (message: OpenAIChatMessage) => ResponseItem[] | undefined;
   summaries: boolean;
+  toolChoice?: "none";
+  maxTokens?: number;
 }): Record<string, unknown> {
   const instructions = input.messages.filter((message) => message.role === "system" && typeof message.content === "string")
     .map((message) => message.content).join("\n\n");
@@ -124,7 +126,9 @@ export function responsesRequest(input: {
     ...(instructions ? { instructions } : {}),
     input: input.messages.flatMap((message) => inputItems(message, input.replay(message))),
     ...(input.summaries ? { reasoning: { summary: "auto" } } : {}),
+    ...(input.maxTokens ? { max_output_tokens: Math.max(16, input.maxTokens) } : {}),
     tools: input.tools.map(({ function: { name, description, parameters } }) => ({ type: "function", name, description, parameters, strict: false })),
+    ...(input.tools.length && input.toolChoice ? { tool_choice: input.toolChoice } : {}),
   };
 }
 
