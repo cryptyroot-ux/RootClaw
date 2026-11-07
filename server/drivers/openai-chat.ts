@@ -788,7 +788,12 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
               } });
               const written = holdback && !completion.toolCalls.length && completion.finishReason !== "length"
                 ? textToolCalls(completion.text, tools.definitions) : null;
-              unreadable = written?.kind === "unreadable" && !askedAgain;
+              const unreadableCall = written?.kind === "unreadable";
+              unreadable = unreadableCall && !askedAgain;
+              if (unreadableCall && askedAgain) {
+                stopReason = "incomplete_action";
+                throw new ChatProtocolError("The local model's tool call could not be read after one retry.");
+              }
               if (written?.kind === "calls") {
                 completion = { ...completion, text: written.text, toolCalls: written.calls, finishReason: "tool_calls" };
                 native("in", { recovered: "text_tool_calls", calls: written.calls.map((call) => call.function.name) });

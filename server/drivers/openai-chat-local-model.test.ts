@@ -154,15 +154,15 @@ describe("a tool call a local model wrote as text", () => {
     expect(f.effects()).toEqual([]);
   });
 
-  it("asks once more for a call it cannot read, then takes the words as the reply", async () => {
+  it("asks once more for an unreadable call, then ends without showing its markup", async () => {
     const broken = '<tool_call>{"name":"audit_write","arguments":{</tool_call>';
     const f = await fixture((_body, response) => say(response, broken));
     await f.start();
-    expect(await f.completed()).toMatchObject({ ok: true });
+    expect(await f.completed()).toMatchObject({ ok: false, stopReason: "incomplete_action" });
     expect(f.requests).toHaveLength(2);
     expect(JSON.stringify(f.requests[1]!.messages.at(-1))).toContain("could not be read");
     expect(f.effects()).toEqual([]);
-    expect(f.shown()).toBe(broken);
+    expect(f.shown()).not.toContain("<tool_call>");
   });
 
   it("never does any of this for a hosted model", async () => {
