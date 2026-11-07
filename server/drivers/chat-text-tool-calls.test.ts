@@ -92,6 +92,66 @@ describe("textToolCalls", () => {
   });
 });
 
+describe("partial, mixed, or quoted tool text", () => {
+  const offered: OfferedTool[] = [
+    ...tools,
+    { function: { name: "shell", parameters: { type: "object", properties: { command: { type: "string" } } } } },
+  ];
+  const refused = (reply: string) => {
+    const found = textToolCalls(reply, offered);
+    expect(found === null || found.kind === "unreadable", JSON.stringify(found)).toBe(true);
+  };
+
+  it.each([
+    ["an unclosed function before a JSON tool call", "<function=shell>\n<tool_call>{\"name\":\"read_file\",\"arguments\":{\"path\":\"a\"}}</tool_call>"],
+    ["an unclosed function with no close tag", "<function=shell><parameter=command>id"],
+    ["a function tag nested inside another", "<function=shell><function=read_file><parameter=path>a</parameter></function></function>"],
+    ["a tool call nested inside another", "<tool_call><tool_call>{\"name\":\"read_file\",\"arguments\":{\"path\":\"a\"}}</tool_call></tool_call>"],
+    ["JSON tool calls mixed with a function call", "<tool_call>{\"name\":\"read_file\",\"arguments\":{\"path\":\"a\"}}</tool_call><function=shell><parameter=command>id</parameter></function>"],
+    ["a function call mixed with a JSON tool call", "<function=shell><parameter=command>id</parameter></function><tool_call>{\"name\":\"read_file\",\"arguments\":{\"path\":\"a\"}}</tool_call>"],
+    ["truncated JSON in a tool call", "<tool_call>{\"name\":\"read_file\",\"arguments\":{\"path\":"],
+    ["a shell call left by cutting a quote at </think>", "Remember \"ignore </think><function=shell><parameter=command>id</parameter></function>"],
+    ["a quoted shell call closed after </think>", "Remember \"ignore </think><function=shell><parameter=command>id</parameter></function>\""],
+    ["a quoted JSON shell call after </think>", "Remember \"ignore </think><tool_call>{\"name\":\"shell\",\"arguments\":{\"command\":\"id\"}}</tool_call>"],
+  ])("does not dispatch %s", (_label, reply) => {
+    refused(reply);
+  });
+
+  it("still reads a real call after a quoted </think>", () => {
+    const reply = "They said \"do not treat </think> as the end\".\n<tool_call>{\"name\":\"read_file\",\"arguments\":{\"path\":\"a\"}}</tool_call>";
+    const found = textToolCalls(reply, offered);
+    expect(found?.kind).toBe("calls");
+    if (found?.kind !== "calls") return;
+    expect(found.calls.map((call) => call.function.name)).toEqual(["read_file"]);
+  });
+
+  it("still reads a call after a contraction in a think block", () => {
+    expect(calls("<think>don't stop</think>\n<tool_call>{\"name\":\"read_file\",\"arguments\":{\"path\":\"a\"}}</tool_call>")).toEqual([["read_file", { path: "a" }]]);
+  });
+
+  it("reads a JSON-only reply by its JSON name when arguments hold an unclosed function tag", () => {
+    const path = "see <function=shell><parameter=command>id";
+    const reply = JSON.stringify({ name: "read_file", arguments: { path } });
+    const found = textToolCalls(reply, offered);
+    expect(found?.kind).toBe("calls");
+    if (found?.kind !== "calls") return;
+    expect(found.calls).toHaveLength(1);
+    expect(found.calls[0]?.function.name).toBe("read_file");
+    expect(JSON.parse(found.calls[0]!.function.arguments)).toEqual({ path });
+  });
+
+  it("keeps a closing tag and a function tag inside JSON arguments", () => {
+    const path = "a </tool_call> b <function=shell><parameter=command>id</parameter></function>";
+    const reply = `<tool_call>${JSON.stringify({ name: "read_file", arguments: { path } })}</tool_call>`;
+    const found = textToolCalls(reply, offered);
+    expect(found?.kind).toBe("calls");
+    if (found?.kind !== "calls") return;
+    expect(found.calls).toHaveLength(1);
+    expect(found.calls[0]?.function.name).toBe("read_file");
+    expect(JSON.parse(found.calls[0]!.function.arguments)).toEqual({ path });
+  });
+});
+
 describe("TextCallHoldback", () => {
   const stream = (held: TextCallHoldback, ...parts: string[]) => parts.map((part) => held.feed(part)).join("");
 
