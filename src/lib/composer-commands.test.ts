@@ -13,7 +13,7 @@ describe("composer slash commands", () => {
   it("opens command search only for the first unfinished token", () => {
     expect(composerSlashTrigger("/", 1)).toEqual({ query: "", start: 0, end: 1 });
     expect(composerSlashTrigger("/go", 3)).toEqual({ query: "go", start: 0, end: 3 });
-    expect(composerSlashTrigger("hello /go", 9)).toBeNull();
+    expect(composerSlashTrigger("hello /go", 9)).toEqual({ query: "go", start: 6, end: 9 });
     expect(composerSlashTrigger("/goal write", 11)).toBeNull();
   });
 
