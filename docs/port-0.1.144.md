@@ -103,7 +103,7 @@ Target remains `v0.1.144` (`dad50e140ef7f332ef101ae93aff8e9e0a83343b`). Candidat
 
 ### Catch-up verification
 
-- `server/drivers/openai-chat-local-model.test.ts`, `server/drivers/openai-responses.test.ts`, `server/drivers/chat-repeat-guard.test.ts`, and `server/drivers/chat-text-tool-calls.test.ts`: passed (4 files, 78 tests).
+- `server/drivers/openai-chat-local-model.test.ts`, `server/drivers/openai-responses.test.ts`, `server/drivers/chat-repeat-guard.test.ts`, and `server/drivers/chat-text-tool-calls.test.ts`: passed (4 files, 79 tests).
 - `server/routine-model.test.ts` and `server/routines.test.ts`: passed (2 files, 197 tests).
 - `pnpm typecheck`: passed.
 - Touched-driver `oxlint --deny-warnings` and `git diff --check`: passed.

@@ -279,7 +279,7 @@ describe("tool rounds over Responses", () => {
         const second = reasoningItem("rs_2");
         const preamble = messageItem("Checking once more.", "msg_2", "commentary");
         const call2 = callItem("audit_write", '{"name":"second"}', "call_2", "fc_2");
-        return events(response, [done(second, 0), textDelta("Checking once more.", "msg_2"), done(preamble, 1), done(call2, 2), completed([second, preamble, call2])]);
+        return events(response, [done(second, 0), textDelta("Checking once more.", "msg_2"), done(preamble, 1), completed([second, preamble, call2])]);
       }
       answer(response, "Both stored.");
     });
