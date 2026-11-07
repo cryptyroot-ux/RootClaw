@@ -100,6 +100,8 @@ Target remains `v0.1.144` (`dad50e140ef7f332ef101ae93aff8e9e0a83343b`). Candidat
 - `pnpm typecheck`: passed.
 - Touched-file `oxlint --deny-warnings` and `git diff --check`: passed.
 - Isolated fixture launched with `scripts/control-rootclaw.ts launch`; `pnpm control:rootclaw doctor --url http://127.0.0.1:22342` reported connected with no problems; fixture was stopped afterward.
+- CI review found the generated `shared/app-frame/app-host.html` had not been refreshed for the frameless tool schema. Regenerated with `node --experimental-strip-types scripts/build-app-host.ts`; `shared/app-frame/host-page.test.ts` passed (7 tests).
+- Initial PR CI also reported Windows browser S4 tab cleanup failures in `server/browser/cdp/s4-pages.e2e.test.ts`; no browser/CDP files are changed by this batch. Treat that result separately from the app-host generation mismatch and verify on the next CI run.
 - `pnpm audit` ran before any dependency changes; no dependency was added.
 - `server/folder-pages.e2e.test.ts` was attempted once but its dashboard test failed before assertions because the scripted fixture produced no tool evidence. Whether this is a baseline failure is unverified. No fixture or product code changes were made in response; record as a validation limitation.
 - Logo/icon changes and Phase 5 stubs were not touched. No external engines were used.
