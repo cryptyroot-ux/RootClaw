@@ -1,9 +1,44 @@
 // A routine as a person, a bot or an import asked for it, checked and cleaned before RoutineManager keeps it.
 import { runsOnce } from "../shared/limit-reset.ts";
+import { approvalModeFor, type ApprovalMode } from "../shared/approval-mode.ts";
 import { cleanAttachments, cleanTimeoutMinutes } from "./routine-attachments.ts";
 import { loadChecks } from "./routine-load.ts";
 import { cleanSchedule } from "./routine-schedules.ts";
 import type { Routine, RoutineInput } from "./routines.ts";
+import type { ModelSelection } from "../shared/wire.ts";
+
+type Refusal = { status: number; error: string };
+
+export interface RoutineModelChecks {
+  check(raw: unknown): { ok: true; selection: ModelSelection } | ({ ok: false } & Refusal);
+  bot(botId: string): ({ approvalMode?: unknown; autoApprove?: unknown; approvalGrant?: unknown; threadId?: string; modelSelection: ModelSelection }) | null | undefined;
+  engineSwitchNeedsAsk(mode: ApprovalMode, from: ModelSelection, to: ModelSelection): boolean;
+}
+
+export const ROUTINE_MODEL_PERMISSIONS = "That model runs on another engine, which can't keep this bot's permission level. Choose a model on the bot's own engine, or change the bot's permissions first.";
+
+function keepsPermissions(checks: Pick<RoutineModelChecks, "bot" | "engineSwitchNeedsAsk">, botId: string, selection: ModelSelection): boolean {
+  const bot = checks.bot(botId);
+  return !bot || !checks.engineSwitchNeedsAsk(approvalModeFor(bot), bot.modelSelection, selection);
+}
+
+export function routineModelRefusal(body: unknown, checks: RoutineModelChecks, existing?: Pick<Routine, "botId" | "modelSelection">): Refusal | null {
+  const fields = body && typeof body === "object" ? body as { modelSelection?: unknown; botId?: unknown } : {};
+  if (fields.modelSelection == null && fields.botId === undefined) return null;
+  let selection = fields.modelSelection === null ? undefined : existing?.modelSelection;
+  if (fields.modelSelection != null) {
+    const checked = checks.check(fields.modelSelection);
+    if (!checked.ok) return { status: checked.status, error: checked.error };
+    selection = (body as { modelSelection: ModelSelection }).modelSelection = checked.selection;
+  }
+  const botId = typeof fields.botId === "string" ? fields.botId : existing?.botId;
+  return selection && botId && !keepsPermissions(checks, botId, selection) ? { status: 400, error: ROUTINE_MODEL_PERMISSIONS } : null;
+}
+
+export function routineThreadModel(routine: Pick<Routine, "botId" | "modelSelection"> | undefined,
+  checks: Pick<RoutineModelChecks, "bot" | "engineSwitchNeedsAsk">): ModelSelection | undefined {
+  return routine?.modelSelection && keepsPermissions(checks, routine.botId, routine.modelSelection) ? routine.modelSelection : undefined;
+}
 
 export function sanitizeInput(input: RoutineInput, after: number): Omit<Routine, "id" | "createdAt" | "updatedAt" | "nextRunAt"> {
   const name = String(input.name ?? "").trim().slice(0, 80);
@@ -60,5 +95,6 @@ export function sanitizeInput(input: RoutineInput, after: number): Omit<Routine,
     ...(checks ? { checks } : {}),
     ...(input.access === "read-and-draft" ? { access: "read-and-draft" as const } : {}),
     ...(input.deliver === "brief" ? { deliver: "brief" as const } : {}),
+    ...(input.modelSelection ? { modelSelection: input.modelSelection } : {}),
   };
 }

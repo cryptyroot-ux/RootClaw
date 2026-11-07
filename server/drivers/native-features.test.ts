@@ -170,7 +170,8 @@ describe("a failed read does not fail the turn", () => {
   });
 
   it("still fails the turn when a write failed in the last round", async () => {
-    const f = await fixture([{ name: "edit_file", input: { path: "missing.txt", old_string: "a", new_string: "b" } }]);
+    const call = { name: "edit_file", input: { path: "missing.txt", old_string: "a", new_string: "b" } };
+    const f = await fixture([call], [[call], []]);
     await f.start({ approvalMode: "full" });
     const done = await f.completed();
     expect(f.toolResults()[0]).toMatchObject({ ok: false });

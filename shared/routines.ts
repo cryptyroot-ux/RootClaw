@@ -2,6 +2,12 @@
  * snapshot and the `routine` / `routine.run` live frames. */
 import type { LimitResetSchedule, LimitResetScheduleInput } from "./limit-reset.ts";
 import type { RoutineCronSchedule } from "./routine-schedule.ts";
+import type { ModelSelection } from "./wire.ts";
+export type { ModelSelection } from "./wire.ts";
+
+export interface RoutineModelSelection<T = ModelSelection> {
+  modelSelection?: T;
+}
 
 export interface RoutineIntervalWindow {
   start: string;
@@ -109,7 +115,7 @@ export function isRoutineProblemRun(run: { status: RoutineRunStatus }): boolean 
  * indicators count, or one exact status. */
 export type RoutineRunStatusFilter = "all" | "problems" | RoutineRunStatus;
 
-export interface Routine {
+export interface Routine extends RoutineModelSelection {
   id: string;
   name: string;
   prompt: string;
@@ -199,7 +205,7 @@ export interface RoutineRun {
   seenAt?: number;
 }
 
-export interface RoutineInput {
+export interface RoutineInput extends RoutineModelSelection<ModelSelection | null> {
   name: string;
   prompt: string;
   target?: RoutineTarget;

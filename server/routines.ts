@@ -14,7 +14,7 @@ import { cloneSchedule, limitResetOccurrence, mergeScheduleUpdate, nextOccurrenc
 import { runsOnce } from "../shared/limit-reset.ts";
 import {
   isRoutineProblemRun, type RoutineAccess, type RoutineCheck, type RoutineContextAttachment, type RoutineDelivery, type RoutineIntervalWindow, type RoutineRetryCause,
-  type RoutineRunReport, type RoutineRunStatus, type RoutineRunTrigger,
+  type ModelSelection, type RoutineModelSelection, type RoutineRunReport, type RoutineRunStatus, type RoutineRunTrigger,
 } from "../shared/routines.ts";
 import type { PartPair, RoutinePart } from "./package-parts.ts";
 import {
@@ -44,7 +44,7 @@ export type RoutineTarget = "bot" | "room-goal";
 export type RoutineGoalStatus = Exclude<GroupGoalRunStatus, "working">;
 
 
-export interface Routine {
+export interface Routine extends RoutineModelSelection {
   id: string;
   name: string;
   prompt: string;
@@ -159,7 +159,7 @@ export interface RoutineRequestCommit {
 type RoutineRequestCommitFor<Action extends RoutineRequestOperation["action"]> =
   Omit<RoutineRequestCommit, "action"> & { action: Action };
 
-export interface RoutineInput {
+export interface RoutineInput extends RoutineModelSelection<ModelSelection | null> {
   name: string;
   prompt: string;
   target?: RoutineTarget;
@@ -606,6 +606,7 @@ export class RoutineManager {
       checks: Object.hasOwn(patch, "checks") ? patch.checks : routine.checks,
       access: Object.hasOwn(patch, "access") ? patch.access : routine.access,
       deliver: Object.hasOwn(patch, "deliver") ? patch.deliver : routine.deliver,
+      modelSelection: Object.hasOwn(patch, "modelSelection") ? patch.modelSelection ?? null : routine.modelSelection,
     }, now);
     clean.schedule = this.timedSchedule(clean.schedule, routine.id);
     if (this.targetState(clean) === "missing") throw new Error(this.missingTargetMessage(clean.target));
@@ -635,9 +636,8 @@ export class RoutineManager {
       if (!clean.access) delete routine.access;
       if (!clean.deliver) delete routine.deliver;
       if (!clean.checks) for (const key of ["checks", "checkedAt", "checkTrouble", "wakeAt"] as const) delete routine[key];
-      if (Object.hasOwn(patch, "timeoutMinutes") && patch.timeoutMinutes == null) {
-        delete routine.timeoutMinutes;
-      }
+      if (Object.hasOwn(patch, "timeoutMinutes") && patch.timeoutMinutes == null) delete routine.timeoutMinutes;
+      if (Object.hasOwn(patch, "modelSelection") && patch.modelSelection == null) delete routine.modelSelection;
       if (patch.enabled === false) {
         for (const run of this.runs) {
           if (run.routineId !== routine.id || run.status !== "queued") continue;

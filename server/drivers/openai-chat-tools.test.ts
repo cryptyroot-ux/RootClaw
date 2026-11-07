@@ -225,7 +225,7 @@ describe("bounded action announcement recovery", () => {
   it("does not use an announcement to bypass a failed operation", async () => {
     const f = await fixture((_body, response, round) => round === 1
       ? sse(response, [chunk({ tool_calls: [toolCall("audit_fail")] }, "tool_calls")])
-      : answer(response, "I'll write the receipt now."));
+      : answer(response, "I'll write the receipt now."), "grok");
     await f.start({ approvalMode: "full" });
     expect(await f.completed()).toMatchObject({ ok: false });
     expect(f.requests).toHaveLength(2);
@@ -784,9 +784,9 @@ describe.each<Provider>(["openai-compat", "grok", "minimax"])("%s structured too
     expect(f.instance.adapter.capabilities).toMatchObject({ agentsMcp: true, composioMcp: true, customMcp: true });
   });
 
-  it("preserves ordinary transcript chat and leaves textual tool imitations as text", async () => {
+  it("preserves ordinary transcript chat and leaves textual tool imitations as text on hosted providers", async () => {
     const imitation = '<tool_call>{"name":"audit_write","arguments":{"value":"pretend"}}</tool_call>';
-    const f = await fixture((_body, response) => answer(response, imitation), provider);
+    const f = await fixture((_body, response) => answer(response, imitation), provider === "openai-compat" ? "grok" : provider);
     await f.start({ integrations: undefined, system: "Fixture persona", transcript: [{ role: "user", text: "Earlier question" }, { role: "assistant", text: "Earlier answer" }] });
     expect(await f.completed()).toMatchObject({ ok: true });
     expect(f.requests).toHaveLength(1);
@@ -1093,7 +1093,7 @@ describe("structured tool execution boundaries", () => {
 
   it("never promotes textual tool syntax into execution, even when that tool is mounted", async () => {
     const imitation = '<tool_call>{"name":"audit_write","arguments":{"name":"receipt","value":"pretend"}}</tool_call>';
-    const f = await fixture((_body, response) => answer(response, imitation));
+    const f = await fixture((_body, response) => answer(response, imitation), "grok");
     await f.start();
     expect(await f.completed()).toMatchObject({ ok: true });
     expect(f.requests[0].tools?.some((tool) => tool.function.name === "audit_write")).toBe(true);
@@ -1250,7 +1250,7 @@ describe("structured tool execution boundaries", () => {
 
   it("answers an invalid tool name with a tool error the model can correct", async () => {
     const f = await fixture((_body, response, round) => round === 1
-      ? sse(response, [chunk({ tool_calls: [toolCall("functions.audit write")] }, "tool_calls")]) : answer(response));
+      ? sse(response, [chunk({ tool_calls: [toolCall("functions.audit write")] }, "tool_calls")]) : answer(response), "grok");
     await f.start({ approvalMode: "full" });
     await f.completed();
     expect(f.effects()).toEqual([]);

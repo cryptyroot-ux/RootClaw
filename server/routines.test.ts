@@ -115,6 +115,39 @@ afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
+describe("a routine's saved model", () => {
+  const schedule = { type: "daily" as const, time: "09:00", weekdays: [0, 1, 2, 3, 4, 5, 6] };
+  const modelA = { instanceId: "openaiCompat", model: "model-a" };
+  const modelB = { instanceId: "openaiCompat", model: "model-b" };
+
+  it("replaces model-a with model-b and clears an explicit null in memory, on disk, and after reload", () => {
+    const h = harness();
+    const created = h.manager.create({ name: "Model", prompt: "Check the inbox", botId: "bot-1", schedule, modelSelection: modelA });
+    const stored = () => (JSON.parse(readFileSync(h.options.file!, "utf8")).routines as Array<{ id: string; modelSelection?: unknown; name?: string }>)
+      .find((row) => row.id === created.id);
+    const reloaded = () => new RoutineManager(h.options).listRoutines().find((routine) => routine.id === created.id);
+    expect(created.modelSelection).toEqual(modelA);
+    expect(stored()?.modelSelection).toEqual(modelA);
+    expect(reloaded()?.modelSelection).toEqual(modelA);
+
+    const replaced = h.manager.update(created.id, { modelSelection: modelB });
+    expect(replaced?.modelSelection).toEqual(modelB);
+    expect(stored()?.modelSelection).toEqual(modelB);
+    expect(reloaded()?.modelSelection).toEqual(modelB);
+
+    const kept = h.manager.update(created.id, { name: "Renamed" });
+    expect(kept?.name).toBe("Renamed");
+    expect(kept?.modelSelection).toEqual(modelB);
+    expect(stored()).toMatchObject({ name: "Renamed", modelSelection: modelB });
+
+    const cleared = h.manager.update(created.id, { modelSelection: null });
+    expect(cleared).not.toHaveProperty("modelSelection");
+    expect(stored()).not.toHaveProperty("modelSelection");
+    expect(reloaded()).not.toHaveProperty("modelSelection");
+    expect(reloaded()?.name).toBe("Renamed");
+  });
+});
+
 describe("bounded scheduled overlap and run health", () => {
   const start = Date.parse("2026-09-13T08:00:00Z");
   const input = () => ({ name: "Health check", prompt: "Check the fixture", botId: "rootclaw-1",

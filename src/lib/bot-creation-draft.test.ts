@@ -28,6 +28,21 @@ describe("isolated creation draft", () => {
     expect(network).not.toHaveBeenCalled();
   });
 
+  it("clears an optional routine model selection instead of retaining null", async () => {
+    const draft = new BotCreationDraft(EMPTY_BOT_DEFAULTS, vi.fn());
+    const schedule = { type: "once" as const, at: 1 };
+    const selection = { instanceId: "openai-compat", model: "fixture-model" };
+    await draft.request("/api/routines", { method: "POST", body: JSON.stringify({
+      botId: draft.id, name: "Status", prompt: "Check status", schedule, modelSelection: selection,
+    }) });
+    const routine = draft.routines[0]!;
+    expect(routine.modelSelection).toEqual(selection);
+    await draft.request(`/api/routines/${routine.id}`, { method: "PATCH", body: JSON.stringify({
+      botId: draft.id, schedule, modelSelection: null,
+    }) });
+    expect(draft.routines[0]).not.toHaveProperty("modelSelection");
+  });
+
   it("makes independent copies and new routine identities for every draft", () => {
     const defaults = { ...EMPTY_BOT_DEFAULTS, profile: { name: "Default" }, routines: [{
       name: "Status", prompt: "Check status", enabled: false, schedule: { type: "once" as const, at: 123456789 },
