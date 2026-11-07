@@ -119,7 +119,9 @@ export function textToolCalls(reply: string, tools: readonly OfferedTool[]): Tex
   if (!bodies?.length || bodies.length > MAX_CALLS) return null;
   const calls: ChatToolCall[] = [];
   for (const body of bodies) {
-    const call = body.includes(OPEN_FUNCTION) ? functionCall(body, offered) : jsonCall(body.trim(), offered);
+    // Only a body that is the coder form is one. `<function=` inside JSON arguments stays argument text.
+    const trimmed = body.trim();
+    const call = trimmed.startsWith(OPEN_FUNCTION) ? functionCall(trimmed, offered) : jsonCall(trimmed, offered);
     if (!call) return { kind: "unreadable", text: said };
     calls.push(call);
   }
