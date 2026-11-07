@@ -298,12 +298,25 @@ describe("per-bot thread capacity through an isolated HTTP fixture (native engin
     expect((await api("PATCH", `/api/bots/${botId}/tasks/${first}`, { approvalMode: "ask" })).status).toBe(200);
     // This turn asks for a shell command at once; under Ask it waits on the person's card, holding its slot.
     // Anchored to the person's words: other threads' prompts quote this message under "Your recent work".
+    // `exit 1` is a failed tool with or without an OS sandbox: bash exits 1, and no sandbox refuses the shell.
     // A failed shell on this loopback model asks for another round in the same turn. That round must finish
     // here; the default slow gate would keep the slot and the queued thread would never start.
     fixture.fakeChat.set({ routes: [
-      { match: "APPROVAL_HOLDS_SLOT\\s*$", mode: "happy", toolCalls: [{ name: "shell", input: { command: "ls -la ./dist" } }] },
+      { match: "APPROVAL_HOLDS_SLOT\\s*$", mode: "happy", toolCalls: [{ name: "shell", input: { command: "exit 1" } }] },
       { match: "Do not report results you did not get\\.\\]\\s*$", mode: "happy" },
     ] });
+    const messageText = (message: any) => typeof message?.content === "string" ? message.content : JSON.stringify(message?.content ?? "");
+    const toolFailed = (message: any) => {
+      if (message?.role !== "tool") return false;
+      try { return JSON.parse(messageText(message)).ok === false; } catch { return false; }
+    };
+    const correctiveRounds = () => fixture.fakeChat.requests.filter((request: any) => {
+      if (folderOf(request) !== first || request.stream !== true) return false;
+      const messages = request.messages ?? [];
+      const failedAt = messages.findLastIndex(toolFailed);
+      const last = messages.at(-1);
+      return failedAt >= 0 && last?.role === "user" && failedAt < messages.length - 1;
+    });
     expect((await send(botId, first!, "APPROVAL_HOLDS_SLOT")).body.queued).toBeUndefined();
     await expect.poll(async () => (await botState(botId)).tasks.find((task: any) => task.threadId === first).activity, { timeout: 15_000 }).toBe("waiting-on-you");
     expect(await busyThreads(botId)).toEqual([first]);
@@ -313,7 +326,14 @@ describe("per-bot thread capacity through an isolated HTTP fixture (native engin
     const card = (await messages(first!)).findLast((message) => message.card?.requestId && !message.card.answered)?.card;
     expect(card).toBeDefined();
     expect((await api("POST", `/api/bots/${botId}/respond`, { threadId: first, requestId: card.requestId, behavior: "allow" })).status).toBe(200);
+    await expect.poll(() => correctiveRounds().length, { timeout: 15_000 }).toBeGreaterThan(0);
+    expect(fixture.fakeChat.requests.some((request: any) => folderOf(request) === first && toolFailed(request.messages?.at(-1)))).toBe(true);
+    expect(correctiveRounds().every((request: any) => !messageText(request.messages.at(-1)).endsWith("APPROVAL_HOLDS_SLOT"))).toBe(true);
     await started(second!);
+    const lastCorrective = Math.max(...correctiveRounds().map((request: any) => fixture.fakeChat.requests.indexOf(request)));
+    const queuedAt = fixture.fakeChat.requests.findIndex((request: any) => folderOf(request) === second && request.stream === true && request.messages?.at(-1)?.role === "user");
+    expect(lastCorrective).toBeGreaterThanOrEqual(0);
+    expect(queuedAt).toBeGreaterThan(lastCorrective);
     await expect.poll(() => busyThreads(botId)).toEqual([second]);
     expect(await userTexts(second!)).toEqual([expect.objectContaining({ text: "FIFO_AFTER_APPROVAL", queueId: waiting.body.queueId })]);
     finish(second!);
