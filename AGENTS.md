@@ -25,3 +25,9 @@ name, a type, an extracted function, one shared helper. A rule ("never X",
 rule that guards correctness; fix the code.
 
 More specific `AGENTS.md` files override this note within their directories.
+
+## Cloud Agent
+
+The environment install puts Node 24.22.2 and pnpm 10.33.0 first on `PATH`. On boot, `pnpm dev:server` listens on `127.0.0.1:8799` and `pnpm dev` on `127.0.0.1:5199`. A fresh data directory stops in **Connect an AI** until a provider key exists. Prove a bot turn with the isolated fixture in `docs/verification/README.md`.
+
+`pnpm typecheck` needs a larger V8 heap here: `NODE_OPTIONS=--max-old-space-size=6144 pnpm typecheck`.
